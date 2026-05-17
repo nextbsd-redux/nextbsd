@@ -46,4 +46,10 @@ typedef void * os_map_ptr_t;
 #define os_set_contains(s, k)			false
 #define os_set_count(s)				0
 
+/* table.c (libnotify's hash table) uses these. Stubbed to NULL so
+ * .c compiles; runtime correctness requires a real implementation. */
+#define os_set_find(s, k)			((void *)0)
+#define os_set_delete(s, k)			((void *)0)
+#define os_set_foreach(s, block)		((void)block, (void)0)
+
 #endif
