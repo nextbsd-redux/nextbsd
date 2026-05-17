@@ -288,6 +288,12 @@ _parse_line(char *s)
 	while ((*s == ' ') || (*s == '\t')) s++;
 	if (*s == '#') return -1;
 
+	/* FreeBSD syslog.conf filter-block markers — Apple syslogd
+	 * doesn't implement per-program (!name) or per-host (+/-host)
+	 * filters. Skip the line silently so a stock FreeBSD
+	 * /etc/syslog.conf doesn't generate junk rules. (Phase J3) */
+	if (*s == '!' || *s == '+' || *s == '-') return -1;
+
 	semi = explode(s, "; \t");
 
 	if (semi == NULL) return -1;
