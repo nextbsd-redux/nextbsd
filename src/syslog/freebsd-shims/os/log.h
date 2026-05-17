@@ -13,11 +13,22 @@
 #define _FREEBSD_SHIM_OS_LOG_H_
 
 #include <stdio.h>
+#include <stdint.h>
 
 typedef void * os_log_t;
+typedef uint8_t  os_log_type_t;
+typedef uint64_t os_activity_id_t;
 
 #define OS_LOG_DEFAULT		((os_log_t)0)
 #define OS_LOG_DISABLED		((os_log_t)-1)
+
+/* Apple os_log_type_t values — structured equivalents of syslog
+ * levels. Numeric values match Apple's enum. */
+#define OS_LOG_TYPE_DEFAULT	0x00
+#define OS_LOG_TYPE_INFO	0x01
+#define OS_LOG_TYPE_DEBUG	0x02
+#define OS_LOG_TYPE_ERROR	0x10
+#define OS_LOG_TYPE_FAULT	0x11
 
 #define os_log(log, fmt, ...)		(void)fprintf(stderr, fmt "\n", ##__VA_ARGS__)
 #define os_log_info(log, fmt, ...)	(void)fprintf(stderr, fmt "\n", ##__VA_ARGS__)

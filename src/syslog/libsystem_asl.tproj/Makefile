@@ -57,6 +57,10 @@ CFLAGS+=	-I${.CURDIR}/../../launchd/liblaunch		# bootstrap_priv.h
 CFLAGS+=	-D__APPLE_API_PRIVATE -DPRIVATE=1
 CFLAGS+=	-fblocks
 
+# Force-include compat shim — LOG_INSTALL etc syslog facilities Apple
+# defines but FreeBSD doesn't ship.
+CFLAGS+=	-include ${.CURDIR}/../freebsd-shims/libasl_freebsd_compat.h
+
 SYSROOT?=
 .if !empty(SYSROOT)
 CFLAGS+=	-I${SYSROOT}/usr/include
