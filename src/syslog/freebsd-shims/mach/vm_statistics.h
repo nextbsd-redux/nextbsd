@@ -25,4 +25,14 @@ typedef struct vm_statistics64 *vm_statistics64_t;
 #define VM_FLAGS_FIXED		0x0000
 #define VM_FLAGS_PURGABLE	0x0002
 
+/* Apple's VM_MEMORY_* tag values — passed as the high bits of the
+ * vm_allocate flag word to label allocations for vmmap(8) profiling.
+ * libsystem_asl uses VM_MEMORY_APPLICATION_SPECIFIC_1 to tag its
+ * message-buffer allocations. FreeBSD ignores the tag; declare them
+ * so the OR-expression compiles. Numeric values match Apple's
+ * <mach/vm_statistics.h>. */
+#define VM_MEMORY_APPLICATION_SPECIFIC_1	240
+#define VM_MEMORY_APPLICATION_SPECIFIC_2	241
+#define VM_MAKE_TAG(tag)			((tag) << 24)
+
 #endif
