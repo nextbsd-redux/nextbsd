@@ -352,10 +352,14 @@ ld2xpc(launch_data_t ld)
 xpc_object_t
 xpc_copy_entitlement_for_token(const char *key __unused, audit_token_t *token __unused)
 {
-	xpc_u val;
-
-	val.b = true;
-	return (_xpc_prim_create(_XPC_TYPE_BOOL, val,0));
+	/* No Apple-style code-signed entitlements on FreeBSD — return
+	 * NULL so callers (libnotify _notification_introspection_init,
+	 * launchd's job-load entitlement gates) take the no-entitlement
+	 * code path instead of asserting on a wrong-shape object.
+	 * The ravynOS libxpc returned xpc_bool_create(true) which crashed
+	 * libnotify in OS_BUG_CLIENT ("must be a non-empty array of
+	 * strings"). */
+	return NULL;
 }
 
 
