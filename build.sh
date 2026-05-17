@@ -1043,11 +1043,31 @@ mkdir -p "$WORK/rootfs/usr/sbin"
 make -C "$ROOT/src/syslog/aslmanager.tproj" \
     DESTDIR="$WORK/rootfs" \
     SYSROOT="$WORK/rootfs" \
+    MIGOUT="$WORK/asl-mig" \
     all install
 ls -lh "$WORK/rootfs/usr/sbin/aslmanager"
 test -x "$WORK/rootfs/usr/sbin/aslmanager" \
     || { echo "FAIL: /usr/sbin/aslmanager not installed or not executable"; exit 1; }
 echo "==> ASLMANAGER-BUILD-OK"
+
+#
+# 3x. Phase J5 — build syslog(1) CLI (src/syslog/util.tproj).
+#     Apple's user-facing ASL tool: post messages, search the on-disk
+#     store, control the daemon. FreeBSD base has no /usr/bin/syslog
+#     (logger(1) is the BSD equivalent), so no conflict.
+#     Plan: pkgdemon.github.io/freebsd-asl-plan.html (Phase J5)
+#
+echo "==> Phase J5: building syslog(1) CLI (src/syslog/util.tproj)"
+mkdir -p "$WORK/rootfs/usr/bin"
+make -C "$ROOT/src/syslog/util.tproj" \
+    DESTDIR="$WORK/rootfs" \
+    SYSROOT="$WORK/rootfs" \
+    MIGOUT="$WORK/asl-mig" \
+    all install
+ls -lh "$WORK/rootfs/usr/bin/syslog"
+test -x "$WORK/rootfs/usr/bin/syslog" \
+    || { echo "FAIL: /usr/bin/syslog not installed or not executable"; exit 1; }
+echo "==> SYSLOG-CLI-BUILD-OK"
 
 #
 # 3z. purge build packages + clean pkg cache + tear down chroot.

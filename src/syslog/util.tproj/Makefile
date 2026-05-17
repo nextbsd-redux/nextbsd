@@ -1,30 +1,31 @@
-# aslmanager — Apple's ASL log rotator. Phase J4 of the ASL port.
-# Invoked on demand by launchd (com.apple.aslmanager.plist) to age
-# out /var/log/asl/* into Archive/. Installed at /usr/sbin/.
+# syslog(1) — Apple's CLI for ASL. Phase J5 of the ASL port.
+# Reads/writes ASL log database, can post messages and pretty-print
+# the on-disk asl store. Installed at /usr/bin/syslog.
+# Conflicts with FreeBSD base's logger(1) but doesn't share a name,
+# and base has no /usr/bin/syslog.
 
-PROG=		aslmanager
+PROG=		syslog
 MAN=
 NO_MAN=		yes
 WARNS?=		0
 
-SRCS=		aslmanager.c daemon.c
+SRCS=		syslog.c
 
-# MIG-generated asl_ipc.h (referenced via "asl_ipc.h" from daemon.c)
+# Pull aslcommon sources (static dep — same pattern as syslogd/aslmanager)
+.PATH:		${.CURDIR}/../aslcommon
+SRCS+=		asl_common.c
+
+# Re-use notifyd's link-stubs file
+.PATH:		${.CURDIR}/../../Libnotify/freebsd-shims
+SRCS+=		notifyd_stubs.c
+
+# MIG-generated asl_ipcUser.c for direct talk to syslogd
 MIGOUT?=
 .if !empty(MIGOUT)
 .PATH:		${MIGOUT}
 SRCS+=		asl_ipcUser.c
 CFLAGS+=	-I${MIGOUT}
 .endif
-
-# Pull aslcommon sources (static dep — same pattern as syslogd)
-.PATH:		${.CURDIR}/../aslcommon
-SRCS+=		asl_common.c asl_memory.c
-
-# Re-use notifyd's stub file — covers audit_token, sandbox,
-# mig_*, voucher_*, vm_alloc/dealloc, _malloc_no_asl_log, copyfile
-.PATH:		${.CURDIR}/../../Libnotify/freebsd-shims
-SRCS+=		notifyd_stubs.c
 
 # Headers
 CFLAGS+=	-I${.CURDIR}
@@ -38,7 +39,7 @@ CFLAGS+=	-D__APPLE_API_PRIVATE -DPRIVATE=1
 CFLAGS+=	-fblocks
 CFLAGS+=	-Wno-error=int-conversion -Wno-int-conversion
 
-# Force-include compat shim (LOG_INSTALL, OSSpinLock, IOPOL_*, etc.)
+# Force-include compat shim
 CFLAGS+=	-include ${.CURDIR}/../freebsd-shims/libasl_freebsd_compat.h
 
 SYSROOT?=
@@ -50,8 +51,8 @@ LDFLAGS+=	-Wl,--allow-shlib-undefined
 .endif
 
 LDADD+=		-lsystem_asl -lnotify -llaunch -lxpc -ldispatch \
-		-lsystem_kernel -lpthread -lBlocksRuntime -lbsm -lz
+		-lsystem_kernel -lpthread -lBlocksRuntime -lbsm
 
-BINDIR=		/usr/sbin
+BINDIR=		/usr/bin
 
 .include <bsd.prog.mk>
