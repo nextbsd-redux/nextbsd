@@ -163,3 +163,32 @@ _malloc_no_asl_log(size_t sz)
 {
 	return malloc(sz);
 }
+
+/* configuration_profile_create_notification_key — Apple MDM API.
+ * Stub returns NULL (no MDM profile so no notification key). */
+void *
+configuration_profile_create_notification_key(const char *path)
+{
+	(void)path;
+	return NULL;
+}
+
+/* vm_allocate — Apple's narrow-pointer wrapper. Forward to
+ * mach_vm_allocate which our libmach provides. */
+kern_return_t
+vm_allocate(vm_map_t target_task, vm_address_t *address,
+            vm_size_t size, int flags)
+{
+	mach_vm_address_t addr64 = *address;
+	kern_return_t kr = mach_vm_allocate(target_task, &addr64,
+	    (mach_vm_size_t)size, flags);
+	if (kr == KERN_SUCCESS) *address = (vm_address_t)addr64;
+	return kr;
+}
+
+kern_return_t
+vm_deallocate(vm_map_t target_task, vm_address_t address, vm_size_t size)
+{
+	return mach_vm_deallocate(target_task, (mach_vm_address_t)address,
+	    (mach_vm_size_t)size);
+}
