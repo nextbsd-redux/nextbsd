@@ -155,14 +155,14 @@ qtn_proc_set_identifier(void *qp, const char *id) { (void)qp; (void)id; return 0
 int
 qtn_proc_set_flags(void *qp, uint32_t flags) { (void)qp; (void)flags; return 0; }
 
-/* _malloc_no_asl_log — Apple's malloc variant that won't recursively
- * call into ASL. Stub to plain malloc. */
-#include <stdlib.h>
-void *
-_malloc_no_asl_log(size_t sz)
-{
-	return malloc(sz);
-}
+/* _malloc_no_asl_log — Apple's flag variable, NOT a function. syslogd
+ * does `_malloc_no_asl_log = 1;` (syslogd.c:517) to tell libmalloc
+ * to skip recursive ASL logging on malloc errors. Earlier stub
+ * mistakenly defined it as a function, which caused syslogd to
+ * SIGSEGV with SEGV_ACCERR when writing 1 to the function's text-
+ * segment address (read-only). Define as int — extern decl in
+ * syslogd.c sees it correctly. */
+int _malloc_no_asl_log;
 
 /* configuration_profile_create_notification_key — Apple MDM API.
  * Stub returns NULL (no MDM profile so no notification key). */
