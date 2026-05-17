@@ -985,6 +985,25 @@ test -f "$WORK/rootfs/usr/include/asl.h" \
 echo "==> ASL-LIB-OK"
 
 #
+# 3u. Phase J2 iter 1 — build notifyd daemon (src/Libnotify/notifyd).
+#     Uses libnotify (J1) + libsystem_asl (J1) + libxpc + libdispatch.
+#     MIG stubs already generated in step 3s ($WORK/libnotify-mig);
+#     notifyd consumes the Server side. Install to /usr/sbin/notifyd.
+#     Plan: pkgdemon.github.io/freebsd-asl-plan.html (Phase J2)
+#
+echo "==> Phase J2: building notifyd (src/Libnotify/notifyd)"
+mkdir -p "$WORK/rootfs/usr/sbin"
+make -C "$ROOT/src/Libnotify/notifyd" \
+    DESTDIR="$WORK/rootfs" \
+    SYSROOT="$WORK/rootfs" \
+    MIGOUT="$WORK/libnotify-mig" \
+    all install
+ls -lh "$WORK/rootfs/usr/sbin/notifyd"
+test -x "$WORK/rootfs/usr/sbin/notifyd" \
+    || { echo "FAIL: /usr/sbin/notifyd not installed or not executable"; exit 1; }
+echo "==> NOTIFYD-BUILD-OK"
+
+#
 # 3z. purge build packages + clean pkg cache + tear down chroot.
 #     Runs LAST in the build phase, after every chroot-side build
 #     (libdispatch) has used cmake/ninja/clang. Build pkgs (cmake/ninja
