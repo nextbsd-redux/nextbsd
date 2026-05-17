@@ -520,6 +520,28 @@ typedef union {
 #define MACH_SEND_NOTIFY		0x00000004
 #endif
 
+/*
+ * MIG-generated synchronous-IPC option bits (Apple's mach_msg2
+ * extension surface). Used by libnotify's MIG-generated User stubs
+ * when waiting for replies on the same thread that sent the request.
+ * On FreeBSD we don't have priority-inheriting Mach IPC, so these
+ * are advisory — define them at the same numeric values XNU uses
+ * and the kernel-side mach.ko trap handler ignores any bits it
+ * doesn't implement.
+ */
+#ifndef MACH_SEND_SYNC_OVERRIDE
+#define MACH_SEND_SYNC_OVERRIDE		0x00100000
+#endif
+#ifndef MACH_SEND_SYNC_USE_THRPRI
+#define MACH_SEND_SYNC_USE_THRPRI	0x00400000
+#endif
+#ifndef MACH_RCV_SYNC_WAIT
+#define MACH_RCV_SYNC_WAIT		0x00004000
+#endif
+#ifndef MACH_RCV_SYNC_PEEK
+#define MACH_RCV_SYNC_PEEK		0x00008000
+#endif
+
 #ifdef __cplusplus
 }
 #endif
