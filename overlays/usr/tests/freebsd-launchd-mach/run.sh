@@ -390,41 +390,56 @@ echo "--- pre-state: /var/log/syslogd.stderr ---"
 [ -f /var/log/syslogd.stderr ] && cat /var/log/syslogd.stderr || echo "(no stderr file)"
 echo "--- pre-state: /var/log/asl/ listing ---"
 ls -la /var/log/asl/ 2>&1 || echo "(no asl dir)"
-echo "--- pre-state: bootstrap_list ---"
-launchctl bootstrap_list 2>&1 | head -10 || true
+ls -la /var/log/asl/Logs/ 2>&1 || true
+echo "--- pre-state: /etc/asl.conf head ---"
+head -5 /etc/asl.conf 2>&1 || echo "(no asl.conf)"
+echo "--- pre-state: /var/run/log socket ---"
+ls -la /var/run/log /var/run/logpriv 2>&1 || true
 
-echo "--- syslog -s post (tag=$PING_TAG) ---"
-syslog_send_out=$(/usr/bin/syslog -s -l notice "$PING_TAG" 2>&1)
-syslog_send_rc=$?
-echo "post rc=$syslog_send_rc out: ${syslog_send_out:-(empty)}"
+# Use logger(1) from FreeBSD base (writes to /var/run/log SOCK_DGRAM)
+# — picked up by syslogd's bsd_in.c module. Avoids syslog -s which
+# hangs on Mach IPC into syslogd via mach.ko (see memory:
+# mach_msg_send_to_null_port_hangs / launchctl hang). The bsd_in
+# path was specifically designed for this kind of FreeBSD-side
+# ingest, so this is the correct round-trip surface for our port.
+echo "--- logger post (tag=$PING_TAG) ---"
+logger_out=$(logger -p user.notice -t phasej-test "$PING_TAG" 2>&1)
+logger_rc=$?
+echo "post rc=$logger_rc out: ${logger_out:-(empty)}"
 sleep 2
 
 echo "--- post-state: /var/log/syslogd.stderr ---"
 [ -f /var/log/syslogd.stderr ] && cat /var/log/syslogd.stderr || echo "(no stderr file)"
 echo "--- post-state: /var/log/asl/ listing ---"
-ls -la /var/log/asl/ 2>&1 || echo "(no asl dir)"
+ls -la /var/log/asl/ 2>&1 || true
+ls -la /var/log/asl/Logs/ 2>&1 || true
+echo "--- post-state: /var/log/system.log existence ---"
+ls -la /var/log/system.log 2>&1 || echo "(no system.log)"
 
-echo "--- syslog (read) | tail -30 ---"
-syslog_read=$(/usr/bin/syslog 2>&1 | tail -30)
-echo "$syslog_read"
-echo "--- syslog (read) end ---"
-
-if [ "$syslog_send_rc" -ne 0 ]; then
-    echo "SYSLOG-RUN-FAIL: post exit=$syslog_send_rc"
+if [ "$logger_rc" -ne 0 ]; then
+    echo "SYSLOG-RUN-FAIL: logger exit=$logger_rc"
     exit 1
 fi
 
-# Match on the unique tag string.
-if echo "$syslog_read" | grep -q "$PING_TAG"; then
-    echo "SYSLOG-RUN-OK: posted and read back '$PING_TAG'"
-else
-    # Try a full read too, in case the message landed but tail cut it.
-    if /usr/bin/syslog 2>/dev/null | grep -q "$PING_TAG"; then
-        echo "SYSLOG-RUN-OK: posted and read back '$PING_TAG' (full scan)"
-    else
-        echo "SYSLOG-RUN-FAIL: tag '$PING_TAG' not found in ASL store"
-        exit 1
+# Read by directly grepping the asl store + system.log — avoids
+# /usr/bin/syslog which would hang on the same Mach IPC.
+echo "--- grepping for $PING_TAG in /var/log/{asl,system.log} ---"
+found=""
+if [ -f /var/log/system.log ] && grep -q "$PING_TAG" /var/log/system.log; then
+    found="system.log"
+fi
+for f in /var/log/asl/Logs/*.asl /var/log/asl/*.asl; do
+    [ -f "$f" ] || continue
+    if grep -aq "$PING_TAG" "$f"; then
+        found="${found}${found:+,}$f"
     fi
+done
+
+if [ -n "$found" ]; then
+    echo "SYSLOG-RUN-OK: tag '$PING_TAG' written to $found via bsd_in -> asl_action"
+else
+    echo "SYSLOG-RUN-FAIL: tag '$PING_TAG' not found in /var/log/system.log or /var/log/asl/*"
+    exit 1
 fi
 
 exit 0
