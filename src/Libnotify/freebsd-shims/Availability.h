@@ -69,4 +69,12 @@
 #define API_UNAVAILABLE(...)
 #define SPI_AVAILABLE(...)
 
+/* Apple also uses underscore-prefixed variants in private headers
+ * (notify_private.h, asl_private.h, etc.). Same expansion: no-op. */
+#define __API_AVAILABLE(...)
+#define __API_DEPRECATED(...)
+#define __API_DEPRECATED_WITH_REPLACEMENT(...)
+#define __API_UNAVAILABLE(...)
+#define __SPI_AVAILABLE(...)
+
 #endif /* !_LIBXPC_AVAILABILITY_H_SHIM_ */

@@ -15,6 +15,7 @@
 #define os_atomic_or(p, v, m)		atomic_fetch_or_explicit((p), (v), memory_order_##m)
 #define os_atomic_and(p, v, m)		atomic_fetch_and_explicit((p), (v), memory_order_##m)
 #define os_atomic_xor(p, v, m)		atomic_fetch_xor_explicit((p), (v), memory_order_##m)
+#define os_atomic_xchg(p, v, m)		atomic_exchange_explicit((p), (v), memory_order_##m)
 #define os_atomic_cmpxchg(p, e, v, m)	({ __typeof(e) _e = (e); \
                                            atomic_compare_exchange_strong_explicit( \
                                                (p), &_e, (v), \
