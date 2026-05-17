@@ -566,11 +566,16 @@ typedef union {
  * struct + the MPO_* flags; we ignore them in the trap implementation
  * for now.
  */
+/* mach_port_limits_t — nested in mach_port_options_t as `.mpl`. */
 typedef struct {
-	uint32_t	flags;
 	uint32_t	mpl_qlimit;
-	uint64_t	work_interval_id;
-	uint64_t	reserved[2];
+} mach_port_limits_t;
+
+typedef struct {
+	uint32_t		flags;
+	mach_port_limits_t	mpl;
+	uint64_t		work_interval_id;
+	uint64_t		reserved[2];
 } mach_port_options_t;
 typedef mach_port_options_t *mach_port_options_ptr_t;
 
@@ -583,6 +588,17 @@ typedef mach_port_options_t *mach_port_options_ptr_t;
 #define MPO_DENAP_RECEIVER		0x0040
 #define MPO_IMMOVABLE_RECEIVE		0x0080
 #define MPO_FILTER_MSG			0x0100
+
+/* MACH_NOTIFY_* — Mach notification message IDs (delivered to a
+ * watcher port when the watched port reaches certain states).
+ * Numeric values match XNU. */
+#define MACH_NOTIFY_FIRST		0100
+#define MACH_NOTIFY_PORT_DELETED	(MACH_NOTIFY_FIRST + 001)
+#define MACH_NOTIFY_SEND_POSSIBLE	(MACH_NOTIFY_FIRST + 002)
+#define MACH_NOTIFY_PORT_DESTROYED	(MACH_NOTIFY_FIRST + 005)
+#define MACH_NOTIFY_NO_SENDERS		(MACH_NOTIFY_FIRST + 006)
+#define MACH_NOTIFY_SEND_ONCE		(MACH_NOTIFY_FIRST + 007)
+#define MACH_NOTIFY_DEAD_NAME		(MACH_NOTIFY_FIRST + 010)
 
 #ifdef __cplusplus
 }

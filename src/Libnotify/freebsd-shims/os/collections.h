@@ -50,6 +50,9 @@ typedef void * os_map_ptr_t;
  * .c compiles; runtime correctness requires a real implementation. */
 #define os_set_find(s, k)			((void *)0)
 #define os_set_delete(s, k)			((void *)0)
-#define os_set_foreach(s, block)		((void)block, (void)0)
+#define os_set_foreach(s, block)		((void)(block), (void)0)
+
+/* notifyd uses os_map_find / os_map_insert / os_map_delete. */
+#define os_map_find(m, k)			((void *)0)
 
 #endif
