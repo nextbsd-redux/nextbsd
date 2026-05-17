@@ -399,15 +399,19 @@ echo "--- pre-state: /var/run/log socket ---"
 ls -la /var/run/log /var/run/logpriv 2>&1 || true
 echo "--- pre-state: /tmp/bsd_in_init.log ---"
 [ -f /tmp/bsd_in_init.log ] && cat /tmp/bsd_in_init.log || echo "(no init log)"
-echo "--- pre-state: syslogd alive? ---"
+echo "--- pre-state: syslogd-via-launchd alive? ---"
 syslogd_pid=$(pgrep -x syslogd || true)
-echo "pid=$syslogd_pid"
+echo "launchd-spawned pid=$syslogd_pid"
 
-# Iter 25: trust the launchd-spawned syslogd. iter 24 fixed
-# _malloc_no_asl_log and made launch_config tolerant of NULL
-# launch_dict, so syslogd should now stay alive. Show its state
-# briefly.
-[ -n "$syslogd_pid" ] && ps -o pid,rss,vsz,command -p "$syslogd_pid"
+# Iter 26: RunAtLoad dropped on syslogd plist. Start manually as
+# non-launchd child to bypass the launch_msg(CHECKIN) Mach hang.
+echo "--- starting syslogd manually (non-launchd child) ---"
+/usr/sbin/syslogd &
+manual_syslogd_pid=$!
+echo "manual syslogd pid=$manual_syslogd_pid"
+sleep 2
+pgrep -lf syslogd || true
+ls -la /var/run/log /var/run/logpriv 2>&1 || true
 
 echo "--- /var/log/asl/ + /var/log/asl/Logs/ pre-post ---"
 ls -la /var/log/asl/ /var/log/asl/Logs/ 2>&1 || true

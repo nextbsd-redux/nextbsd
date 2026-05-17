@@ -4,19 +4,15 @@
 <dict>
 	<key>Label</key>
 	<string>com.apple.syslogd</string>
-	<!-- RunAtLoad added for FreeBSD port (Phase J runtime
-	     validation). Apple's launchd starts syslogd lazily on first
-	     com.apple.system.logger Mach-service connect; our launchd-842
-	     port may not yet honor MachServices lazy-spawn, so force
-	     eager start. Drop once lazy-spawn is verified. -->
-	<key>RunAtLoad</key>
-	<true/>
-	<!-- KeepAlive restored (iter 25) — root-cause SIGSEGV fixed
-	     in iter 23 (_malloc_no_asl_log was mis-stubbed as function)
-	     and iter 24 (launch_config NULL-dict path now returns
-	     instead of exit(1)). syslogd stays alive now. -->
+	<!-- iter 26: RunAtLoad DROPPED. When launchd spawns syslogd
+	     as its child and syslogd calls launch_msg(LAUNCH_KEY_CHECKIN),
+	     the Mach IPC call into launchd hangs (mach.ko interruptibility
+	     gap). When syslogd is run as a non-launchd child, launch_msg
+	     returns NULL and the FreeBSD port path proceeds cleanly.
+	     Until lazy MachServices spawn is properly wired, the test
+	     starts syslogd manually as a background process. -->
 	<key>KeepAlive</key>
-	<true/>
+	<false/>
 	<key>EnableTransactions</key>
 	<true/>
 	<key>EnablePressuredExit</key>
