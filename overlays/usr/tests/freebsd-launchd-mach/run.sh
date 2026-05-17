@@ -385,21 +385,33 @@ if [ ! -x /usr/bin/syslog ]; then
 fi
 
 PING_TAG="PHASEJ-RUNTIME-PING-$$-$(date +%s)"
-/usr/bin/syslog -s -l notice "$PING_TAG" || {
-    echo "SYSLOG-RUN-FAIL: /usr/bin/syslog -s exited non-zero"
-    exit 1
-}
+echo "--- syslog -s post (tag=$PING_TAG) ---"
+syslog_send_out=$(/usr/bin/syslog -s -l notice "$PING_TAG" 2>&1)
+syslog_send_rc=$?
+echo "post rc=$syslog_send_rc out: ${syslog_send_out:-(empty)}"
 sleep 2
 
-# Search the asl store (default sort, last few hundred messages
-# enough — boot is quiet). Match on the unique tag string.
-if /usr/bin/syslog 2>/dev/null | grep -q "$PING_TAG"; then
+echo "--- syslog (read) | tail -30 ---"
+syslog_read=$(/usr/bin/syslog 2>&1 | tail -30)
+echo "$syslog_read"
+echo "--- syslog (read) end ---"
+
+if [ "$syslog_send_rc" -ne 0 ]; then
+    echo "SYSLOG-RUN-FAIL: post exit=$syslog_send_rc"
+    exit 1
+fi
+
+# Match on the unique tag string.
+if echo "$syslog_read" | grep -q "$PING_TAG"; then
     echo "SYSLOG-RUN-OK: posted and read back '$PING_TAG'"
 else
-    echo "SYSLOG-RUN-FAIL: tag '$PING_TAG' not found in ASL store"
-    echo "--- last 20 syslog entries ---"
-    /usr/bin/syslog 2>/dev/null | tail -20 || true
-    exit 1
+    # Try a full read too, in case the message landed but tail cut it.
+    if /usr/bin/syslog 2>/dev/null | grep -q "$PING_TAG"; then
+        echo "SYSLOG-RUN-OK: posted and read back '$PING_TAG' (full scan)"
+    else
+        echo "SYSLOG-RUN-FAIL: tag '$PING_TAG' not found in ASL store"
+        exit 1
+    fi
 fi
 
 exit 0
