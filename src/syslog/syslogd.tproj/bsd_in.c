@@ -47,7 +47,13 @@ bsd_in_acceptmsg(int fd)
 	ssize_t len;
 	asl_msg_t *m;
 
+	/* Phase J runtime debug: log every dispatch fire, BEFORE recvfrom. */
+	{ FILE *_d0 = fopen("/tmp/bsd_in_recv.log", "a");
+	  if (_d0) { fprintf(_d0, "[%d] dispatch fired on fd=%d\n", getpid(), fd); fclose(_d0); } }
+
 	len = recvfrom(fd, dline, MAXLINE, 0, (struct sockaddr *)&from, &fromlen);
+	{ FILE *_d0 = fopen("/tmp/bsd_in_recv.log", "a");
+	  if (_d0) { fprintf(_d0, "[%d]   recvfrom rc=%zd errno=%d\n", getpid(), len, errno); fclose(_d0); } }
 	if (len <= 0) return;
 	dline[len] = '\0';
 
