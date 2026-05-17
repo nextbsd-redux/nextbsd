@@ -64,15 +64,15 @@ mbr_check_membership(void *user, void *group, int *ismember)
  * the process executable path for the Sender field of ASL messages.
  * Provide pointers to static empty fallbacks so callers don't crash;
  * Sender just shows as empty. */
-extern char **environ;
 static char *_asl_stub_empty_argv[] = { NULL };
+static char *_asl_stub_empty_env[] = { NULL };
 static int _asl_stub_argc = 0;
 static char *_asl_stub_progname = "";
 
 char ***_NSGetArgv(void) { static char **p = _asl_stub_empty_argv; return &p; }
 int    *_NSGetArgc(void) { return &_asl_stub_argc; }
 char  **_NSGetProgname(void) { return &_asl_stub_progname; }
-char ***_NSGetEnviron(void) { return &environ; }
+char ***_NSGetEnviron(void) { static char **p = _asl_stub_empty_env; return &p; }
 
 /* vm_allocate / vm_deallocate — Apple's Mach VM wrappers. libmach
  * doesn't ship mach_vm_*; fall through to mmap/munmap. Stand-alone

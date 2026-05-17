@@ -72,11 +72,12 @@ SYSROOT?=
 CFLAGS+=	-I${SYSROOT}/usr/include
 LDFLAGS+=	-L${SYSROOT}/usr/lib/system
 LDFLAGS+=	-Wl,-rpath,/usr/lib/system
-# -Wl,-z,defs: fail at link time if any symbol is unresolved (default
-# for .so is to allow). Surfaces all dlopen-time symbol misses in
-# one build so we can stub them in asl_stubs.c instead of whack-a-mole
-# at runtime. Phase J runtime iter 6.
-LDFLAGS+=	-Wl,--no-allow-shlib-undefined -Wl,-z,defs
+# -Wl,-z,defs: fail at link time if any symbol from this .so's OWN
+# objects is unresolved. (Does NOT follow into transitively linked
+# .so's — libnotify's internal undefineds aren't our problem.)
+# Surfaces dlopen-time symbol misses at build time so we can stub them
+# in asl_stubs.c. Phase J runtime iter 6.
+LDFLAGS+=	-Wl,-z,defs
 .endif
 
 LDADD+=		-lxpc -ldispatch -lsystem_kernel -lpthread -lBlocksRuntime
