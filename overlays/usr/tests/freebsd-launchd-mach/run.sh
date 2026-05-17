@@ -340,4 +340,59 @@ done
 
 echo "LAUNCHCTL-BUILD-OK: /bin/launchctl exists ($(stat -f%z /bin/launchctl) bytes), all libsystem deps resolve"
 
+# 10. ASL runtime smoke (Phase J runtime validation). syslogd and
+# notifyd are configured to RunAtLoad in their plists at
+# /System/Library/LaunchDaemons/, so PID-1 launchd should have
+# launched them by now. Verify:
+#   - both daemons are running (pgrep)
+#   - /usr/bin/syslog -s -l notice posts a tagged message
+#   - /usr/bin/syslog (read) returns it within a few seconds
+#
+# Apple's libsystem_asl sends ASL messages over Mach IPC to
+# syslogd's com.apple.system.logger MachService. The end-to-end
+# success of this check proves: libxpc Mach bootstrap works,
+# libsystem_asl's client path works, syslogd's dbserver Mach
+# server loop works, and the in-memory store accepts the write.
+sleep 2
+
+if pgrep -x syslogd >/dev/null 2>&1; then
+    echo "SYSLOGD-PROC-OK: syslogd running as pid $(pgrep -x syslogd)"
+else
+    echo "SYSLOGD-PROC-FAIL: syslogd not running"
+    ps auxww | grep -E 'syslogd|notifyd' || true
+    ls -la /System/Library/LaunchDaemons/ 2>&1 || true
+    exit 1
+fi
+
+if pgrep -x notifyd >/dev/null 2>&1; then
+    echo "NOTIFYD-PROC-OK: notifyd running as pid $(pgrep -x notifyd)"
+else
+    echo "NOTIFYD-PROC-FAIL: notifyd not running"
+    ps auxww | grep -E 'syslogd|notifyd' || true
+    exit 1
+fi
+
+if [ ! -x /usr/bin/syslog ]; then
+    echo "SYSLOG-RUN-FAIL: /usr/bin/syslog missing"
+    exit 1
+fi
+
+PING_TAG="PHASEJ-RUNTIME-PING-$$-$(date +%s)"
+/usr/bin/syslog -s -l notice "$PING_TAG" || {
+    echo "SYSLOG-RUN-FAIL: /usr/bin/syslog -s exited non-zero"
+    exit 1
+}
+sleep 2
+
+# Search the asl store (default sort, last few hundred messages
+# enough — boot is quiet). Match on the unique tag string.
+if /usr/bin/syslog 2>/dev/null | grep -q "$PING_TAG"; then
+    echo "SYSLOG-RUN-OK: posted and read back '$PING_TAG'"
+else
+    echo "SYSLOG-RUN-FAIL: tag '$PING_TAG' not found in ASL store"
+    echo "--- last 20 syslog entries ---"
+    /usr/bin/syslog 2>/dev/null | tail -20 || true
+    exit 1
+fi
+
 exit 0

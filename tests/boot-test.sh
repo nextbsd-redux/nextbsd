@@ -296,6 +296,43 @@ expect {
     "LAUNCHCTL-BUILD-OK" { puts "\nOK: /bin/launchctl execs + prints help" }
 }
 
+# Stage 3+ Phase J runtime: syslogd + notifyd RunAtLoad via plists,
+# then syslog(1) post + read-back round-trip via Mach IPC into the
+# ASL store. See run.sh tail for the test sequence.
+expect {
+    timeout {
+        puts "\nFAIL: SYSLOGD-PROC marker not seen"
+        exit 1
+    }
+    "SYSLOGD-PROC-FAIL" {
+        puts "\nFAIL: syslogd not running at boot"
+        exit 1
+    }
+    "SYSLOGD-PROC-OK" { puts "\nOK: syslogd running" }
+}
+expect {
+    timeout {
+        puts "\nFAIL: NOTIFYD-PROC marker not seen"
+        exit 1
+    }
+    "NOTIFYD-PROC-FAIL" {
+        puts "\nFAIL: notifyd not running at boot"
+        exit 1
+    }
+    "NOTIFYD-PROC-OK" { puts "\nOK: notifyd running" }
+}
+expect {
+    timeout {
+        puts "\nFAIL: SYSLOG-RUN marker not seen"
+        exit 1
+    }
+    "SYSLOG-RUN-FAIL" {
+        puts "\nFAIL: syslog(1) post/read round-trip failed"
+        exit 1
+    }
+    "SYSLOG-RUN-OK" { puts "\nOK: syslog(1) Mach round-trip works" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"
