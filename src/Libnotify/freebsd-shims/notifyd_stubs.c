@@ -195,3 +195,41 @@ vm_deallocate(vm_map_t target_task, vm_address_t address, vm_size_t size)
 	if (munmap((void *)address, size) != 0) return KERN_FAILURE;
 	return KERN_SUCCESS;
 }
+
+/* copyfile — aslmanager uses this to move a single ASL log file
+ * into the Archive/ directory. We don't implement the full Darwin
+ * copyfile(3) API; just enough for that single-file case. The
+ * COPYFILE_RECURSIVE flag is set in the call site but the source
+ * is always a regular file in practice. */
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+int
+copyfile(const char *from, const char *to, void *state, uint32_t flags)
+{
+	(void)state; (void)flags;
+	int sfd = -1, dfd = -1;
+	struct stat st;
+	char buf[64 * 1024];
+	ssize_t n;
+	int rc = -1;
+
+	if ((sfd = open(from, O_RDONLY)) < 0) goto out;
+	if (fstat(sfd, &st) < 0) goto out;
+	if ((dfd = open(to, O_WRONLY|O_CREAT|O_TRUNC,
+	    st.st_mode & 0777)) < 0) goto out;
+	while ((n = read(sfd, buf, sizeof(buf))) > 0) {
+		ssize_t off = 0;
+		while (off < n) {
+			ssize_t w = write(dfd, buf + off, n - off);
+			if (w <= 0) goto out;
+			off += w;
+		}
+	}
+	if (n < 0) goto out;
+	rc = 0;
+out:
+	if (sfd >= 0) close(sfd);
+	if (dfd >= 0) close(dfd);
+	return rc;
+}

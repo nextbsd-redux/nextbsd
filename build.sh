@@ -1032,6 +1032,24 @@ test -x "$WORK/rootfs/usr/sbin/syslogd" \
 echo "==> SYSLOGD-BUILD-OK"
 
 #
+# 3w. Phase J4 iter 1 — build aslmanager (src/syslog/aslmanager.tproj).
+#     Apple ASL log rotator. Invoked on-demand by launchd via
+#     com.apple.aslmanager.plist to age out /var/log/asl/* into
+#     Archive/. Re-uses notifyd_stubs.c + libsystem_asl link surface.
+#     Plan: pkgdemon.github.io/freebsd-asl-plan.html (Phase J4)
+#
+echo "==> Phase J4: building aslmanager (src/syslog/aslmanager.tproj)"
+mkdir -p "$WORK/rootfs/usr/sbin"
+make -C "$ROOT/src/syslog/aslmanager.tproj" \
+    DESTDIR="$WORK/rootfs" \
+    SYSROOT="$WORK/rootfs" \
+    all install
+ls -lh "$WORK/rootfs/usr/sbin/aslmanager"
+test -x "$WORK/rootfs/usr/sbin/aslmanager" \
+    || { echo "FAIL: /usr/sbin/aslmanager not installed or not executable"; exit 1; }
+echo "==> ASLMANAGER-BUILD-OK"
+
+#
 # 3z. purge build packages + clean pkg cache + tear down chroot.
 #     Runs LAST in the build phase, after every chroot-side build
 #     (libdispatch) has used cmake/ninja/clang. Build pkgs (cmake/ninja
