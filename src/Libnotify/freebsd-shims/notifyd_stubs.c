@@ -173,22 +173,25 @@ configuration_profile_create_notification_key(const char *path)
 	return NULL;
 }
 
-/* vm_allocate — Apple's narrow-pointer wrapper. Forward to
- * mach_vm_allocate which our libmach provides. */
+/* vm_allocate / vm_deallocate — Apple's Mach VM wrappers. Our libmach
+ * doesn't have mach_vm_*; fall through to mmap/munmap. */
+#include <sys/mman.h>
 kern_return_t
 vm_allocate(vm_map_t target_task, vm_address_t *address,
             vm_size_t size, int flags)
 {
-	mach_vm_address_t addr64 = *address;
-	kern_return_t kr = mach_vm_allocate(target_task, &addr64,
-	    (mach_vm_size_t)size, flags);
-	if (kr == KERN_SUCCESS) *address = (vm_address_t)addr64;
-	return kr;
+	(void)target_task; (void)flags;
+	void *p = mmap(NULL, size, PROT_READ|PROT_WRITE,
+	    MAP_ANON|MAP_PRIVATE, -1, 0);
+	if (p == MAP_FAILED) return KERN_NO_SPACE;
+	*address = (vm_address_t)p;
+	return KERN_SUCCESS;
 }
 
 kern_return_t
 vm_deallocate(vm_map_t target_task, vm_address_t address, vm_size_t size)
 {
-	return mach_vm_deallocate(target_task, (mach_vm_address_t)address,
-	    (mach_vm_size_t)size);
+	(void)target_task;
+	if (munmap((void *)address, size) != 0) return KERN_FAILURE;
+	return KERN_SUCCESS;
 }
