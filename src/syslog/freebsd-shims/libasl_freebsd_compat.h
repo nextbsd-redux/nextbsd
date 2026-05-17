@@ -31,4 +31,17 @@
 #define LOG_LAUNCHD	(24<<3)
 #endif
 
+/* Apple-only ACL constants — asl_file.c uses ACL_EXTENDED_ALLOW
+ * to grant read access to ASL store files. FreeBSD's POSIX.1e ACLs
+ * use a different model (no extended ALLOW/DENY entries) — the
+ * code path is essentially "best-effort"; setting these constants
+ * to values FreeBSD ignores keeps the source compiling and the
+ * store creation falls back to plain mode bits. */
+#ifndef ACL_EXTENDED_ALLOW
+#define ACL_EXTENDED_ALLOW	1
+#endif
+#ifndef ACL_EXTENDED_DENY
+#define ACL_EXTENDED_DENY	2
+#endif
+
 #endif
