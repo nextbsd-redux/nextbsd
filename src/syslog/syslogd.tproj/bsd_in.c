@@ -57,8 +57,16 @@ bsd_in_acceptmsg(int fd)
 	}
 	if (len == 0) return;
 
+	/* Phase J runtime debug. */
+	FILE *_d = fopen("/tmp/bsd_in_recv.log", "a");
+	if (_d) { fprintf(_d, "[%d] recv fd=%d len=%zd: %.120s\n", getpid(), fd, len, dline); fclose(_d); }
+
 	m = asl_input_parse(dline, len, NULL, SOURCE_BSD_SOCK);
+	_d = fopen("/tmp/bsd_in_recv.log", "a");
+	if (_d) { fprintf(_d, "[%d]   asl_input_parse -> %p\n", getpid(), (void*)m); fclose(_d); }
 	process_message(m, SOURCE_BSD_SOCK);
+	_d = fopen("/tmp/bsd_in_recv.log", "a");
+	if (_d) { fprintf(_d, "[%d]   process_message OK\n", getpid()); fclose(_d); }
 }
 
 static int

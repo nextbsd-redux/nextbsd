@@ -426,7 +426,18 @@ echo "--- logger post (tag=$PING_TAG) ---"
 logger_out=$(logger -p user.notice -t phasej-test "$PING_TAG" 2>&1)
 logger_rc=$?
 echo "post rc=$logger_rc out: ${logger_out:-(empty)}"
-sleep 2
+# Apple syslogd's bsd_in is dispatch_source-based — give it more
+# time + multiple writes so we see if it's a timing issue.
+logger -p user.notice -t phasej-test "$PING_TAG-2" 2>&1 || true
+logger -p user.notice -t phasej-test "$PING_TAG-3" 2>&1 || true
+sleep 4
+
+echo "--- full /var/log tree (any new files?) ---"
+find /var/log -type f -newer /etc/asl.conf 2>&1 | head -20
+echo "--- /tmp/bsd_in_init.log fresh ---"
+[ -f /tmp/bsd_in_init.log ] && cat /tmp/bsd_in_init.log || echo "(no init log)"
+echo "--- /tmp/bsd_in_recv.log (per-message receive) ---"
+[ -f /tmp/bsd_in_recv.log ] && cat /tmp/bsd_in_recv.log || echo "(no recv log)"
 
 echo "--- post-state: /var/log/syslogd.stderr ---"
 [ -f /var/log/syslogd.stderr ] && cat /var/log/syslogd.stderr || echo "(no stderr file)"
