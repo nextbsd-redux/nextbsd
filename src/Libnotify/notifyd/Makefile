@@ -20,7 +20,8 @@ WARNS?=		0
 SRCS=		notifyd.c \
 		notify_proc.c \
 		pathwatch.c \
-		service.c
+		service.c \
+		../freebsd-shims/notifyd_stubs.c
 
 MIGOUT?=
 .if !empty(MIGOUT)
