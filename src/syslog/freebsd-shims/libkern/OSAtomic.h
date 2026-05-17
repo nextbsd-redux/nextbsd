@@ -6,6 +6,7 @@
 
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 /* Apple's OSAtomic* functions return the NEW value (post-op). C11
  * atomic_fetch_* return the OLD value, so we add/subtract after.
