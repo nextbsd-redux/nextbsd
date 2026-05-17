@@ -59,6 +59,11 @@ CFLAGS+=	-I${.CURDIR}/../launchd/liblaunch
 CFLAGS+=	-D__APPLE_API_PRIVATE -DPRIVATE=1
 CFLAGS+=	-fblocks		# libdispatch block syntax
 
+# Force-include compat shim so notify_client.c sees ASL_LEVEL_*
+# constants without needing #include <asl.h> in Apple's source.
+# Same pattern as launchd's launchctl_freebsd_compat.h.
+CFLAGS+=	-include ${.CURDIR}/freebsd-shims/libnotify_freebsd_compat.h
+
 .if !empty(SYSROOT)
 CFLAGS+=	-I${SYSROOT}/usr/include
 LDFLAGS+=	-L${SYSROOT}/usr/lib/system

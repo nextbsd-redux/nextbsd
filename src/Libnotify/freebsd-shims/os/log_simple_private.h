@@ -17,7 +17,9 @@ typedef enum {
 /* Apple's os_log_simple* prototypes — stubbed to vfprintf(stderr). */
 #define os_log_simple(level, msg)		(void)fprintf(stderr, "%s\n", (msg))
 #define os_log_simple_with_pid(level, pid, msg)	(void)fprintf(stderr, "[%d] %s\n", (int)(pid), (msg))
-#define os_log_simple_type(type, subsystem, msg) (void)fprintf(stderr, "%s\n", (msg))
-#define os_log_simple_with_subsystem(level, subsystem, msg) (void)fprintf(stderr, "[%s] %s\n", (subsystem), (msg))
+#define os_log_simple_type(type, subsystem, fmt, ...) \
+	(void)fprintf(stderr, "[%s] " fmt "\n", (subsystem), ##__VA_ARGS__)
+#define os_log_simple_with_subsystem(level, subsystem, fmt, ...) \
+	(void)fprintf(stderr, "[%s] " fmt "\n", (subsystem), ##__VA_ARGS__)
 
 #endif
