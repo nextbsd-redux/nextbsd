@@ -36,3 +36,24 @@ fileport_invalidate(mach_port_t port)
 {
 	(void)port;
 }
+
+/* OS_BUG_CLIENT — Apple's "soft client-fault" reporter, used by
+ * libnotify's NOTIFY_CLIENT_CRASH macro for unrecoverable client-side
+ * conditions (loopback misuse, entitlement mismatches). Apple posts
+ * to the os_log fault stream and calls abort(). Logging to stderr +
+ * abort() is semantically equivalent for any caller already in an
+ * unrecoverable state.
+ *
+ * Linked into libnotify directly (same .c is in SRCS) so the symbol
+ * is resolved at libnotify.so.1 link time and dlopen'd consumers
+ * (syslog(1), aslmanager, future configd) don't trip an unresolved
+ * symbol at runtime. */
+#include <stdio.h>
+#include <stdlib.h>
+void
+OS_BUG_CLIENT(unsigned long code, const char *subsystem, const char *msg)
+{
+	fprintf(stderr, "OS_BUG_CLIENT[%s, code=%lu]: %s\n",
+	    subsystem ? subsystem : "(null)", code, msg ? msg : "(null)");
+	abort();
+}
