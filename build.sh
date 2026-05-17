@@ -943,6 +943,48 @@ test -L "$WORK/rootfs/usr/lib/system/libnotify.so" \
 echo "==> NOTIFY-LIB-OK"
 
 #
+# 3t. Phase J1 iter 2 — generate ASL MIG stubs + build libsystem_asl.
+#     Apple's libsystem_asl (src/syslog/libsystem_asl.tproj/). Plus
+#     aslcommon static-lib (src/syslog/aslcommon/) merged into the .so.
+#     syslogd / aslmanager / syslog(1) ship in J2-J5.
+#     Plan: pkgdemon.github.io/freebsd-asl-plan.html
+#
+echo "==> Phase J1: generating ASL MIG stubs"
+ASL_MIG_OUT="$WORK/asl-mig"
+mkdir -p "$ASL_MIG_OUT"
+ASL_MIG_INCS="-I$ROOT/src/libmach/include -I$ROOT/src/syslog/aslcommon -I$ROOT/src/syslog/libsystem_asl.tproj/include"
+( cd "$ASL_MIG_OUT" && \
+  MIGCC=/usr/bin/cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
+  /bin/sh "$ROOT/src/bootstrap_cmds/migcom.tproj/mig.sh" \
+    $ASL_MIG_INCS \
+    -header "asl_ipc.h" -user "asl_ipcUser.c" \
+    -server "asl_ipcServer.c" -sheader "asl_ipcServer.h" \
+    "$ROOT/src/syslog/aslcommon/asl_ipc.defs" ) \
+  || { echo "FAIL: mig could not process asl_ipc.defs"; exit 1; }
+for f in asl_ipc.h asl_ipcUser.c; do
+    test -s "$ASL_MIG_OUT/$f" \
+        || { echo "FAIL: mig produced no $f from asl_ipc.defs"; exit 1; }
+done
+echo "==> Phase J1: ASL MIG stubs generated"
+ls -la "$ASL_MIG_OUT"
+
+echo "==> Phase J1: building libsystem_asl (src/syslog/libsystem_asl.tproj)"
+mkdir -p "$WORK/rootfs/usr/lib/system"
+make -C "$ROOT/src/syslog/libsystem_asl.tproj" \
+    DESTDIR="$WORK/rootfs" \
+    SYSROOT="$WORK/rootfs" \
+    MIGOUT="$ASL_MIG_OUT" \
+    all install
+ls -lh "$WORK/rootfs/usr/lib/system/libsystem_asl.so"* 2>/dev/null
+test -f "$WORK/rootfs/usr/lib/system/libsystem_asl.so.1" \
+    || { echo "FAIL: libsystem_asl.so.1 not installed"; exit 1; }
+test -L "$WORK/rootfs/usr/lib/system/libsystem_asl.so" \
+    || { echo "FAIL: libsystem_asl.so symlink not installed"; exit 1; }
+test -f "$WORK/rootfs/usr/include/asl.h" \
+    || { echo "FAIL: /usr/include/asl.h not installed"; exit 1; }
+echo "==> ASL-LIB-OK"
+
+#
 # 3z. purge build packages + clean pkg cache + tear down chroot.
 #     Runs LAST in the build phase, after every chroot-side build
 #     (libdispatch) has used cmake/ninja/clang. Build pkgs (cmake/ninja
