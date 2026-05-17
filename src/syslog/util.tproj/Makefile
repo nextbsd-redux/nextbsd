@@ -9,7 +9,7 @@ MAN=
 NO_MAN=		yes
 WARNS?=		0
 
-SRCS=		syslog.c
+SRCS=		syslog.c procinfo_freebsd.c
 
 # Pull aslcommon sources (static dep — same pattern as syslogd/aslmanager)
 .PATH:		${.CURDIR}/../aslcommon

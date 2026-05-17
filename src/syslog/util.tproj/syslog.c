@@ -33,9 +33,6 @@
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
-#ifdef __FreeBSD__
-#include <sys/user.h>		/* full kinfo_proc definition */
-#endif
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <mach/mach.h>
@@ -486,6 +483,18 @@ module_control(int argc, char *argv[])
 	exit(-1);
 }
 
+#ifdef __FreeBSD__
+/* Apple kinfo_proc clashes with FreeBSD <sys/user.h> when the latter
+ * is pulled into a TU that already saw libmach's <mach/vm_map.h>
+ * (vm_map_t and boolean_t typedefs collide). Delegate the sysctl walk
+ * to a Mach-header-free helper in procinfo_freebsd.c. */
+extern int procinfo_freebsd(char *pname, int *pid, int *uid);
+int
+procinfo(char *pname, int *pid, int *uid)
+{
+	return procinfo_freebsd(pname, pid, uid);
+}
+#else
 int
 procinfo(char *pname, int *pid, int *uid)
 {
@@ -539,19 +548,11 @@ procinfo(char *pname, int *pid, int *uid)
 		/* Search for a pid */
 		for (i = 0; i < nprocs; i++)
 		{
-#ifdef __FreeBSD__
-			if (*pid == procs[i].ki_pid)
-			{
-				*uid = procs[i].ki_uid;
-				return 0;
-			}
-#else
 			if (*pid == procs[i].kp_proc.p_pid)
 			{
 				*uid = procs[i].kp_eproc.e_ucred.cr_uid;
 				return 0;
 			}
-#endif
 		}
 
 		return PROC_NOT_FOUND;
@@ -561,19 +562,6 @@ procinfo(char *pname, int *pid, int *uid)
 
 	for (i = 0; i < nprocs; i++)
 	{
-#ifdef __FreeBSD__
-		if (!strcmp(procs[i].ki_comm, pname))
-		{
-			if (*pid != PROC_NOT_FOUND)
-			{
-				free(procs);
-				return PROC_NOT_UNIQUE;
-			}
-
-			*pid = procs[i].ki_pid;
-			*uid = procs[i].ki_uid;
-		}
-#else
 		if (!strcmp(procs[i].kp_proc.p_comm, pname))
 		{
 			if (*pid != PROC_NOT_FOUND)
@@ -585,7 +573,6 @@ procinfo(char *pname, int *pid, int *uid)
 			*pid = procs[i].kp_proc.p_pid;
 			*uid = procs[i].kp_eproc.e_ucred.cr_uid;
 		}
-#endif
 	}
 
 	free(procs);
@@ -593,6 +580,7 @@ procinfo(char *pname, int *pid, int *uid)
 
 	return 0;
 }
+#endif /* __FreeBSD__ */
 
 int
 rcontrol_get_string(const char *name, int *val)
