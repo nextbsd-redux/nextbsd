@@ -27,6 +27,24 @@
 #define SANDBOX_FILTER_ENTITLEMENT		11
 #define SANDBOX_FILTER_PREFERENCE_DOMAIN	12
 
+/* enum sandbox_filter_type — Apple casts to this. Define with same
+ * values as the macros above. */
+enum sandbox_filter_type {
+	sandbox_filter_none			= SANDBOX_FILTER_NONE,
+	sandbox_filter_path			= SANDBOX_FILTER_PATH,
+	sandbox_filter_global_name		= SANDBOX_FILTER_GLOBAL_NAME,
+	sandbox_filter_local_name		= SANDBOX_FILTER_LOCAL_NAME,
+	sandbox_filter_appleevent_destination	= SANDBOX_FILTER_APPLEEVENT_DESTINATION,
+	sandbox_filter_right_name		= SANDBOX_FILTER_RIGHT_NAME,
+	sandbox_filter_notification		= SANDBOX_FILTER_NOTIFICATION,
+	sandbox_filter_kext_bundle_id		= SANDBOX_FILTER_KEXT_BUNDLE_ID,
+	sandbox_filter_info_type		= SANDBOX_FILTER_INFO_TYPE,
+	sandbox_filter_notification_name	= SANDBOX_FILTER_NOTIFICATION_NAME,
+	sandbox_filter_process_path		= SANDBOX_FILTER_PROCESS_PATH,
+	sandbox_filter_entitlement		= SANDBOX_FILTER_ENTITLEMENT,
+	sandbox_filter_preference_domain	= SANDBOX_FILTER_PREFERENCE_DOMAIN,
+};
+
 static inline int
 sandbox_init(const char *profile, uint64_t flags, char **errorbuf)
 {

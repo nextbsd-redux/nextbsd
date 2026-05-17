@@ -46,6 +46,17 @@ typedef void * os_map_ptr_t;
 #define os_set_contains(s, k)			false
 #define os_set_count(s)				0
 
+/* os_map_delete must return a pointer (caller assigns to typed
+ * pointer), not void. Same for find/get. */
+#undef  os_map_get
+#undef  os_map_insert
+#undef  os_map_delete
+#undef  os_map_find
+#define os_map_get(m, k)			((void *)0)
+#define os_map_find(m, k)			((void *)0)
+#define os_map_insert(m, k, v)			((void)(k), (void)(v))
+#define os_map_delete(m, k)			((void *)0)
+
 /* table.c (libnotify's hash table) uses these. Stubbed to NULL so
  * .c compiles; runtime correctness requires a real implementation. */
 #define os_set_find(s, k)			((void *)0)
