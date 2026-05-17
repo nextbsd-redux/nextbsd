@@ -11,8 +11,14 @@
 	     eager start. Drop once lazy-spawn is verified. -->
 	<key>RunAtLoad</key>
 	<true/>
+	<!-- KeepAlive intentionally DROPPED during Phase J runtime
+	     debug. With KeepAlive=true, launchd respawns syslogd faster
+	     than procstat can sample it (pid is gone by the next ps
+	     call), masking the actual crash. Let it die once so the
+	     stderr log + exit code survive. Restore once stable. -->
+	<!-- <key>KeepAlive</key> <true/> -->
 	<key>KeepAlive</key>
-	<true/>
+	<false/>
 	<key>EnableTransactions</key>
 	<true/>
 	<key>EnablePressuredExit</key>
