@@ -284,29 +284,49 @@ launch_config()
 	launch_data_t tmp, pdict;
 	kern_return_t status;
 
+	/* Phase J runtime debug. */
+#define _PJ_LC(tag) do { \
+	FILE *_pjf = fopen("/tmp/launch_config.log", "a"); \
+	if (_pjf) { fprintf(_pjf, "[%d] " tag "\n", getpid()); fclose(_pjf); } \
+} while(0)
+
+	_PJ_LC("entry");
+
 	tmp = launch_data_new_string(LAUNCH_KEY_CHECKIN);
+	_PJ_LC("after launch_data_new_string");
 	global.launch_dict = launch_msg(tmp);
+	_PJ_LC("after launch_msg");
 	launch_data_free(tmp);
+	_PJ_LC("after launch_data_free");
 
 	if (global.launch_dict == NULL)
 	{
+		_PJ_LC("launch_dict NULL — FreeBSD port: return rather than exit");
 		asldebug("%d launchd checkin failed\n", global.pid);
-		exit(1);
+		/* FreeBSD port: don't exit. syslogd can still ingest via
+		 * bsd_in / klog_in even without a MachService. The dbserver
+		 * Mach loop just won't have a port to listen on, which means
+		 * no syslog(1) round-trip via Mach — but that path already
+		 * hangs on our launchd-842 + mach.ko anyway. */
+		return;
 	}
 
 	tmp = launch_data_dict_lookup(global.launch_dict, LAUNCH_JOBKEY_MACHSERVICES);
 	if (tmp == NULL)
 	{
+		_PJ_LC("MACHSERVICES NULL — FreeBSD port: return rather than exit");
 		asldebug("%d launchd lookup of LAUNCH_JOBKEY_MACHSERVICES failed\n", global.pid);
-		exit(1);
+		return;
 	}
 
 	pdict = launch_data_dict_lookup(tmp, SERVICE_NAME);
 	if (pdict == NULL)
 	{
+		_PJ_LC("SERVICE_NAME NULL — FreeBSD port: return rather than exit");
 		asldebug("%d launchd lookup of SERVICE_NAME failed\n", global.pid);
-		exit(1);
+		return;
 	}
+	_PJ_LC("got SERVICE_NAME pdict");
 
 	global.server_port = launch_data_get_machport(pdict);
 
@@ -336,8 +356,10 @@ launch_config()
 	if (status != KERN_SUCCESS)
 	{
 		asldebug("mach_port_move_member dead_session_port failed (%u)", status);
-		exit(1);
+		return;
 	}
+	_PJ_LC("exit OK");
+#undef _PJ_LC
 }
 
 void
