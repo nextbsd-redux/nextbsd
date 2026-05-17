@@ -385,11 +385,24 @@ if [ ! -x /usr/bin/syslog ]; then
 fi
 
 PING_TAG="PHASEJ-RUNTIME-PING-$$-$(date +%s)"
+
+echo "--- pre-state: /var/log/syslogd.stderr ---"
+[ -f /var/log/syslogd.stderr ] && cat /var/log/syslogd.stderr || echo "(no stderr file)"
+echo "--- pre-state: /var/log/asl/ listing ---"
+ls -la /var/log/asl/ 2>&1 || echo "(no asl dir)"
+echo "--- pre-state: bootstrap_list ---"
+launchctl bootstrap_list 2>&1 | head -10 || true
+
 echo "--- syslog -s post (tag=$PING_TAG) ---"
 syslog_send_out=$(/usr/bin/syslog -s -l notice "$PING_TAG" 2>&1)
 syslog_send_rc=$?
 echo "post rc=$syslog_send_rc out: ${syslog_send_out:-(empty)}"
 sleep 2
+
+echo "--- post-state: /var/log/syslogd.stderr ---"
+[ -f /var/log/syslogd.stderr ] && cat /var/log/syslogd.stderr || echo "(no stderr file)"
+echo "--- post-state: /var/log/asl/ listing ---"
+ls -la /var/log/asl/ 2>&1 || echo "(no asl dir)"
 
 echo "--- syslog (read) | tail -30 ---"
 syslog_read=$(/usr/bin/syslog 2>&1 | tail -30)
