@@ -45,3 +45,57 @@ os_log_with_args_4syslog(void *log, uint8_t type, const char *format,
 {
 	(void)log; (void)type; (void)format; (void)args; (void)ret_addr;
 }
+
+/* mbr_check_membership — Apple's membership-resolver: is uid X a
+ * member of group/uuid Y? FreeBSD has POSIX group enumeration only;
+ * the membership service is macOS-only. Return ENOENT-style (-1)
+ * so callers fall back to "not a member" safely. */
+int
+mbr_check_membership(void *user, void *group, int *ismember)
+{
+	(void)user; (void)group;
+	if (ismember) *ismember = 0;
+	return -1;
+}
+
+/* _NSGet{Argv,Argc,Progname,Environ} — Apple crt_externs. On macOS
+ * argv lives in a special segment accessed via these getters; on
+ * FreeBSD argv is just argv. libsystem_asl uses _NSGetArgv to pull
+ * the process executable path for the Sender field of ASL messages.
+ * Provide pointers to static empty fallbacks so callers don't crash;
+ * Sender just shows as empty. */
+extern char **environ;
+static char *_asl_stub_empty_argv[] = { NULL };
+static int _asl_stub_argc = 0;
+static char *_asl_stub_progname = "";
+
+char ***_NSGetArgv(void) { static char **p = _asl_stub_empty_argv; return &p; }
+int    *_NSGetArgc(void) { return &_asl_stub_argc; }
+char  **_NSGetProgname(void) { return &_asl_stub_progname; }
+char ***_NSGetEnviron(void) { return &environ; }
+
+/* vm_allocate / vm_deallocate — Apple's Mach VM wrappers. libmach
+ * doesn't ship mach_vm_*; fall through to mmap/munmap. Stand-alone
+ * here so libsystem_asl.so doesn't depend on notifyd_stubs.c
+ * (which lives next to libnotify). */
+#include <sys/mman.h>
+
+int
+vm_allocate(unsigned int task, unsigned long *address,
+    unsigned long size, int flags)
+{
+	(void)task; (void)flags;
+	void *p = mmap(NULL, size, PROT_READ|PROT_WRITE,
+	    MAP_ANON|MAP_PRIVATE, -1, 0);
+	if (p == MAP_FAILED) return 3; /* KERN_NO_SPACE */
+	*address = (unsigned long)p;
+	return 0; /* KERN_SUCCESS */
+}
+
+int
+vm_deallocate(unsigned int task, unsigned long address, unsigned long size)
+{
+	(void)task;
+	if (munmap((void *)address, size) != 0) return 5; /* KERN_FAILURE */
+	return 0;
+}

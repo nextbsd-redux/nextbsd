@@ -81,6 +81,8 @@ LDFLAGS+=	-Wl,--no-allow-shlib-undefined -Wl,-z,defs
 
 LDADD+=		-lxpc -ldispatch -lsystem_kernel -lpthread -lBlocksRuntime
 LDADD+=		-lbsm		# audit_token_to_au32 from FreeBSD base
+LDADD+=		-lnotify	# notify_post / notify_register_* (asl_action.c)
+LDADD+=		-llaunch	# bootstrap_look_up2 / bootstrap_priv
 
 # Install path
 LIBDIR=		/usr/lib/system
