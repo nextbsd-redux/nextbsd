@@ -51,7 +51,7 @@ LDFLAGS+=	-Wl,-rpath,/usr/lib/system
 LDFLAGS+=	-Wl,--allow-shlib-undefined
 .endif
 
-LDADD+=		-lsystem_asl -lnotify -lxpc -ldispatch -lsystem_kernel \
+LDADD+=		-lsystem_asl -lnotify -llaunch -lxpc -ldispatch -lsystem_kernel \
 		-lpthread -lBlocksRuntime -lbsm -lz
 
 # Re-use notifyd's stub file — it covers most Apple-private link symbols

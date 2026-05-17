@@ -124,3 +124,42 @@ OS_BUG_INTERNAL(const char *fmt, ...)
 {
 	(void)fmt;
 }
+
+/*
+ * syslogd-specific stubs (re-used by syslogd via .PATH lift of this
+ * same file).
+ */
+
+/* os_release — Apple's reference-counting release. No-op. */
+void os_release(void *obj) { (void)obj; }
+
+/* voucher_mach_msg_adopt / revert — voucher inheritance for sync
+ * MIG calls. We don't have vouchers; no-op. */
+typedef mach_port_t voucher_mach_msg_state_t_local;
+voucher_mach_msg_state_t_local
+voucher_mach_msg_adopt(mach_msg_header_t *msg)
+{
+	(void)msg;
+	return MACH_PORT_NULL;
+}
+
+void
+voucher_mach_msg_revert(voucher_mach_msg_state_t_local state)
+{
+	(void)state;
+}
+
+/* qtn_proc_set_* stubs (quarantine.h has the alloc/init versions). */
+int
+qtn_proc_set_identifier(void *qp, const char *id) { (void)qp; (void)id; return 0; }
+int
+qtn_proc_set_flags(void *qp, uint32_t flags) { (void)qp; (void)flags; return 0; }
+
+/* _malloc_no_asl_log — Apple's malloc variant that won't recursively
+ * call into ASL. Stub to plain malloc. */
+#include <stdlib.h>
+void *
+_malloc_no_asl_log(size_t sz)
+{
+	return malloc(sz);
+}
