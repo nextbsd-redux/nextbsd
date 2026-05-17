@@ -30,7 +30,8 @@ SRCS=		asl.c \
 		asl_util.c \
 		asl_fd.c \
 		syslog.c \
-		asl_mt_shim.c
+		asl_mt_shim.c \
+		asl_stubs.c
 
 # Pull aslcommon sources into our build (so .so includes them) —
 # matches Apple Xcode's pattern where libsystem_asl re-uses the
