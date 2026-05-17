@@ -567,15 +567,17 @@ typedef union {
  * for now.
  */
 /* mach_port_options_t — Apple's port-creation attribute struct.
- * The nested mpl field is mach_port_limits_t from mach_port.h
- * (already declared). Forward-declare here to avoid a cycle. */
-struct mach_port_limits;
-
+ * The nested .mpl field carries the port queue limit. We inline
+ * the struct (a single uint32_t) rather than include mach_port.h
+ * (which would risk a circular header dep). Layout-compatible with
+ * Apple's mach_port_limits_t. */
 typedef struct {
-	uint32_t		flags;
-	struct mach_port_limits	mpl;
-	uint64_t		work_interval_id;
-	uint64_t		reserved[2];
+	uint32_t	flags;
+	struct {
+		uint32_t	mpl_qlimit;
+	} mpl;
+	uint64_t	work_interval_id;
+	uint64_t	reserved[2];
 } mach_port_options_t;
 typedef mach_port_options_t *mach_port_options_ptr_t;
 
