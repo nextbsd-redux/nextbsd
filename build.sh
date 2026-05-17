@@ -925,6 +925,15 @@ for f in notify_ipc.h notify_ipcUser.c; do
     test -s "$LIBNOTIFY_MIG_OUT/$f" \
         || { echo "FAIL: mig produced no $f from notify_ipc.defs"; exit 1; }
 done
+# notifyd.c / notify_proc.c include "notifyServer.h" / "notifyUser.h"
+# but our MIG subsystem is "notify_ipc". Symlink the short names to
+# the long ones — Apple's xcode build does the equivalent via build
+# settings (-prefix or wrapper rules).
+( cd "$LIBNOTIFY_MIG_OUT" && \
+    ln -sf notify_ipc.h notifyServer.h && \
+    ln -sf notify_ipc.h notifyUser.h && \
+    ln -sf notify_ipcServer.c notifyServer.c && \
+    ln -sf notify_ipcUser.c notifyUser.c )
 echo "==> Phase J1: libnotify MIG stubs generated"
 ls -la "$LIBNOTIFY_MIG_OUT"
 
