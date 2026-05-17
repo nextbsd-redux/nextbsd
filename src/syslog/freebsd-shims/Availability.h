@@ -77,4 +77,22 @@
 #define __API_UNAVAILABLE(...)
 #define __SPI_AVAILABLE(...)
 
+/* Apple's platform-tagged availability constructors (used INSIDE
+ * the API_DEPRECATED variadic args). No-op. */
+#define macos(...)
+#define macosx(...)
+#define ios(...)
+#define iphoneos(...)
+#define watchos(...)
+#define tvos(...)
+#define bridgeos(...)
+#define driverkit(...)
+#define visionos(...)
+#define maccatalyst(...)
+
+/* Apple's __not_tail_called clang attribute. */
+#define __not_tail_called
+#define __not_tail_called_inline
+#define __disable_tail_calls
+
 #endif /* !_LIBXPC_AVAILABILITY_H_SHIM_ */
