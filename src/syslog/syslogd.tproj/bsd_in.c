@@ -39,6 +39,17 @@ static const char *sock_path[NSOCK] = { BSD_SOCK_PATH, BSD_PRIV_PATH };
 
 static char dline[MAXLINE + 1];
 
+/* Polling-thread fallback. libdispatch's DISPATCH_SOURCE_TYPE_READ
+ * doesn't wake up for AF_UNIX SOCK_DGRAM message arrivals on
+ * FreeBSD in our build — likely a kqueue/EVFILT_READ interaction
+ * with our libdispatch port. Use a real pthread with poll(2) on
+ * both fds, just like phase_e_libdispatch_mach_recv did for Mach
+ * RECV sources. Replace once dispatch's source firing is fixed. */
+#include <pthread.h>
+#include <poll.h>
+static pthread_t bsd_in_poll_thread;
+static int bsd_in_poll_started;
+
 static void
 bsd_in_acceptmsg(int fd)
 {
@@ -114,14 +125,35 @@ bsd_in_open_one(int idx)
 	}
 
 	sockfd[idx] = fd;
-	in_src[idx] = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ,
-	    (uintptr_t)fd, 0, in_queue);
-	dispatch_source_set_event_handler(in_src[idx],
-	    ^{ bsd_in_acceptmsg(fd); });
-	dispatch_resume(in_src[idx]);
-
+	/* Polling thread (see bsd_in_poll_loop) handles both fds; no
+	 * dispatch source needed. */
 	asldebug("%s: listening on %s (fd %d)\n", MY_ID, sock_path[idx], fd);
 	return 0;
+}
+
+static void *
+bsd_in_poll_loop(void *unused)
+{
+	struct pollfd pfd[NSOCK];
+	(void)unused;
+
+	for (;;) {
+		int i, n = 0;
+		for (i = 0; i < NSOCK; i++) {
+			if (sockfd[i] < 0) continue;
+			pfd[n].fd = sockfd[i];
+			pfd[n].events = POLLIN;
+			pfd[n].revents = 0;
+			n++;
+		}
+		if (n == 0) { usleep(100000); continue; }
+		int pr = poll(pfd, n, 1000);
+		if (pr <= 0) continue;
+		for (i = 0; i < n; i++) {
+			if (pfd[i].revents & POLLIN) bsd_in_acceptmsg(pfd[i].fd);
+		}
+	}
+	return NULL;
 }
 
 int
@@ -131,8 +163,6 @@ bsd_in_init(void)
 	int i, ok = 0;
 	FILE *dbg;
 
-	/* Phase J runtime debug: write to a fixed sentinel file so we
-	 * can see init progress regardless of stderr/asldebug state. */
 	dbg = fopen("/tmp/bsd_in_init.log", "a");
 	if (dbg) { fprintf(dbg, "[%d] bsd_in_init: entered\n", getpid()); fclose(dbg); }
 
@@ -154,11 +184,18 @@ bsd_in_init(void)
 		if (rc == 0) ok++;
 	}
 
+	if (ok > 0 && !bsd_in_poll_started) {
+		if (pthread_create(&bsd_in_poll_thread, NULL,
+		    bsd_in_poll_loop, NULL) == 0) {
+			bsd_in_poll_started = 1;
+		}
+		dbg = fopen("/tmp/bsd_in_init.log", "a");
+		if (dbg) { fprintf(dbg, "[%d] bsd_in_init: poll thread started=%d\n", getpid(), bsd_in_poll_started); fclose(dbg); }
+	}
+
 	dbg = fopen("/tmp/bsd_in_init.log", "a");
 	if (dbg) { fprintf(dbg, "[%d] bsd_in_init: returning ok=%d\n", getpid(), ok); fclose(dbg); }
 
-	/* Either socket is enough to declare success; the other may be
-	 * pre-empted by FreeBSD's base syslogd or unavailable. */
 	return (ok > 0) ? 0 : -1;
 }
 
@@ -169,14 +206,13 @@ bsd_in_close(void)
 
 	for (i = 0; i < NSOCK; i++) {
 		if (sockfd[i] < 0) continue;
-		dispatch_source_cancel(in_src[i]);
-		dispatch_release(in_src[i]);
-		in_src[i] = NULL;
 		close(sockfd[i]);
 		(void)unlink(sock_path[i]);
 		sockfd[i] = -1;
 		did++;
 	}
+	/* Polling thread keeps running across reset; only stops when
+	 * syslogd exits. Detaching avoids the cancel/release dance. */
 	return (did > 0) ? 0 : 1;
 }
 
