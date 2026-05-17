@@ -93,4 +93,19 @@ OSAtomicCompareAndSwapPtr(void *old_val, void *new_val, void * volatile *p)
 	    (void **)&old_val, new_val);
 }
 
+/* Apple's "Long" CAS is platform-native long. amd64 / arm64 = 64-bit
+ * (LP64); fall through to the 64-bit primitive. */
+static inline bool
+OSAtomicCompareAndSwapLong(long old_val, long new_val, volatile long *p)
+{
+	return atomic_compare_exchange_strong((_Atomic long *)p,
+	    &old_val, new_val);
+}
+
+static inline bool
+OSAtomicCompareAndSwapLongBarrier(long old_val, long new_val, volatile long *p)
+{
+	return OSAtomicCompareAndSwapLong(old_val, new_val, p);
+}
+
 #endif
