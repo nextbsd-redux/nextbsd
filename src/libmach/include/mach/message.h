@@ -559,6 +559,24 @@ typedef union {
 #define MACH_SEND_FILTER_NONFATAL	0x00010000
 #endif
 
+/* Apple Mach voucher-related option bits + types. We don't implement
+ * vouchers; consumers that try to attach/receive vouchers see no-op
+ * behavior. */
+#ifndef MACH_RCV_VOUCHER
+#define MACH_RCV_VOUCHER	0x00000800
+#endif
+#ifndef MACH_SEND_NO_BUFFER
+#define MACH_SEND_NO_BUFFER	0x00020000
+#endif
+
+typedef mach_port_t voucher_mach_msg_state_t;
+
+/* MAX_TRAILER_SIZE — largest possible Mach message trailer size.
+ * Apple defines as 116; matches their <mach/message.h>. */
+#ifndef MAX_TRAILER_SIZE
+#define MAX_TRAILER_SIZE	(sizeof(mach_msg_audit_trailer_t) + 8)
+#endif
+
 /*
  * mach_port_options_t — Apple's struct passed to mach_port_construct
  * for port creation with attributes (guard tokens, strict semantics).
