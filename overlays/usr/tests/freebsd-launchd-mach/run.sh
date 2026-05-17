@@ -426,11 +426,17 @@ echo "--- logger post (tag=$PING_TAG) ---"
 logger_out=$(logger -p user.notice -t phasej-test "$PING_TAG" 2>&1)
 logger_rc=$?
 echo "post rc=$logger_rc out: ${logger_out:-(empty)}"
-# Apple syslogd's bsd_in is dispatch_source-based — give it more
-# time + multiple writes so we see if it's a timing issue.
 logger -p user.notice -t phasej-test "$PING_TAG-2" 2>&1 || true
 logger -p user.notice -t phasej-test "$PING_TAG-3" 2>&1 || true
-sleep 4
+
+# Also direct-write to /var/run/log via socket(1) (FreeBSD base
+# tool) to bypass libc syslog(3) — if logger silently fails to
+# reach the socket, this confirms the socket itself works.
+echo "--- direct datagram via nc ---"
+printf '<13>May 17 12:00:00 directhost direct-test: PHASEJ-DIRECT-PING-%s\n' "$$" | \
+    nc -u -U /var/run/log -W 1 2>&1 || true
+
+sleep 5
 
 echo "--- full /var/log tree (any new files?) ---"
 find /var/log -type f -newer /etc/asl.conf 2>&1 | head -20

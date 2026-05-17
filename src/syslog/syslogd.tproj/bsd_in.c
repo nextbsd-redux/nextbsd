@@ -135,6 +135,7 @@ static void *
 bsd_in_poll_loop(void *unused)
 {
 	struct pollfd pfd[NSOCK];
+	int loops = 0;
 	(void)unused;
 
 	for (;;) {
@@ -148,6 +149,12 @@ bsd_in_poll_loop(void *unused)
 		}
 		if (n == 0) { usleep(100000); continue; }
 		int pr = poll(pfd, n, 1000);
+		/* Heartbeat every 5 loops (~5s) so we see the thread is alive. */
+		if (++loops % 5 == 0) {
+			FILE *_d = fopen("/tmp/bsd_in_recv.log", "a");
+			if (_d) { fprintf(_d, "[%d] poll loop tick=%d nfds=%d rc=%d (errno=%d)\n",
+			    getpid(), loops, n, pr, errno); fclose(_d); }
+		}
 		if (pr <= 0) continue;
 		for (i = 0; i < n; i++) {
 			if (pfd[i].revents & POLLIN) bsd_in_acceptmsg(pfd[i].fd);
