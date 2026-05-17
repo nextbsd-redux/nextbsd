@@ -406,11 +406,11 @@ echo "launchd-spawned pid=$syslogd_pid"
 # Iter 26: RunAtLoad dropped on syslogd plist. Start manually as
 # non-launchd child to bypass the launch_msg(CHECKIN) Mach hang.
 echo "--- starting syslogd manually (non-launchd child) ---"
-/usr/sbin/syslogd &
+/usr/sbin/syslogd >/tmp/syslogd_manual.stderr 2>&1 &
 manual_syslogd_pid=$!
 echo "manual syslogd pid=$manual_syslogd_pid"
 sleep 2
-pgrep -lf syslogd || true
+ps auxww | grep -E 'syslogd|notifyd' | grep -v grep || true
 ls -la /var/run/log /var/run/logpriv 2>&1 || true
 
 echo "--- /var/log/asl/ + /var/log/asl/Logs/ pre-post ---"
@@ -439,8 +439,10 @@ echo "--- direct datagram via nc (FreeBSD nc has no -U for unix dgram — skip) 
 
 sleep 5
 
-echo "--- post-sleep: syslogd alive? ---"
-pgrep -lf syslogd || echo "(no syslogd running)"
+echo "--- post-sleep: ps for syslogd ---"
+ps auxww | grep -E 'syslogd|notifyd' | grep -v grep || echo "(no syslogd/notifyd)"
+echo "--- /tmp/syslogd_manual.stderr ---"
+[ -f /tmp/syslogd_manual.stderr ] && cat /tmp/syslogd_manual.stderr || echo "(no manual stderr)"
 echo "--- /tmp/bsd_in_recv.log live ---"
 [ -f /tmp/bsd_in_recv.log ] && wc -l /tmp/bsd_in_recv.log && cat /tmp/bsd_in_recv.log || echo "(no recv log)"
 echo "--- /tmp/syslogd_main.log (main breadcrumb) ---"
