@@ -408,11 +408,16 @@ echo "pid=$syslogd_pid"
 echo "--- ldd /usr/sbin/syslogd ---"
 ldd /usr/sbin/syslogd 2>&1 | head -30
 
+echo "--- /etc/asl.conf actual content ---"
+wc -c /etc/asl.conf; head -20 /etc/asl.conf
+
 echo "--- ktrace+kdump /usr/sbin/syslogd --help (5s timeout) ---"
 rm -f /tmp/syslogd.ktrace
 timeout 5 ktrace -di -f /tmp/syslogd.ktrace /usr/sbin/syslogd --help 2>&1 | head -10 || true
-echo "--- kdump tail -60 ---"
-kdump -f /tmp/syslogd.ktrace 2>&1 | tail -60 || true
+echo "--- kdump LAST 25 events (before SIGSEGV) ---"
+kdump -f /tmp/syslogd.ktrace 2>&1 | tail -25 || true
+echo "--- kdump grep PSIG/SIG ---"
+kdump -f /tmp/syslogd.ktrace 2>&1 | grep -E "PSIG|SIG|EXIT" | tail -10 || true
 
 echo "--- /tmp/bsd_in_init.log after direct launch ---"
 [ -f /tmp/bsd_in_init.log ] && cat /tmp/bsd_in_init.log || echo "(no init log)"
