@@ -192,6 +192,13 @@ typedef struct {
 #define MACH_MSGH_BITS_LOCAL_MASK	0x0000ff00
 #define MACH_MSGH_BITS_VOUCHER_MASK	0x001f0000
 
+/*
+ * MACH_MSGH_BITS_ZERO — used when one end of a Mach message has no
+ * port (e.g. fire-and-forget sends where no reply is wanted).
+ * libnotify uses it for the local_port slot of empty wakeup messages.
+ */
+#define MACH_MSGH_BITS_ZERO		0
+
 #define MACH_MSGH_BITS_REMOTE(bits) \
 	((bits) & MACH_MSGH_BITS_REMOTE_MASK)
 #define MACH_MSGH_BITS_LOCAL(bits) \
