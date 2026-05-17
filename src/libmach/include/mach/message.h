@@ -566,14 +566,14 @@ typedef union {
  * struct + the MPO_* flags; we ignore them in the trap implementation
  * for now.
  */
-/* mach_port_limits_t — nested in mach_port_options_t as `.mpl`. */
-typedef struct {
-	uint32_t	mpl_qlimit;
-} mach_port_limits_t;
+/* mach_port_options_t — Apple's port-creation attribute struct.
+ * The nested mpl field is mach_port_limits_t from mach_port.h
+ * (already declared). Forward-declare here to avoid a cycle. */
+struct mach_port_limits;
 
 typedef struct {
 	uint32_t		flags;
-	mach_port_limits_t	mpl;
+	struct mach_port_limits	mpl;
 	uint64_t		work_interval_id;
 	uint64_t		reserved[2];
 } mach_port_options_t;
