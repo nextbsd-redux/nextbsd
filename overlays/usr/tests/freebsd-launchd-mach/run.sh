@@ -403,34 +403,14 @@ echo "--- pre-state: syslogd alive? ---"
 syslogd_pid=$(pgrep -x syslogd || true)
 echo "pid=$syslogd_pid"
 
-# Direct-launch debug: iter 15 showed syslogd SIGSEGVs even with
-# --help — a pre-main constructor crash. Trace it.
-echo "--- ldd /usr/sbin/syslogd ---"
-ldd /usr/sbin/syslogd 2>&1 | head -30
+# Iter 25: trust the launchd-spawned syslogd. iter 24 fixed
+# _malloc_no_asl_log and made launch_config tolerant of NULL
+# launch_dict, so syslogd should now stay alive. Show its state
+# briefly.
+[ -n "$syslogd_pid" ] && ps -o pid,rss,vsz,command -p "$syslogd_pid"
 
-echo "--- /etc/asl.conf actual content ---"
-wc -c /etc/asl.conf; head -20 /etc/asl.conf
-
-echo "--- ktrace+kdump /usr/sbin/syslogd --help (5s timeout) ---"
-rm -f /tmp/syslogd.ktrace
-timeout 5 ktrace -di -f /tmp/syslogd.ktrace /usr/sbin/syslogd --help 2>&1 | head -10 || true
-echo "--- kdump LAST 25 events (before SIGSEGV) ---"
-kdump -f /tmp/syslogd.ktrace 2>&1 | tail -25 || true
-echo "--- kdump grep PSIG/SIG ---"
-kdump -f /tmp/syslogd.ktrace 2>&1 | grep -E "PSIG|SIG|EXIT" | tail -10 || true
-echo "--- /tmp/asl_parse.log (parse breadcrumb) ---"
-[ -f /tmp/asl_parse.log ] && tail -40 /tmp/asl_parse.log || echo "(no parse log)"
-echo "--- /tmp/asl_configure.log (configure breadcrumb) ---"
-[ -f /tmp/asl_configure.log ] && tail -40 /tmp/asl_configure.log || echo "(no configure log)"
-echo "--- /tmp/syslogd_main.log (main breadcrumb) ---"
-[ -f /tmp/syslogd_main.log ] && cat /tmp/syslogd_main.log || echo "(no main log)"
-echo "--- /tmp/init_globals.log ---"
-[ -f /tmp/init_globals.log ] && tail -30 /tmp/init_globals.log || echo "(no init_globals log)"
-echo "--- /tmp/launch_config.log ---"
-[ -f /tmp/launch_config.log ] && tail -30 /tmp/launch_config.log || echo "(no launch_config log)"
-
-echo "--- /tmp/bsd_in_init.log after direct launch ---"
-[ -f /tmp/bsd_in_init.log ] && cat /tmp/bsd_in_init.log || echo "(no init log)"
+echo "--- /var/log/asl/ + /var/log/asl/Logs/ pre-post ---"
+ls -la /var/log/asl/ /var/log/asl/Logs/ 2>&1 || true
 
 # Use logger(1) from FreeBSD base (writes to /var/run/log SOCK_DGRAM)
 # — picked up by syslogd's bsd_in.c module. Avoids syslog -s which
