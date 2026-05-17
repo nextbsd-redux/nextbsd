@@ -400,7 +400,14 @@ ls -la /var/run/log /var/run/logpriv 2>&1 || true
 echo "--- pre-state: /tmp/bsd_in_init.log ---"
 [ -f /tmp/bsd_in_init.log ] && cat /tmp/bsd_in_init.log || echo "(no init log)"
 echo "--- pre-state: syslogd alive? ---"
-pgrep -lf syslogd || echo "(no syslogd)"
+syslogd_pid=$(pgrep -x syslogd || true)
+echo "pid=$syslogd_pid"
+if [ -n "$syslogd_pid" ]; then
+    echo "--- procstat -kk $syslogd_pid (kernel stack) ---"
+    procstat -kk "$syslogd_pid" 2>&1 | head -25 || true
+    echo "--- procstat -f $syslogd_pid (open fds) ---"
+    procstat -f "$syslogd_pid" 2>&1 | head -25 || true
+fi
 
 # Use logger(1) from FreeBSD base (writes to /var/run/log SOCK_DGRAM)
 # — picked up by syslogd's bsd_in.c module. Avoids syslog -s which
