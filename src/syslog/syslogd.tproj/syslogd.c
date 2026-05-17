@@ -778,6 +778,16 @@ main(int argc, const char *argv[])
 	asldebug("starting work queue\n");
 	_PJ_BC("before dispatch_resume work_queue");
 	dispatch_resume(global.work_queue);
+
+	/* FreeBSD port (Phase J runtime): without database_server's
+	 * parked Mach receive thread, our libdispatch's dispatch_main
+	 * appears to exit when no sources keep it alive. Park on
+	 * sigsuspend so the process stays up; bsd_in's polling thread
+	 * (and any future dispatch sources) keep doing work. */
+	if (global.server_port == 0) {
+		_PJ_BC("server_port=0: parking on pause() forever");
+		for (;;) pause();
+	}
 	_PJ_BC("before dispatch_main (parks forever)");
 	dispatch_main();
 #undef _PJ_BC
