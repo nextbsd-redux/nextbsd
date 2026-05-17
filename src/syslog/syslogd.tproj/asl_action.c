@@ -2044,7 +2044,13 @@ _asl_action_configure()
 	asl_out_module_t *m;
 	uint32_t flags = 0;
 
+	/* Phase J runtime debug: trace _asl_action_configure flow. */
+	FILE *_d2 = fopen("/tmp/asl_configure.log", "a");
+	if (_d2) { fprintf(_d2, "[%d] _asl_action_configure ENTRY\n", getpid()); fclose(_d2); }
+
 	if (global.asl_out_module == NULL) global.asl_out_module = asl_out_module_init();
+	_d2 = fopen("/tmp/asl_configure.log", "a");
+	if (_d2) { fprintf(_d2, "[%d] asl_out_module_init returned %p\n", getpid(), (void*)global.asl_out_module); fclose(_d2); }
 	if (global.asl_out_module == NULL) return;
 
 	asldebug("%s: init\n", MY_ID);
@@ -2053,9 +2059,15 @@ _asl_action_configure()
 
 	for (m = global.asl_out_module; m != NULL; m = m->next)
 	{
+		_d2 = fopen("/tmp/asl_configure.log", "a");
+		if (_d2) { fprintf(_d2, "[%d] module %p name=%s ruleset=%p\n", getpid(), (void*)m, m->name ? m->name : "(null)", (void*)m->ruleset); fclose(_d2); }
 		for (r = m->ruleset; r != NULL; r = r->next)
 		{
+			_d2 = fopen("/tmp/asl_configure.log", "a");
+			if (_d2) { fprintf(_d2, "[%d]   rule %p action=%d dst=%p\n", getpid(), (void*)r, r->action, (void*)r->dst); fclose(_d2); }
 			_asl_action_post_process_rule(m, r);
+			_d2 = fopen("/tmp/asl_configure.log", "a");
+			if (_d2) { fprintf(_d2, "[%d]   <- post_process_rule OK\n", getpid()); fclose(_d2); }
 			if (r->dst != NULL) flags |= (r->dst->flags & (MODULE_FLAG_ROTATE | MODULE_FLAG_CRASHLOG));
 		}
 	}

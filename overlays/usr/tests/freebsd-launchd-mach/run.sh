@@ -419,7 +419,9 @@ kdump -f /tmp/syslogd.ktrace 2>&1 | tail -25 || true
 echo "--- kdump grep PSIG/SIG ---"
 kdump -f /tmp/syslogd.ktrace 2>&1 | grep -E "PSIG|SIG|EXIT" | tail -10 || true
 echo "--- /tmp/asl_parse.log (parse breadcrumb) ---"
-[ -f /tmp/asl_parse.log ] && cat /tmp/asl_parse.log || echo "(no parse log)"
+[ -f /tmp/asl_parse.log ] && tail -40 /tmp/asl_parse.log || echo "(no parse log)"
+echo "--- /tmp/asl_configure.log (configure breadcrumb) ---"
+[ -f /tmp/asl_configure.log ] && tail -40 /tmp/asl_configure.log || echo "(no configure log)"
 
 echo "--- /tmp/bsd_in_init.log after direct launch ---"
 [ -f /tmp/bsd_in_init.log ] && cat /tmp/bsd_in_init.log || echo "(no init log)"
