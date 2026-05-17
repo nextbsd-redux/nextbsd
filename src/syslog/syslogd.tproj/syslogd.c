@@ -622,29 +622,46 @@ main(int argc, const char *argv[])
 
 	signal(SIGHUP, SIG_IGN);
 
+	/* Phase J runtime debug: breadcrumb the post-init_globals path. */
+#define _PJ_BC(tag) do { \
+	FILE *_pjf = fopen("/tmp/syslogd_main.log", "a"); \
+	if (_pjf) { fprintf(_pjf, "[%d] " tag "\n", getpid()); fclose(_pjf); } \
+} while(0)
+
+	_PJ_BC("after init_globals + argv parse");
 	memset(tstr, 0, sizeof(tstr));
 	now = time(NULL);
 	ctime_r(&now, tstr);
 	tstr[19] = '\0';
 	asldebug("\n%s syslogd PID %d starting\n", tstr, global.pid);
 
+	_PJ_BC("before writepid");
 	writepid(&first_syslogd_start);
 
 	/*
 	 * Log UTMPX boot time record
 	 */
+	_PJ_BC("before write_boot_log");
 	write_boot_log(first_syslogd_start);
 
 	/* default NOTIFY_SYSTEM_MASTER settings */
+	_PJ_BC("before notify_register_plain");
 	master_val = 0x0;
 	notify_register_plain(NOTIFY_SYSTEM_MASTER, &master_token);
+	_PJ_BC("after notify_register_plain");
 	notify_set_state(master_token, master_val);
+	_PJ_BC("after notify_set_state");
 
 	asldebug("reading launch plist\n");
+	_PJ_BC("before launch_config");
 	launch_config();
+	_PJ_BC("after launch_config");
 
 	asldebug("initializing modules\n");
+	_PJ_BC("before init_modules");
 	init_modules();
+	_PJ_BC("after init_modules");
+#undef _PJ_BC
 
 #if !TARGET_OS_SIMULATOR
 	asldebug("setting up network change notification handler\n");
