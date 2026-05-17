@@ -1,19 +1,12 @@
 /*
  * procinfo_freebsd.c — FreeBSD implementation of syslog(1)'s
- * procinfo() helper. Apple's syslog.c uses a Mach-aware kinfo_proc
- * layout. FreeBSD's <sys/user.h> defines the struct flat
- * (ki_pid, ki_uid, ki_comm) but pulls in <vm/vm.h> which clashes
- * with libmach's <mach/vm_map.h> (vm_map_t, boolean_t redef).
- *
- * Block libmach's mach/boolean.h and mach/vm_map.h from being
- * included via guard pre-definition. The TU's force-include compat
- * shim chain reaches mach/boolean.h indirectly; these guards make
- * that include a no-op so FreeBSD's vm/vm.h definitions win.
+ * procinfo() helper. Walls the FreeBSD <sys/user.h> sysctl walk
+ * into its own TU. Compiled via a Makefile-level custom rule with
+ * minimal CFLAGS so the force-included libasl compat shim — which
+ * transitively pulls libmach's mach/* headers (vm_map_t /
+ * boolean_t typedef collisions with FreeBSD's vm/vm.h) — is not
+ * in effect for this file.
  */
-#define _MACH_BOOLEAN_H_	1
-#define _MACH_VM_MAP_H_		1
-#define _BOOLEAN_T_DEFINED	1
-
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/sysctl.h>
