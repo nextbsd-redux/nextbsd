@@ -44,4 +44,34 @@
 #define ACL_EXTENDED_DENY	2
 #endif
 
+/* Apple OSSpinLock — deprecated even on macOS. Stub to int; we
+ * don't take perf-sensitive contended locks in the boot path. */
+typedef volatile int OSSpinLock;
+#define OS_SPINLOCK_INIT	0
+#define OSSpinLockLock(l)	(void)__sync_lock_test_and_set((l), 1)
+#define OSSpinLockUnlock(l)	__sync_lock_release(l)
+#define OSSpinLockTry(l)	(__sync_bool_compare_and_swap((l), 0, 1))
+
+/* setiopolicy_np options — Apple I/O policy hints (lower a daemon's
+ * disk priority). FreeBSD has no equivalent; stub the call. */
+#define IOPOL_TYPE_DISK		0
+#define IOPOL_SCOPE_PROCESS	1
+#define IOPOL_SCOPE_THREAD	2
+#define IOPOL_PASSIVE		1
+#define IOPOL_THROTTLE		2
+#define IOPOL_UTILITY		3
+#define IOPOL_STANDARD		4
+
+static inline int
+setiopolicy_np(int type, int scope, int policy) {
+	(void)type; (void)scope; (void)policy;
+	return 0;
+}
+
+/* Apple quarantine flag QTN_FLAG_HARD (subset of QTN_FLAG_HARD_QUARANTINE
+ * from quarantine.h) - used by syslogd in qtn_proc_init path. */
+#ifndef QTN_FLAG_HARD
+#define QTN_FLAG_HARD	QTN_FLAG_HARD_QUARANTINE
+#endif
+
 #endif

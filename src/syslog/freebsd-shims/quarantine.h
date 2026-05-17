@@ -13,6 +13,7 @@ typedef void * qtn_file_t;
 #define QTN_FLAG_DOWNLOAD		0x0001
 #define QTN_FLAG_SANDBOX		0x0002
 #define QTN_FLAG_HARD_QUARANTINE	0x0004
+#define QTN_FLAG_HARD			QTN_FLAG_HARD_QUARANTINE
 
 static inline qtn_proc_t qtn_proc_alloc(void) { return NULL; }
 static inline void qtn_proc_free(qtn_proc_t qp) { (void)qp; }
