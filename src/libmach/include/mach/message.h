@@ -559,6 +559,31 @@ typedef union {
 #define MACH_SEND_FILTER_NONFATAL	0x00010000
 #endif
 
+/*
+ * mach_port_options_t — Apple's struct passed to mach_port_construct
+ * for port creation with attributes (guard tokens, strict semantics).
+ * Used by notifyd to create the bootstrap listener port. Define the
+ * struct + the MPO_* flags; we ignore them in the trap implementation
+ * for now.
+ */
+typedef struct {
+	uint32_t	flags;
+	uint32_t	mpl_qlimit;
+	uint64_t	work_interval_id;
+	uint64_t	reserved[2];
+} mach_port_options_t;
+typedef mach_port_options_t *mach_port_options_ptr_t;
+
+#define MPO_CONTEXT_AS_GUARD		0x0001
+#define MPO_QLIMIT			0x0002
+#define MPO_TEMPOWNER			0x0004
+#define MPO_IMPORTANCE_RECEIVER		0x0008
+#define MPO_INSERT_SEND_RIGHT		0x0010
+#define MPO_STRICT			0x0020
+#define MPO_DENAP_RECEIVER		0x0040
+#define MPO_IMMOVABLE_RECEIVE		0x0080
+#define MPO_FILTER_MSG			0x0100
+
 #ifdef __cplusplus
 }
 #endif

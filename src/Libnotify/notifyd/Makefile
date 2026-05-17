@@ -40,8 +40,9 @@ CFLAGS+=	-I${.CURDIR}/../../launchd/liblaunch
 CFLAGS+=	-D__APPLE_API_PRIVATE -DPRIVATE=1
 CFLAGS+=	-fblocks
 
-# Same compat shim libnotify uses
-CFLAGS+=	-include ${.CURDIR}/../freebsd-shims/libnotify_freebsd_compat.h
+# notifyd-specific compat shim (do_notify_subsystem alias, RB_PANIC,
+# etc.) — superset of the libnotify_freebsd_compat.h one.
+CFLAGS+=	-include ${.CURDIR}/../freebsd-shims/notifyd_freebsd_compat.h
 
 SYSROOT?=
 .if !empty(SYSROOT)

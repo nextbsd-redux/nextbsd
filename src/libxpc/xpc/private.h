@@ -47,6 +47,23 @@ typedef uint64_t xpc_service_type_t;
 typedef void * xpc_event_publisher_t;
 
 /*
+ * xpc_event_publisher API — notifyd uses this to fan out events
+ * to XPC subscribers. We declare the opaque action enum + stub the
+ * setter/sender; runtime use no-ops since we don't have the XPC
+ * event substrate yet (J3+ if needed).
+ */
+typedef enum {
+	XPC_EVENT_PUBLISHER_ACTION_ADD = 1,
+	XPC_EVENT_PUBLISHER_ACTION_REMOVE = 2,
+} xpc_event_publisher_action_t;
+
+#define xpc_event_publisher_create(stream, queue)	NULL
+#define xpc_event_publisher_set_handler(pub, handler)	(void)0
+#define xpc_event_publisher_fire(pub, name, event)	(void)0
+#define xpc_event_publisher_activate(pub)		(void)0
+#define xpc_event_publisher_cancel(pub)			(void)0
+
+/*
  * event_name_t — fixed-size char array launchd-842 uses to carry
  * service / event names across the XPC-domain RPCs. Apple's launchd
  * relies on a 128-char buffer; core.c does
