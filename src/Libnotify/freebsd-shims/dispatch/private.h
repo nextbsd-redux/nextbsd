@@ -9,4 +9,22 @@
 
 #include <dispatch/dispatch.h>
 
+/* Apple-private dispatch types notifyd / configd / etc. use. Our
+ * libdispatch doesn't yet ship these; stub as opaque void* so
+ * source compiles. Runtime uses won't work until libdispatch is
+ * extended (deferred); notifyd's Mach RPC server loop still works
+ * via dispatch_source MACH_RECV that we DO have. */
+typedef void * dispatch_mach_t;
+typedef void * dispatch_mach_msg_t;
+typedef void * dispatch_workloop_t;
+typedef long   dispatch_mach_reason_t;
+
+#define DISPATCH_MACH_CONNECTED		1
+#define DISPATCH_MACH_MESSAGE_RECEIVED	2
+#define DISPATCH_MACH_MESSAGE_SENT	3
+#define DISPATCH_MACH_BARRIER_COMPLETED	4
+#define DISPATCH_MACH_DISCONNECTED	5
+
+#define DISPATCH_MACH_OPTIONS_INSTALL_HANDLER 0x0001
+
 #endif
