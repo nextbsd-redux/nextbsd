@@ -154,14 +154,13 @@ bsd_in_poll_loop(void *unused)
 			n++;
 		}
 		if (n == 0) { usleep(100000); continue; }
+		{ FILE *_d = fopen("/tmp/bsd_in_recv.log", "a");
+		  if (_d) { fprintf(_d, "[%d] poll(n=%d, t=1000) ENTRY\n", getpid(), n); fclose(_d); } }
 		int pr = poll(pfd, n, 1000);
-		/* Heartbeat every loop for first 3 iters, then every 5. */
 		loops++;
-		if (loops <= 3 || loops % 5 == 0) {
-			FILE *_d = fopen("/tmp/bsd_in_recv.log", "a");
-			if (_d) { fprintf(_d, "[%d] poll loop tick=%d nfds=%d rc=%d (errno=%d)\n",
-			    getpid(), loops, n, pr, errno); fclose(_d); }
-		}
+		{ FILE *_d = fopen("/tmp/bsd_in_recv.log", "a");
+		  if (_d) { fprintf(_d, "[%d] poll EXIT tick=%d rc=%d errno=%d\n",
+		    getpid(), loops, pr, errno); fclose(_d); } }
 		if (pr <= 0) continue;
 		for (i = 0; i < n; i++) {
 			if (pfd[i].revents & POLLIN) bsd_in_acceptmsg(pfd[i].fd);

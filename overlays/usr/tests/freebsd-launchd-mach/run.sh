@@ -405,10 +405,12 @@ echo "launchd-spawned pid=$syslogd_pid"
 
 # Iter 26: RunAtLoad dropped on syslogd plist. Start manually as
 # non-launchd child to bypass the launch_msg(CHECKIN) Mach hang.
-echo "--- starting syslogd manually (non-launchd child) ---"
-/usr/sbin/syslogd >/tmp/syslogd_manual.stderr 2>&1 &
+echo "--- starting syslogd manually (non-launchd child, new session) ---"
+# Use setsid so job control SIGHUPs don't reach the daemon.
+nohup setsid /usr/sbin/syslogd >/tmp/syslogd_manual.stderr 2>&1 </dev/null &
 manual_syslogd_pid=$!
 echo "manual syslogd pid=$manual_syslogd_pid"
+disown 2>/dev/null || true
 sleep 2
 ps auxww | grep -E 'syslogd|notifyd' | grep -v grep || true
 ls -la /var/run/log /var/run/logpriv 2>&1 || true
