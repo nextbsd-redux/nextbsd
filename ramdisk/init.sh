@@ -107,6 +107,14 @@ if [ "$$" = "1" ]; then
     # launchd + getty plist combo brings up login.
     kenv -u init_script 2>/dev/null || true
     kenv -u init_shell  2>/dev/null || true
+
+    # Defensive: a crashing daemon whose fdtable contains mach.ko
+    # entries can trip a FreeBSD kernel page fault in
+    # kern_proc_filedesc_out during coredump (Phase J runtime iter 1
+    # showed this on a syslogd SEGV). Disable coredumps system-wide
+    # until mach.ko's fd ops are coredump-safe.
+    sysctl kern.coredump=0 2>/dev/null || true
+
     exec /rescue/chroot /sysroot /sbin/launchd "$@"
 fi
 

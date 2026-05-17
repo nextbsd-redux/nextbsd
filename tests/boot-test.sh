@@ -301,17 +301,6 @@ expect {
 # ASL store. See run.sh tail for the test sequence.
 expect {
     timeout {
-        puts "\nFAIL: SYSLOGD-PROC marker not seen"
-        exit 1
-    }
-    "SYSLOGD-PROC-FAIL" {
-        puts "\nFAIL: syslogd not running at boot"
-        exit 1
-    }
-    "SYSLOGD-PROC-OK" { puts "\nOK: syslogd running" }
-}
-expect {
-    timeout {
         puts "\nFAIL: NOTIFYD-PROC marker not seen"
         exit 1
     }
@@ -320,6 +309,17 @@ expect {
         exit 1
     }
     "NOTIFYD-PROC-OK" { puts "\nOK: notifyd running" }
+}
+expect {
+    timeout {
+        puts "\nFAIL: SYSLOGD-PROC marker not seen"
+        exit 1
+    }
+    "SYSLOGD-PROC-FAIL" {
+        puts "\nFAIL: syslogd not running at boot"
+        exit 1
+    }
+    "SYSLOGD-PROC-OK" { puts "\nOK: syslogd running" }
 }
 expect {
     timeout {

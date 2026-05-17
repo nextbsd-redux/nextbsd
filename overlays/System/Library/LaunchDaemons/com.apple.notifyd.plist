@@ -31,6 +31,11 @@
 	<array>
 		<string>/usr/sbin/notifyd</string>
 	</array>
+	<!-- Capture stderr for post-mortem (Phase J runtime). -->
+	<key>StandardErrorPath</key>
+	<string>/var/log/notifyd.stderr</string>
+	<key>StandardOutPath</key>
+	<string>/var/log/notifyd.stderr</string>
 	<key>POSIXSpawnType</key>
 	<string>Interactive</string>
 	<key>LimitLoadToSessionType</key>

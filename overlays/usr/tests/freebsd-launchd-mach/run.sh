@@ -355,20 +355,27 @@ echo "LAUNCHCTL-BUILD-OK: /bin/launchctl exists ($(stat -f%z /bin/launchctl) byt
 # server loop works, and the in-memory store accepts the write.
 sleep 2
 
-if pgrep -x syslogd >/dev/null 2>&1; then
-    echo "SYSLOGD-PROC-OK: syslogd running as pid $(pgrep -x syslogd)"
-else
-    echo "SYSLOGD-PROC-FAIL: syslogd not running"
-    ps auxww | grep -E 'syslogd|notifyd' || true
-    ls -la /System/Library/LaunchDaemons/ 2>&1 || true
-    exit 1
-fi
-
+# Order matters: NOTIFYD-PROC first so we still see evidence about it
+# even if syslogd is missing. Each branch dumps the stderr log of the
+# missing daemon (StandardErrorPath in plist) for post-mortem.
 if pgrep -x notifyd >/dev/null 2>&1; then
     echo "NOTIFYD-PROC-OK: notifyd running as pid $(pgrep -x notifyd)"
 else
     echo "NOTIFYD-PROC-FAIL: notifyd not running"
+    echo "--- /var/log/notifyd.stderr ---"
+    [ -f /var/log/notifyd.stderr ] && cat /var/log/notifyd.stderr || echo "(no stderr file)"
     ps auxww | grep -E 'syslogd|notifyd' || true
+    exit 1
+fi
+
+if pgrep -x syslogd >/dev/null 2>&1; then
+    echo "SYSLOGD-PROC-OK: syslogd running as pid $(pgrep -x syslogd)"
+else
+    echo "SYSLOGD-PROC-FAIL: syslogd not running"
+    echo "--- /var/log/syslogd.stderr ---"
+    [ -f /var/log/syslogd.stderr ] && cat /var/log/syslogd.stderr || echo "(no stderr file)"
+    ps auxww | grep -E 'syslogd|notifyd' || true
+    ls -la /System/Library/LaunchDaemons/ 2>&1 || true
     exit 1
 fi
 

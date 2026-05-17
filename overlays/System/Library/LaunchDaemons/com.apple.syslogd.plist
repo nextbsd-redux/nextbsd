@@ -35,6 +35,12 @@
 -->
 		<string>/usr/sbin/syslogd</string>
 	</array>
+	<!-- Capture stderr for post-mortem diagnosis (Phase J runtime
+	     iter 1 showed syslogd SEGV); drop once startup is stable. -->
+	<key>StandardErrorPath</key>
+	<string>/var/log/syslogd.stderr</string>
+	<key>StandardOutPath</key>
+	<string>/var/log/syslogd.stderr</string>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>ASL_DISABLE</key>
