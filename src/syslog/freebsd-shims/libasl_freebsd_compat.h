@@ -74,4 +74,9 @@ setiopolicy_np(int type, int scope, int policy) {
 #define QTN_FLAG_HARD	QTN_FLAG_HARD_QUARANTINE
 #endif
 
+/* bsd_in.c source tag — fills the gap in daemon.h's SOURCE_* range.
+ * Apple's syslogd never had a UNIX-socket input module; we add one
+ * for FreeBSD's /var/run/log clients (Phase J3). */
+#define SOURCE_BSD_SOCK	2
+
 #endif

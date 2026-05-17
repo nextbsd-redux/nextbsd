@@ -81,6 +81,12 @@ int klog_in_init(void);
 int klog_in_reset(void);
 int klog_in_close(void);
 static int activate_klog_in = 1;
+
+/* bsd_in: FreeBSD-only UNIX-socket input (Phase J3). */
+int bsd_in_init(void);
+int bsd_in_reset(void);
+int bsd_in_close(void);
+static int activate_bsd_in = 1;
 #endif
 
 #if !TARGET_OS_SIMULATOR
@@ -115,7 +121,7 @@ static void
 init_modules()
 {
 #if !TARGET_OS_SIMULATOR
-	module_t *m_klog_in, *m_bsd_out, *m_udp_in, *m_remote;
+	module_t *m_klog_in, *m_bsd_in, *m_bsd_out, *m_udp_in, *m_remote;
 #endif
 	module_t *m_asl;
 	int m = 0;
@@ -172,6 +178,23 @@ init_modules()
 	m_klog_in->close = klog_in_close;
 
 	if (m_klog_in->enabled) m_klog_in->init();
+
+	/* bsd_in: FreeBSD-only UNIX-socket input (/var/run/log,
+	 * /var/run/logpriv). Phase J3 of ASL port. */
+	m_bsd_in = (module_t *)calloc(1, sizeof(module_t));
+	if (m_bsd_in == NULL)
+	{
+		asldebug("alloc failed (init_modules bsd_in)\n");
+		exit(1);
+	}
+
+	m_bsd_in->name = "bsd_in";
+	m_bsd_in->enabled = activate_bsd_in;
+	m_bsd_in->init = bsd_in_init;
+	m_bsd_in->reset = bsd_in_reset;
+	m_bsd_in->close = bsd_in_close;
+
+	if (m_bsd_in->enabled) m_bsd_in->init();
 #endif
 
 #if !TARGET_OS_SIMULATOR
@@ -212,7 +235,7 @@ init_modules()
 #if TARGET_OS_SIMULATOR
 	global.module_count = 1;
 #else
-	global.module_count = 5;
+	global.module_count = 6;	/* +bsd_in (Phase J3) */
 #endif
 	global.module = (module_t **)calloc(global.module_count, sizeof(module_t *));
 	if (global.module == NULL)
@@ -225,6 +248,7 @@ init_modules()
 #if !TARGET_OS_SIMULATOR
 	global.module[m++] = m_bsd_out;
 	global.module[m++] = m_klog_in;
+	global.module[m++] = m_bsd_in;
 	global.module[m++] = m_udp_in;
 	global.module[m++] = m_remote;
 #endif

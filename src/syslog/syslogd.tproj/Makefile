@@ -13,6 +13,7 @@ SRCS=		syslogd.c \
 		dbserver.c \
 		asl_action.c \
 		bsd_out.c \
+		bsd_in.c \
 		klog_in.c \
 		udp_in.c \
 		remote.c
