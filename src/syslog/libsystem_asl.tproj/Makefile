@@ -57,6 +57,11 @@ CFLAGS+=	-I${.CURDIR}/../../launchd/liblaunch		# bootstrap_priv.h
 CFLAGS+=	-D__APPLE_API_PRIVATE -DPRIVATE=1
 CFLAGS+=	-fblocks
 
+# Vendored Apple source has a couple of int->pointer return bugs
+# in asl_msg_list_match (returns n instead of out, lines 448/453);
+# Apple's build presumably tolerated this. Downgrade to warning.
+CFLAGS+=	-Wno-error=int-conversion -Wno-int-conversion
+
 # Force-include compat shim — LOG_INSTALL etc syslog facilities Apple
 # defines but FreeBSD doesn't ship.
 CFLAGS+=	-include ${.CURDIR}/../freebsd-shims/libasl_freebsd_compat.h
