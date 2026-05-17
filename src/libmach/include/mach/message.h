@@ -542,6 +542,23 @@ typedef union {
 #define MACH_RCV_SYNC_PEEK		0x00008000
 #endif
 
+/*
+ * Other Apple Mach IPC option bits used by MIG-generated User stubs.
+ * MACH_SEND_PROPAGATE_QOS — propagate sender's QoS class with the
+ *   message (priority-inheritance hint).
+ * MACH_SEND_FILTER_NONFATAL — port-defense filter mismatch returns
+ *   error instead of killing the task. Used by libnotify when sending
+ *   to potentially-defended ports.
+ * Both are advisory on FreeBSD; kernel-side mach.ko ignores bits it
+ * doesn't implement.
+ */
+#ifndef MACH_SEND_PROPAGATE_QOS
+#define MACH_SEND_PROPAGATE_QOS		0x00200000
+#endif
+#ifndef MACH_SEND_FILTER_NONFATAL
+#define MACH_SEND_FILTER_NONFATAL	0x00010000
+#endif
+
 #ifdef __cplusplus
 }
 #endif
