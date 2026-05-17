@@ -28,8 +28,9 @@ typedef long   dispatch_mach_reason_t;
 #define DISPATCH_MACH_OPTIONS_INSTALL_HANDLER 0x0001
 
 /* QoS classes for dispatch_queue_attr / dispatch_workloop creation.
- * Apple defines via os/qos.h; we don't have it, so define here. */
-typedef long dispatch_qos_class_t;
+ * Apple defines via os/qos.h; we don't have it, so define here.
+ * dispatch_qos_class_t is `unsigned int` in our libdispatch
+ * (src/libdispatch/dispatch/queue.h:559), so don't re-typedef. */
 
 #define QOS_CLASS_USER_INTERACTIVE	0x21
 #define QOS_CLASS_USER_INITIATED	0x19
