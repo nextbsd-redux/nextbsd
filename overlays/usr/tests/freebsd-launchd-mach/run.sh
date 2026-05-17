@@ -443,6 +443,10 @@ echo "--- post-sleep: syslogd alive? ---"
 pgrep -lf syslogd || echo "(no syslogd running)"
 echo "--- /tmp/bsd_in_recv.log live ---"
 [ -f /tmp/bsd_in_recv.log ] && wc -l /tmp/bsd_in_recv.log && cat /tmp/bsd_in_recv.log || echo "(no recv log)"
+echo "--- /tmp/syslogd_main.log (main breadcrumb) ---"
+[ -f /tmp/syslogd_main.log ] && cat /tmp/syslogd_main.log || echo "(no main log)"
+echo "--- /tmp/launch_config.log ---"
+[ -f /tmp/launch_config.log ] && cat /tmp/launch_config.log || echo "(no launch_config log)"
 
 echo "--- full /var/log tree (any new files?) ---"
 find /var/log -type f -newer /etc/asl.conf 2>&1 | head -20
