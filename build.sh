@@ -1013,6 +1013,25 @@ test -x "$WORK/rootfs/usr/sbin/notifyd" \
 echo "==> NOTIFYD-BUILD-OK"
 
 #
+# 3v. Phase J2 iter 15 — build syslogd (src/syslog/syslogd.tproj).
+#     Apple syslogd daemon. Mach-only ingest first; bsd_in.c, klog_in,
+#     /etc/syslog.conf parsing land in J3. Re-uses notifyd_stubs.c
+#     for shared Apple-private link symbols.
+#     Plan: pkgdemon.github.io/freebsd-asl-plan.html (Phase J2)
+#
+echo "==> Phase J2: building syslogd (src/syslog/syslogd.tproj)"
+mkdir -p "$WORK/rootfs/usr/sbin"
+make -C "$ROOT/src/syslog/syslogd.tproj" \
+    DESTDIR="$WORK/rootfs" \
+    SYSROOT="$WORK/rootfs" \
+    MIGOUT="$WORK/asl-mig" \
+    all install
+ls -lh "$WORK/rootfs/usr/sbin/syslogd"
+test -x "$WORK/rootfs/usr/sbin/syslogd" \
+    || { echo "FAIL: /usr/sbin/syslogd not installed or not executable"; exit 1; }
+echo "==> SYSLOGD-BUILD-OK"
+
+#
 # 3z. purge build packages + clean pkg cache + tear down chroot.
 #     Runs LAST in the build phase, after every chroot-side build
 #     (libdispatch) has used cmake/ninja/clang. Build pkgs (cmake/ninja
