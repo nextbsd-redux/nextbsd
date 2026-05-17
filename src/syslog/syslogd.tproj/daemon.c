@@ -673,15 +673,24 @@ init_globals(void)
 	global.stats_interval = DEFAULT_STATS_INTERVAL;
 
 	global.asl_out_module = asl_out_module_init();
+	{ FILE *_pjf = fopen("/tmp/init_globals.log", "a");
+	  if (_pjf) { fprintf(_pjf, "[%d] post asl_out_module_init = %p\n", getpid(), (void*)global.asl_out_module); fclose(_pjf); } }
+
 	OSSpinLockUnlock(&global.lock);
+	{ FILE *_pjf = fopen("/tmp/init_globals.log", "a");
+	  if (_pjf) { fprintf(_pjf, "[%d] post OSSpinLockUnlock\n", getpid()); fclose(_pjf); } }
 
 	if (global.asl_out_module != NULL)
 	{
 		for (r = global.asl_out_module->ruleset; r != NULL; r = r->next)
 		{
-			if ((r->action == ACTION_SET_PARAM) && (r->query == NULL) && (!strncmp(r->options, "debug", 5))) control_set_param(r->options, true);
+			{ FILE *_pjf = fopen("/tmp/init_globals.log", "a");
+			  if (_pjf) { fprintf(_pjf, "[%d]   rule %p action=%d query=%p options=%p\n", getpid(), (void*)r, r->action, (void*)r->query, (void*)r->options); fclose(_pjf); } }
+			if ((r->action == ACTION_SET_PARAM) && (r->query == NULL) && (r->options != NULL) && (!strncmp(r->options, "debug", 5))) control_set_param(r->options, true);
 		}
 	}
+	{ FILE *_pjf = fopen("/tmp/init_globals.log", "a");
+	  if (_pjf) { fprintf(_pjf, "[%d] init_globals EXIT\n", getpid()); fclose(_pjf); } }
 }
 
 /*

@@ -424,6 +424,8 @@ echo "--- /tmp/asl_configure.log (configure breadcrumb) ---"
 [ -f /tmp/asl_configure.log ] && tail -40 /tmp/asl_configure.log || echo "(no configure log)"
 echo "--- /tmp/syslogd_main.log (main breadcrumb) ---"
 [ -f /tmp/syslogd_main.log ] && cat /tmp/syslogd_main.log || echo "(no main log)"
+echo "--- /tmp/init_globals.log ---"
+[ -f /tmp/init_globals.log ] && tail -30 /tmp/init_globals.log || echo "(no init_globals log)"
 
 echo "--- /tmp/bsd_in_init.log after direct launch ---"
 [ -f /tmp/bsd_in_init.log ] && cat /tmp/bsd_in_init.log || echo "(no init log)"
