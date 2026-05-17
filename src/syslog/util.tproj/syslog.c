@@ -33,6 +33,9 @@
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
+#ifdef __FreeBSD__
+#include <sys/user.h>		/* full kinfo_proc definition */
+#endif
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <mach/mach.h>
@@ -534,13 +537,21 @@ procinfo(char *pname, int *pid, int *uid)
 	if (pname == NULL)
 	{
 		/* Search for a pid */
-		for (i = 0; i < nprocs; i++) 
+		for (i = 0; i < nprocs; i++)
 		{
+#ifdef __FreeBSD__
+			if (*pid == procs[i].ki_pid)
+			{
+				*uid = procs[i].ki_uid;
+				return 0;
+			}
+#else
 			if (*pid == procs[i].kp_proc.p_pid)
 			{
 				*uid = procs[i].kp_eproc.e_ucred.cr_uid;
 				return 0;
 			}
+#endif
 		}
 
 		return PROC_NOT_FOUND;
@@ -548,8 +559,21 @@ procinfo(char *pname, int *pid, int *uid)
 
 	*pid = PROC_NOT_FOUND;
 
-	for (i = 0; i < nprocs; i++) 
+	for (i = 0; i < nprocs; i++)
 	{
+#ifdef __FreeBSD__
+		if (!strcmp(procs[i].ki_comm, pname))
+		{
+			if (*pid != PROC_NOT_FOUND)
+			{
+				free(procs);
+				return PROC_NOT_UNIQUE;
+			}
+
+			*pid = procs[i].ki_pid;
+			*uid = procs[i].ki_uid;
+		}
+#else
 		if (!strcmp(procs[i].kp_proc.p_comm, pname))
 		{
 			if (*pid != PROC_NOT_FOUND)
@@ -561,6 +585,7 @@ procinfo(char *pname, int *pid, int *uid)
 			*pid = procs[i].kp_proc.p_pid;
 			*uid = procs[i].kp_eproc.e_ucred.cr_uid;
 		}
+#endif
 	}
 
 	free(procs);
