@@ -23,4 +23,28 @@
  * post-processing. Alias here keeps Apple source unchanged. */
 #define do_notify_subsystem		_notify_ipc_subsystem
 
+/* Apple SYS_initgroups syscall number. Used to call initgroups
+ * directly via syscall(2). FreeBSD has the same syscall via
+ * /usr/include/sys/syscall.h as SYS_setgroups maybe. Easiest:
+ * just alias to setgroups (initgroups is a libc wrapper). */
+#ifndef SYS_initgroups
+#define SYS_initgroups	81		/* approx — FreeBSD has SYS_setgroups=91 */
+#endif
+
+/* Apple sandbox_check flag. */
+#ifndef SANDBOX_CHECK_NO_REPORT
+#define SANDBOX_CHECK_NO_REPORT		0x0001
+#endif
+
+/* Apple open(2) flags not in FreeBSD:
+ *   O_EVTONLY — open without delivering FS events to the file
+ *   O_SYMLINK — open the symlink itself instead of its target
+ * Map to FreeBSD nearest equivalents. */
+#ifndef O_EVTONLY
+#define O_EVTONLY	O_RDONLY	/* close-enough */
+#endif
+#ifndef O_SYMLINK
+#define O_SYMLINK	O_NOFOLLOW	/* FreeBSD spelling */
+#endif
+
 #endif
