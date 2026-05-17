@@ -53,4 +53,12 @@ typedef long   dispatch_mach_reason_t;
 #define dispatch_mach_msg_get_msg(msg, sz)		NULL
 #define dispatch_mach_msg_create(msg, len, dispose, retmsg) NULL
 
+/* DISPATCH_MEMORYPRESSURE_* event types for DISPATCH_SOURCE_TYPE_MEMORYPRESSURE.
+ * Apple defines via dispatch/source.h; not all variants are in our port. */
+#define DISPATCH_MEMORYPRESSURE_NORMAL		0x01
+#define DISPATCH_MEMORYPRESSURE_WARN		0x02
+#define DISPATCH_MEMORYPRESSURE_CRITICAL	0x04
+#define DISPATCH_MEMORYPRESSURE_PROC_LIMIT_WARN		0x10
+#define DISPATCH_MEMORYPRESSURE_PROC_LIMIT_CRITICAL	0x20
+
 #endif
