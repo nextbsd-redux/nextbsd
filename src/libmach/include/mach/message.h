@@ -483,6 +483,36 @@ typedef int kern_return_t;
  * includes <mach/mig_errors.h>.
  */
 
+/*
+ * Standard XNU empty-message types used by Apple daemons (libnotify
+ * libnotify.c:401 uses mach_msg_empty_send_t for fire-and-forget
+ * wakeup messages). Header-only message — no body — for occasions
+ * when the act of receiving is the entire signal.
+ */
+typedef struct {
+	mach_msg_header_t	header;
+} mach_msg_empty_send_t;
+
+typedef struct {
+	mach_msg_header_t	header;
+	mach_msg_trailer_t	trailer;
+} mach_msg_empty_rcv_t;
+
+typedef union {
+	mach_msg_empty_send_t	send;
+	mach_msg_empty_rcv_t	rcv;
+} mach_msg_empty_t;
+
+/*
+ * MACH_SEND_NOTIFY: option bit for mach_msg() that requests dead-name
+ * / send-once notification setup on the named port. Used by libnotify
+ * for fire-and-forget signals that should silently drop if the
+ * receiver is gone.
+ */
+#ifndef MACH_SEND_NOTIFY
+#define MACH_SEND_NOTIFY		0x00000004
+#endif
+
 #ifdef __cplusplus
 }
 #endif

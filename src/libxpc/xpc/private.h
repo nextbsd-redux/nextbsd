@@ -37,6 +37,16 @@ typedef int64_t  xpc_jetsam_band_t;
 typedef uint64_t xpc_service_type_t;
 
 /*
+ * xpc_event_publisher_t — opaque handle for the XPC event publisher
+ * API (Apple's xpc_event_publisher_create / _send / etc.). libnotify
+ * stores one in notify_state_t::event_publisher to fan out
+ * notifications to XPC subscribers. We declare the type so libnotify
+ * compiles; the actual publisher API is a J2 add when notifyd needs
+ * to actually publish XPC events.
+ */
+typedef void * xpc_event_publisher_t;
+
+/*
  * event_name_t — fixed-size char array launchd-842 uses to carry
  * service / event names across the XPC-domain RPCs. Apple's launchd
  * relies on a 128-char buffer; core.c does

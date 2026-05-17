@@ -22,6 +22,7 @@
 #define OS_SWIFT_NAME(_)
 #define OS_SWIFT_UNAVAILABLE(msg)
 #define OS_OBJECT_DECL(_)
+#define OS_NOESCAPE		/* clang attribute __noescape — drop on GCC */
 
 #define OS_ENUM(_name, _type, ...) typedef enum : _type { __VA_ARGS__ } _name##_t
 #define OS_CLOSED_ENUM(_name, _type, ...) typedef enum : _type { __VA_ARGS__ } _name##_t
