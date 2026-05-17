@@ -16,6 +16,13 @@
 #include <mach/mach.h>
 #include <mach/port.h>
 
+/* fileport_t — Apple's typedef for a Mach port that wraps a file
+ * descriptor. Same underlying type as mach_port_t (the value IS a
+ * Mach port name); the typedef is purely for documentation. */
+typedef mach_port_t fileport_t;
+
+#define FILEPORT_NULL		((fileport_t)0)
+
 /* Convert an fd to a Mach send right (fileglob-wrap kernel-side).
  * On FreeBSD (current stub): returns MACH_PORT_NULL via *port,
  * sets errno = ENOSYS. */
