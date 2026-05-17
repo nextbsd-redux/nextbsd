@@ -49,6 +49,12 @@ CFLAGS+=	-I${MIGOUT}
 CFLAGS+=	-I${.CURDIR}
 CFLAGS+=	-I${.CURDIR}/freebsd-shims
 
+# liblaunch ships bootstrap_priv.h (notify_client.c uses
+# bootstrap_look_up2 + BOOTSTRAP_PRIVILEGED_SERVER from it). Pull
+# from the in-tree liblaunch source rather than installing into
+# SYSROOT — header is small and the dependency is one-way.
+CFLAGS+=	-I${.CURDIR}/../launchd/liblaunch
+
 # Apple build-time defines from xcodeconfig/.
 CFLAGS+=	-D__APPLE_API_PRIVATE -DPRIVATE=1
 CFLAGS+=	-fblocks		# libdispatch block syntax
