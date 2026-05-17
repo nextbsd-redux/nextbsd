@@ -403,20 +403,19 @@ echo "--- pre-state: syslogd alive? ---"
 syslogd_pid=$(pgrep -x syslogd || true)
 echo "pid=$syslogd_pid"
 
-# Direct-launch debug: bypass launchd entirely. Run syslogd in
-# foreground with debug=4 and timeout 5s. Captures startup output
-# regardless of launchd spawn flow. -- Phase J runtime iter 15
-echo "--- direct-launch: timeout 5 /usr/sbin/syslogd -d 4 ---"
-timeout 5 /usr/sbin/syslogd -d 4 2>&1 | head -60 || true
-echo "--- direct-launch end (exit=$?) ---"
+# Direct-launch debug: iter 15 showed syslogd SIGSEGVs even with
+# --help — a pre-main constructor crash. Trace it.
+echo "--- ldd /usr/sbin/syslogd ---"
+ldd /usr/sbin/syslogd 2>&1 | head -30
 
-# After direct launch, our own bsd_in_init sentinel should exist
+echo "--- ktrace+kdump /usr/sbin/syslogd --help (5s timeout) ---"
+rm -f /tmp/syslogd.ktrace
+timeout 5 ktrace -di -f /tmp/syslogd.ktrace /usr/sbin/syslogd --help 2>&1 | head -10 || true
+echo "--- kdump tail -60 ---"
+kdump -f /tmp/syslogd.ktrace 2>&1 | tail -60 || true
+
 echo "--- /tmp/bsd_in_init.log after direct launch ---"
 [ -f /tmp/bsd_in_init.log ] && cat /tmp/bsd_in_init.log || echo "(no init log)"
-
-# Also try minimal flags
-echo "--- direct-launch: /usr/sbin/syslogd --help (5s timeout) ---"
-timeout 5 /usr/sbin/syslogd --help 2>&1 | head -20 || true
 
 # Use logger(1) from FreeBSD base (writes to /var/run/log SOCK_DGRAM)
 # — picked up by syslogd's bsd_in.c module. Avoids syslog -s which
