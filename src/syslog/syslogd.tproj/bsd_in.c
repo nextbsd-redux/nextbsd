@@ -115,6 +115,12 @@ bsd_in_init(void)
 {
 	static dispatch_once_t once;
 	int i, ok = 0;
+	FILE *dbg;
+
+	/* Phase J runtime debug: write to a fixed sentinel file so we
+	 * can see init progress regardless of stderr/asldebug state. */
+	dbg = fopen("/tmp/bsd_in_init.log", "a");
+	if (dbg) { fprintf(dbg, "[%d] bsd_in_init: entered\n", getpid()); fclose(dbg); }
 
 	dispatch_once(&once, ^{
 		in_queue = dispatch_queue_create(MY_ID, NULL);
@@ -124,8 +130,18 @@ bsd_in_init(void)
 
 	for (i = 0; i < NSOCK; i++) {
 		if (sockfd[i] >= 0) { ok++; continue; }
-		if (bsd_in_open_one(i) == 0) ok++;
+		int rc = bsd_in_open_one(i);
+		dbg = fopen("/tmp/bsd_in_init.log", "a");
+		if (dbg) {
+			fprintf(dbg, "[%d] bsd_in_init: open(%s) rc=%d errno=%d (%s)\n",
+			    getpid(), sock_path[i], rc, errno, strerror(errno));
+			fclose(dbg);
+		}
+		if (rc == 0) ok++;
 	}
+
+	dbg = fopen("/tmp/bsd_in_init.log", "a");
+	if (dbg) { fprintf(dbg, "[%d] bsd_in_init: returning ok=%d\n", getpid(), ok); fclose(dbg); }
 
 	/* Either socket is enough to declare success; the other may be
 	 * pre-empted by FreeBSD's base syslogd or unavailable. */

@@ -393,8 +393,14 @@ ls -la /var/log/asl/ 2>&1 || echo "(no asl dir)"
 ls -la /var/log/asl/Logs/ 2>&1 || true
 echo "--- pre-state: /etc/asl.conf head ---"
 head -5 /etc/asl.conf 2>&1 || echo "(no asl.conf)"
+echo "--- pre-state: /var/run/ listing ---"
+ls -la /var/run/ 2>&1 || true
 echo "--- pre-state: /var/run/log socket ---"
 ls -la /var/run/log /var/run/logpriv 2>&1 || true
+echo "--- pre-state: /tmp/bsd_in_init.log ---"
+[ -f /tmp/bsd_in_init.log ] && cat /tmp/bsd_in_init.log || echo "(no init log)"
+echo "--- pre-state: syslogd alive? ---"
+pgrep -lf syslogd || echo "(no syslogd)"
 
 # Use logger(1) from FreeBSD base (writes to /var/run/log SOCK_DGRAM)
 # — picked up by syslogd's bsd_in.c module. Avoids syslog -s which
