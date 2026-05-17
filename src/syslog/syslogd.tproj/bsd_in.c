@@ -125,46 +125,35 @@ bsd_in_open_one(int idx)
 	}
 
 	sockfd[idx] = fd;
-	/* Polling thread (see bsd_in_poll_loop) handles both fds; no
-	 * dispatch source needed. */
+	/* Make socket BLOCKING for the recv-loop thread (recvfrom blocks). */
+	int fl = fcntl(fd, F_GETFL, 0);
+	if (fl != -1) fcntl(fd, F_SETFL, fl & ~O_NONBLOCK);
 	asldebug("%s: listening on %s (fd %d)\n", MY_ID, sock_path[idx], fd);
 	return 0;
 }
 
-static void *
-bsd_in_poll_loop(void *unused)
-{
-	struct pollfd pfd[NSOCK];
-	int loops = 0;
-	(void)unused;
+/* One blocking-recvfrom thread per socket. poll(2) seemed to vanish
+ * the process inside libdispatch's thread management; blocking
+ * recvfrom on a single fd is a simpler syscall and one thread per
+ * fd matches what older daemons do anyway. */
+struct bsd_in_thread_arg {
+	int idx;
+};
 
-	/* Phase J runtime debug: log at thread entry — proves the thread
-	 * actually started, separate from pthread_create returning 0. */
+static void *
+bsd_in_recv_loop(void *arg)
+{
+	int idx = ((struct bsd_in_thread_arg *)arg)->idx;
+	free(arg);
+
 	{ FILE *_d = fopen("/tmp/bsd_in_recv.log", "a");
-	  if (_d) { fprintf(_d, "[%d] poll thread RUNNING (sockfd[0]=%d sockfd[1]=%d)\n",
-	    getpid(), sockfd[0], sockfd[1]); fclose(_d); } }
+	  if (_d) { fprintf(_d, "[%d] recv thread RUNNING idx=%d fd=%d\n",
+	    getpid(), idx, sockfd[idx]); fclose(_d); } }
 
 	for (;;) {
-		int i, n = 0;
-		for (i = 0; i < NSOCK; i++) {
-			if (sockfd[i] < 0) continue;
-			pfd[n].fd = sockfd[i];
-			pfd[n].events = POLLIN;
-			pfd[n].revents = 0;
-			n++;
-		}
-		if (n == 0) { usleep(100000); continue; }
-		{ FILE *_d = fopen("/tmp/bsd_in_recv.log", "a");
-		  if (_d) { fprintf(_d, "[%d] poll(n=%d, t=1000) ENTRY\n", getpid(), n); fclose(_d); } }
-		int pr = poll(pfd, n, 1000);
-		loops++;
-		{ FILE *_d = fopen("/tmp/bsd_in_recv.log", "a");
-		  if (_d) { fprintf(_d, "[%d] poll EXIT tick=%d rc=%d errno=%d\n",
-		    getpid(), loops, pr, errno); fclose(_d); } }
-		if (pr <= 0) continue;
-		for (i = 0; i < n; i++) {
-			if (pfd[i].revents & POLLIN) bsd_in_acceptmsg(pfd[i].fd);
-		}
+		int fd = sockfd[idx];
+		if (fd < 0) { usleep(100000); continue; }
+		bsd_in_acceptmsg(fd);
 	}
 	return NULL;
 }
@@ -198,12 +187,17 @@ bsd_in_init(void)
 	}
 
 	if (ok > 0 && !bsd_in_poll_started) {
-		if (pthread_create(&bsd_in_poll_thread, NULL,
-		    bsd_in_poll_loop, NULL) == 0) {
-			bsd_in_poll_started = 1;
+		for (int j = 0; j < NSOCK; j++) {
+			if (sockfd[j] < 0) continue;
+			struct bsd_in_thread_arg *a = malloc(sizeof(*a));
+			a->idx = j;
+			pthread_t t;
+			pthread_create(&t, NULL, bsd_in_recv_loop, a);
+			pthread_detach(t);
 		}
+		bsd_in_poll_started = 1;
 		dbg = fopen("/tmp/bsd_in_init.log", "a");
-		if (dbg) { fprintf(dbg, "[%d] bsd_in_init: poll thread started=%d\n", getpid(), bsd_in_poll_started); fclose(dbg); }
+		if (dbg) { fprintf(dbg, "[%d] bsd_in_init: recv threads launched\n", getpid()); fclose(dbg); }
 	}
 
 	dbg = fopen("/tmp/bsd_in_init.log", "a");
