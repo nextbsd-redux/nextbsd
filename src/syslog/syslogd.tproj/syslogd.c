@@ -678,9 +678,9 @@ main(int argc, const char *argv[])
 	_PJ_BC("before launch_config");
 	launch_config();
 	_PJ_BC("after launch_config");
-
+	_PJ_BC("about to call asldebug(\"initializing modules\")");
 	asldebug("initializing modules\n");
-	_PJ_BC("before init_modules");
+	_PJ_BC("after asldebug; before init_modules");
 	init_modules();
 	_PJ_BC("after init_modules");
 #undef _PJ_BC
