@@ -1929,19 +1929,34 @@ _asl_out_module_parse_query_action(asl_out_module_t *m, char *s)
 asl_out_rule_t *
 asl_out_module_parse_line(asl_out_module_t *m, char *s)
 {
+	/* Phase J runtime debug: sentinel writes pre/post each branch. */
+	FILE *_dbg = fopen("/tmp/asl_parse.log", "a");
+	if (_dbg) { fprintf(_dbg, "[%d] parse_line ENTRY: %.80s\n", getpid(), s ? s : "(null)"); fclose(_dbg); }
+
 	while ((*s == ' ') || (*s == '\t')) s++;
 
 	if ((*s == 'Q') || (*s == '?') || (*s == '*'))
 	{
-		return _asl_out_module_parse_query_action(m, s);
+		_dbg = fopen("/tmp/asl_parse.log", "a");
+		if (_dbg) { fprintf(_dbg, "[%d] -> parse_query_action\n", getpid()); fclose(_dbg); }
+		asl_out_rule_t *qa = _asl_out_module_parse_query_action(m, s);
+		_dbg = fopen("/tmp/asl_parse.log", "a");
+		if (_dbg) { fprintf(_dbg, "[%d] <- parse_query_action OK\n", getpid()); fclose(_dbg); }
+		return qa;
 	}
 	else if (*s == '=')
 	{
+		_dbg = fopen("/tmp/asl_parse.log", "a");
+		if (_dbg) { fprintf(_dbg, "[%d] -> parse_set_param\n", getpid()); fclose(_dbg); }
 		return _asl_out_module_parse_set_param(m, s);
 	}
 	else if (*s == '>')
 	{
+		_dbg = fopen("/tmp/asl_parse.log", "a");
+		if (_dbg) { fprintf(_dbg, "[%d] -> parse_dst\n", getpid()); fclose(_dbg); }
 		_asl_out_module_parse_dst(m, s + 1, 010000);
+		_dbg = fopen("/tmp/asl_parse.log", "a");
+		if (_dbg) { fprintf(_dbg, "[%d] <- parse_dst OK\n", getpid()); fclose(_dbg); }
 	}
 
 	return NULL;

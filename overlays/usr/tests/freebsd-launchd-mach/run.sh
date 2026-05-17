@@ -418,6 +418,8 @@ echo "--- kdump LAST 25 events (before SIGSEGV) ---"
 kdump -f /tmp/syslogd.ktrace 2>&1 | tail -25 || true
 echo "--- kdump grep PSIG/SIG ---"
 kdump -f /tmp/syslogd.ktrace 2>&1 | grep -E "PSIG|SIG|EXIT" | tail -10 || true
+echo "--- /tmp/asl_parse.log (parse breadcrumb) ---"
+[ -f /tmp/asl_parse.log ] && cat /tmp/asl_parse.log || echo "(no parse log)"
 
 echo "--- /tmp/bsd_in_init.log after direct launch ---"
 [ -f /tmp/bsd_in_init.log ] && cat /tmp/bsd_in_init.log || echo "(no init log)"
