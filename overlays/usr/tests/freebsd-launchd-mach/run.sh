@@ -432,11 +432,17 @@ logger -p user.notice -t phasej-test "$PING_TAG-3" 2>&1 || true
 # Also direct-write to /var/run/log via socket(1) (FreeBSD base
 # tool) to bypass libc syslog(3) — if logger silently fails to
 # reach the socket, this confirms the socket itself works.
-echo "--- direct datagram via nc ---"
-printf '<13>May 17 12:00:00 directhost direct-test: PHASEJ-DIRECT-PING-%s\n' "$$" | \
-    nc -u -U /var/run/log -W 1 2>&1 || true
+echo "--- post-logger: syslogd still alive? ---"
+pgrep -lf syslogd || echo "(no syslogd running)"
+
+echo "--- direct datagram via nc (FreeBSD nc has no -U for unix dgram — skip) ---"
 
 sleep 5
+
+echo "--- post-sleep: syslogd alive? ---"
+pgrep -lf syslogd || echo "(no syslogd running)"
+echo "--- /tmp/bsd_in_recv.log live ---"
+[ -f /tmp/bsd_in_recv.log ] && wc -l /tmp/bsd_in_recv.log && cat /tmp/bsd_in_recv.log || echo "(no recv log)"
 
 echo "--- full /var/log tree (any new files?) ---"
 find /var/log -type f -newer /etc/asl.conf 2>&1 | head -20

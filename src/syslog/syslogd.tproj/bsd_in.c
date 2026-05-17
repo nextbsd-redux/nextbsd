@@ -138,6 +138,12 @@ bsd_in_poll_loop(void *unused)
 	int loops = 0;
 	(void)unused;
 
+	/* Phase J runtime debug: log at thread entry — proves the thread
+	 * actually started, separate from pthread_create returning 0. */
+	{ FILE *_d = fopen("/tmp/bsd_in_recv.log", "a");
+	  if (_d) { fprintf(_d, "[%d] poll thread RUNNING (sockfd[0]=%d sockfd[1]=%d)\n",
+	    getpid(), sockfd[0], sockfd[1]); fclose(_d); } }
+
 	for (;;) {
 		int i, n = 0;
 		for (i = 0; i < NSOCK; i++) {
@@ -149,8 +155,9 @@ bsd_in_poll_loop(void *unused)
 		}
 		if (n == 0) { usleep(100000); continue; }
 		int pr = poll(pfd, n, 1000);
-		/* Heartbeat every 5 loops (~5s) so we see the thread is alive. */
-		if (++loops % 5 == 0) {
+		/* Heartbeat every loop for first 3 iters, then every 5. */
+		loops++;
+		if (loops <= 3 || loops % 5 == 0) {
 			FILE *_d = fopen("/tmp/bsd_in_recv.log", "a");
 			if (_d) { fprintf(_d, "[%d] poll loop tick=%d nfds=%d rc=%d (errno=%d)\n",
 			    getpid(), loops, n, pr, errno); fclose(_d); }
