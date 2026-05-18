@@ -185,17 +185,29 @@ xpc_connection_set_event_handler(xpc_connection_t xconn,
     xpc_handler_t handler)
 {
 	struct xpc_connection *conn;
+	uintptr_t xconn_val = (uintptr_t)xconn;
 
-	/* Phase J runtime iter 45: log everything to find why SEGV
-	 * persists despite NULL guard. */
 	{ FILE *_d = fopen("/tmp/xpc_seh.log", "a");
-	  if (_d) { fprintf(_d, "[%d] xpc_seh xconn=%p handler=%p\n",
-	    getpid(), (void*)xconn, (void*)handler); fclose(_d); } }
+	  if (_d) { fprintf(_d, "[%d] xpc_seh ENTRY xconn=%p (val=%lu) handler=%p\n",
+	    getpid(), (void*)xconn, (unsigned long)xconn_val, (void*)handler); fclose(_d); } }
+
+	/* Defensive: reject any pointer in the first page (NULL or
+	 * NULL-plus-small-offset, which arises if a caller dereferenced
+	 * a NULL struct pointer to get a field address). volatile to
+	 * defeat compiler optimization that might elide the check. */
+	if (xconn_val < 0x1000) {
+		{ FILE *_d = fopen("/tmp/xpc_seh.log", "a");
+		  if (_d) { fprintf(_d, "[%d]   GUARD: low-addr return\n", getpid()); fclose(_d); } }
+		return;
+	}
 
 	debugf("connection=%p", xconn);
-	if (xconn == NULL) return;
 	conn = conn_extract(xconn);
-	if (conn == NULL) return;
+	if ((uintptr_t)conn < 0x1000) {
+		{ FILE *_d = fopen("/tmp/xpc_seh.log", "a");
+		  if (_d) { fprintf(_d, "[%d]   GUARD: low-conn return\n", getpid()); fclose(_d); } }
+		return;
+	}
 	{ FILE *_d = fopen("/tmp/xpc_seh.log", "a");
 	  if (_d) { fprintf(_d, "[%d]   conn=%p, about to Block_copy\n",
 	    getpid(), (void*)conn); fclose(_d); } }
