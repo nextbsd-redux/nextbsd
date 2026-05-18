@@ -11,7 +11,11 @@
 #define os_variant_has_internal_diagnostics(subsystem)	false
 #define os_variant_has_internal_ui(subsystem)		false
 #define os_variant_is_recovery(subsystem)		false
-#define os_variant_is_basesystem(subsystem)		false
+/* For FreeBSD port: returning TRUE makes asl_out_dst_set_access
+ * (asl_common.c:870) short-circuit before the Darwin ACL setup
+ * (acl_init, acl_create_entry_np, etc. — not portable to FreeBSD).
+ * We are semantically a "basesystem" — no full Darwin userland. */
+#define os_variant_is_basesystem(subsystem)		true
 #define os_variant_check(subsystem, variant)		false
 
 #endif
