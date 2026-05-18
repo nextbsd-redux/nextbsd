@@ -970,15 +970,21 @@ process_message(asl_msg_t *msg, uint32_t source)
 	OSAtomicAdd64(msize, &global.memory_size);
 	OSAtomicIncrement32(&global.work_queue_count);
 
-	dispatch_async(global.work_queue, ^{
-		int32_t kplevel;
+	/* FreeBSD port (Phase J runtime iter 50): libdispatch async
+	 * workitems don't drain on our setup. Inline the work
+	 * synchronously so asl_out_message actually runs and writes
+	 * to system.log + ASL store. Drop the async/transaction
+	 * complexity — we run this directly from bsd_in's recv thread. */
+	{
+		int32_t kplevel = -1;
 		uint32_t status;
-		uid_t uid;
-
-		kplevel = -1;
-		uid = -2;
+		uid_t uid = -2;
+		FILE *_d = fopen("/tmp/process_msg.log", "a");
+		if (_d) { fprintf(_d, "[%d] process_message INLINE source=%u\n", getpid(), source); fclose(_d); }
 
 		status = aslmsg_verify(msg, source, &kplevel, &uid);
+		_d = fopen("/tmp/process_msg.log", "a");
+		if (_d) { fprintf(_d, "[%d]   aslmsg_verify -> %u\n", getpid(), status); fclose(_d); }
 		if (status == VERIFY_STATUS_OK)
 		{
 			if ((source == SOURCE_KERN) && (kplevel >= 0))
@@ -987,30 +993,22 @@ process_message(asl_msg_t *msg, uint32_t source)
 				if (kern_notify_token[kplevel] < 0)
 				{
 					status = notify_register_plain(kern_notify_key[kplevel], &(kern_notify_token[kplevel]));
-					if (status != 0) asldebug("notify_register_plain(%s) failed status %u\n", status);
 				}
-
 				notify_post(kern_notify_key[kplevel]);
 			}
-
 			if ((uid == 0) && is_control) control_message(msg);
-
-			/*
-			 * Send message to output module chain (asl is first).
-			 * The last module in the chain will decrement global.memory_size.
-			 */
 			asl_out_message(msg, msize);
+			_d = fopen("/tmp/process_msg.log", "a");
+			if (_d) { fprintf(_d, "[%d]   asl_out_message returned\n", getpid()); fclose(_d); }
 		}
 		else
 		{
 			OSAtomicAdd64(-1ll * msize, &global.memory_size);
 		}
-
 		asl_msg_release(msg);
-
 		OSAtomicDecrement32(&global.work_queue_count);
 		os_release(transaction);
-	});
+	}
 }
 
 int
