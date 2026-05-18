@@ -121,13 +121,13 @@ jobs:
           chmod +x tests/boot-test.sh
           ./tests/boot-test.sh out/livecd.iso
 
-      - name: dump [T41] trace from boot log
+      - name: dump [T39/T41] trace from boot log
         if: always()
         run: |
           if [ -f tests/boot.log ]; then
-            echo "=== [T41] launchd wake-path trace ==="
-            grep -E '\[T41\]|launchd|syslogd|notifyd|launchctl' tests/boot.log | head -200 || true
-            echo "=== end [T41] trace ==="
+            echo "=== [T39] / [T41] launchd diagnostic trace ==="
+            grep -E '\[T39-|\[T41' tests/boot.log | head -300 || true
+            echo "=== end trace ==="
           fi
 
       - name: upload boot log
