@@ -117,6 +117,16 @@ static int remote_enabled = 0;
 
 extern void database_server();
 
+/* Phase J runtime debug. */
+void _phasej_sig(int sig);
+void _phasej_sig(int sig)
+{
+	FILE *f = fopen("/tmp/syslogd_sig.log", "a");
+	if (f) { fprintf(f, "[%d] caught signal %d\n", getpid(), sig); fclose(f); }
+	if (sig == SIGCHLD || sig == SIGPIPE) return;
+	_exit(128 + sig);
+}
+
 static void
 init_modules()
 {
@@ -643,6 +653,17 @@ main(int argc, const char *argv[])
 	}
 
 	signal(SIGHUP, SIG_IGN);
+
+	/* Phase J runtime debug: catch fatal signals so we know what
+	 * killed us. */
+	{
+		extern void _phasej_sig(int);
+		signal(SIGTERM, _phasej_sig);
+		signal(SIGQUIT, _phasej_sig);
+		signal(SIGINT,  _phasej_sig);
+		signal(SIGPIPE, _phasej_sig);
+		signal(SIGCHLD, _phasej_sig);
+	}
 
 	/* Phase J runtime debug: breadcrumb the post-init_globals path. */
 #define _PJ_BC(tag) do { \

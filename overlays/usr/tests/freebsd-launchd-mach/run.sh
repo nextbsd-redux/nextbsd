@@ -452,6 +452,8 @@ echo "--- /tmp/syslogd_main.log (main breadcrumb) ---"
 [ -f /tmp/syslogd_main.log ] && cat /tmp/syslogd_main.log || echo "(no main log)"
 echo "--- /tmp/launch_config.log ---"
 [ -f /tmp/launch_config.log ] && cat /tmp/launch_config.log || echo "(no launch_config log)"
+echo "--- /tmp/syslogd_sig.log ---"
+[ -f /tmp/syslogd_sig.log ] && cat /tmp/syslogd_sig.log || echo "(no sig log)"
 
 echo "--- full /var/log tree (any new files?) ---"
 find /var/log -type f -newer /etc/asl.conf 2>&1 | head -20
