@@ -834,15 +834,17 @@ main(int argc, const char *argv[])
 	 * sigsuspend so the process stays up; bsd_in's polling thread
 	 * (and any future dispatch sources) keep doing work. */
 	if (global.server_port == 0) {
-		_PJ_BC("server_port=0: park work_queue + main thread");
-		/* Park a long-running block on the global queue. This keeps
-		 * dispatch's worker pool alive so dispatch_async workitems
-		 * (e.g., process_message -> asl_out_message) actually run. */
-		dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-			for (;;) sleep(3600);
-		});
-		/* Main thread parks. Our pthread recv threads keep the
-		 * process alive at the OS level. */
+		/* FreeBSD port (Phase J runtime iter 51): _dispatch_root_queues_init
+		 * is only fired from dispatch_main. Without it, dispatch_async
+		 * from non-dispatch pthreads SIGSEGVs in dx_push. Spawn a
+		 * dedicated pthread to call dispatch_main — root queues +
+		 * worker pool initialize there. Main thread parks; our
+		 * bsd_in recv pthreads continue receiving. */
+		_PJ_BC("server_port=0: spawn dispatch_main worker pthread");
+		pthread_t dm_thread;
+		pthread_create(&dm_thread, NULL, (void *(*)(void *))dispatch_main, NULL);
+		pthread_detach(dm_thread);
+		_PJ_BC("server_port=0: main parks in sleep loop");
 		for (;;) sleep(3600);
 	}
 	_PJ_BC("before dispatch_main (parks forever)");
