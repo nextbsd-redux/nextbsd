@@ -423,6 +423,10 @@ cc -I"$WORK/rootfs/usr/include" \
    "$ROOT/src/libdispatch-tests/test_libdispatch.c" \
    -ldispatch -lpthread
 
+echo "==> building test_bsd_logger (Phase J runtime)"
+cc -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/test_bsd_logger" \
+   "$ROOT/tests/test_bsd_logger.c"
+
 echo "==> building test_libdispatch_mach"
 # Links libsystem_kernel for the userland mach_reply_port / mach_msg
 # trap shims the round-trip test uses to allocate a receive port and

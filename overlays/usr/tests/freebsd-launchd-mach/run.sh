@@ -428,12 +428,14 @@ ls -la /var/log/asl/ /var/log/asl/Logs/ 2>&1 || true
 # mach_msg_send_to_null_port_hangs / launchctl hang). The bsd_in
 # path was specifically designed for this kind of FreeBSD-side
 # ingest, so this is the correct round-trip surface for our port.
-echo "--- logger post (tag=$PING_TAG) ---"
-logger_out=$(logger -p user.notice -t phasej-test "$PING_TAG" 2>&1)
-logger_rc=$?
-echo "post rc=$logger_rc out: ${logger_out:-(empty)}"
-logger -p user.notice -t phasej-test "$PING_TAG-2" 2>&1 || true
-logger -p user.notice -t phasej-test "$PING_TAG-3" 2>&1 || true
+echo "--- test_bsd_logger post (libc syslog(3) -> RFC3164) ---"
+/usr/tests/freebsd-launchd-mach/test_bsd_logger phasej-test "$PING_TAG" 2>&1 || true
+/usr/tests/freebsd-launchd-mach/test_bsd_logger phasej-test "$PING_TAG-2" 2>&1 || true
+/usr/tests/freebsd-launchd-mach/test_bsd_logger phasej-test "$PING_TAG-3" 2>&1 || true
+
+echo "--- logger(1) post (RFC5424 may not extract MSG) ---"
+logger_out=$(logger -p user.notice -t phasej-test "$PING_TAG-logger" 2>&1)
+echo "logger rc=$? out: ${logger_out:-(empty)}"
 # Also try RFC3164 directly (Apple's parser may not handle FreeBSD logger's RFC5424)
 printf '<13>%s phasej-test[%d]: %s-RFC3164\n' "$(date '+%b %d %H:%M:%S')" "$$" "$PING_TAG" | \
     nc -uU /var/run/log -N 2>&1 || true
