@@ -821,8 +821,8 @@ main(int argc, const char *argv[])
 	 * sigsuspend so the process stays up; bsd_in's polling thread
 	 * (and any future dispatch sources) keep doing work. */
 	if (global.server_port == 0) {
-		_PJ_BC("server_port=0: parking on pause() forever");
-		for (;;) pause();
+		_PJ_BC("server_port=0: parking on sleep() loop forever");
+		for (;;) sleep(3600);
 	}
 	_PJ_BC("before dispatch_main (parks forever)");
 	dispatch_main();
