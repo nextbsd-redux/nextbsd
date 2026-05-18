@@ -186,16 +186,22 @@ xpc_connection_set_event_handler(xpc_connection_t xconn,
 {
 	struct xpc_connection *conn;
 
+	/* Phase J runtime iter 45: log everything to find why SEGV
+	 * persists despite NULL guard. */
+	{ FILE *_d = fopen("/tmp/xpc_seh.log", "a");
+	  if (_d) { fprintf(_d, "[%d] xpc_seh xconn=%p handler=%p\n",
+	    getpid(), (void*)xconn, (void*)handler); fclose(_d); } }
+
 	debugf("connection=%p", xconn);
-	/* FreeBSD port: callers like libsystem_asl's asl_trigger_aslmanager
-	 * pass NULL when xpc_connection_create_mach_service has returned
-	 * NULL (no MachServices wired). Apple's impl crashes too; ours
-	 * SEGV'd here. Tolerate NULL silently — caller's connection is
-	 * dead anyway. (Phase J runtime iter 44.) */
 	if (xconn == NULL) return;
 	conn = conn_extract(xconn);
 	if (conn == NULL) return;
+	{ FILE *_d = fopen("/tmp/xpc_seh.log", "a");
+	  if (_d) { fprintf(_d, "[%d]   conn=%p, about to Block_copy\n",
+	    getpid(), (void*)conn); fclose(_d); } }
 	conn->xc_handler = (xpc_handler_t)Block_copy(handler);
+	{ FILE *_d = fopen("/tmp/xpc_seh.log", "a");
+	  if (_d) { fprintf(_d, "[%d]   xc_handler set OK\n", getpid()); fclose(_d); } }
 }
 
 void
