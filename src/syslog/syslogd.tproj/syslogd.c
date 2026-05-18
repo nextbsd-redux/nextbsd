@@ -834,12 +834,15 @@ main(int argc, const char *argv[])
 	 * sigsuspend so the process stays up; bsd_in's polling thread
 	 * (and any future dispatch sources) keep doing work. */
 	if (global.server_port == 0) {
-		_PJ_BC("server_port=0: calling dispatch_main (recv threads keep process alive)");
-		dispatch_main();
-		/* If dispatch_main returns (no sources), fall through to
-		 * sleep loop. Our bsd_in recv pthreads keep the process
-		 * alive but dispatch_async workitems won't drain. */
-		_PJ_BC("dispatch_main returned; falling to sleep loop");
+		_PJ_BC("server_port=0: park work_queue + main thread");
+		/* Park a long-running block on the global queue. This keeps
+		 * dispatch's worker pool alive so dispatch_async workitems
+		 * (e.g., process_message -> asl_out_message) actually run. */
+		dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+			for (;;) sleep(3600);
+		});
+		/* Main thread parks. Our pthread recv threads keep the
+		 * process alive at the OS level. */
 		for (;;) sleep(3600);
 	}
 	_PJ_BC("before dispatch_main (parks forever)");
