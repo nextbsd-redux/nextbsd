@@ -139,6 +139,9 @@ thread_go(thread_t thread)
 		  thread->ith_state != MACH_RCV_IN_PROGRESS &&
 		  thread->ith_state != MACH_RCV_IN_PROGRESS_TIMED);
 
+	LAUNCHD_TRACE("thread_go thread=%p block_lock=%p state=%d",
+	    thread, block_lock, thread->ith_state);
+
 	if (block_lock != NULL && !mtx_owned(block_lock)) {
 		needunlock = 1;
 		mtx_lock(block_lock);
@@ -146,6 +149,8 @@ thread_go(thread_t thread)
 	wakeup(thread);
 	if (needunlock)
 		mtx_unlock(block_lock);
+
+	LAUNCHD_TRACE("thread_go thread=%p wakeup posted", thread);
 }
 
 void

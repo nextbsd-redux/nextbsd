@@ -572,28 +572,11 @@ kqueue_demand_loop(void *arg __attribute__((unused)))
 	fd_set rfds;
 
 	/*
-	 * Upstream design: select() on the kqueue, then send a Mach message
-	 * to launchd_internal_port so the MAIN thread drains kevents via
-	 * x_handle_kqueue. The handoff serializes kevent processing onto
-	 * the same thread that handles Mach RPCs.
+	 * Yes, at first glance, calling select() on a kqueue seems silly.
 	 *
-	 * FreeBSD port (Phase J runtime, task #41): the Mach round-trip
-	 * here hangs because xpc_pipe_try_receive in the main thread uses
-	 * blocking mach_msg(MACH_RCV, timeout=NONE) which doesn't wake up
-	 * promptly on our mach.ko (see phase_e_libdispatch_mach_recv —
-	 * dispatch's MACH_RECV needed a custom polling thread for the same
-	 * reason). Result: kqueue_demand_thread sends handle_kqueue() into
-	 * the void, main thread never wakes, EVFILT_READ on launchd-child
-	 * IPC sockets (spair[0]) never processed, every launchd-spawned
-	 * Apple daemon hangs in launch_msg(CHECKIN).
-	 *
-	 * Workaround: call x_handle_kqueue directly here. Trades the
-	 * single-threaded-handler invariant for liveness. Apple's globals
-	 * accessed from kevent callbacks (ipc_callback -> ipc_readmsg ->
-	 * config_setup etc.) are no longer guaranteed to be on the main
-	 * thread; race risk exists but is the lesser evil vs the daemon
-	 * never starting at all. Remove this workaround when mach.ko's
-	 * blocking RCV or xpc_pipe_try_receive's wake path is fixed.
+	 * This avoids a race condition between the main thread and this helper
+	 * thread by ensuring that we drain kqueue events on the same thread
+	 * that manipulates the kqueue.
 	 */
 
 	for (;;) {
@@ -601,7 +584,7 @@ kqueue_demand_loop(void *arg __attribute__((unused)))
 		FD_SET(mainkq, &rfds);
 		int r = select(mainkq + 1, &rfds, NULL, NULL, NULL);
 		if (r == 1) {
-			(void)x_handle_kqueue(launchd_internal_port, mainkq);
+			(void)os_assumes_zero(handle_kqueue(launchd_internal_port, mainkq));
 		} else if (posix_assumes_zero(r) != -1) {
 			(void)os_assumes_zero(r);
 		}

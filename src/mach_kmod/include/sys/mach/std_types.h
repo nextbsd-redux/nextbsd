@@ -115,6 +115,20 @@
 
 extern int mach_debug_enable;
 
+/*
+ * Task #41 (launchd CHECKIN hang) diagnostic trace. Always-on,
+ * filtered to launchd / syslogd / notifyd to keep noise bounded.
+ * Removable as a single block after the bug is fixed.
+ */
+#define LAUNCHD_TRACE_PROC()						\
+	(curproc->p_comm[0] == 'l' && curproc->p_comm[1] == 'a' &&	\
+	 curproc->p_comm[2] == 'u') /* launchd */
+#define LAUNCHD_TRACE(fmt, ...) do {					\
+	if (LAUNCHD_TRACE_PROC())					\
+		printf("[T41] %s:%d " fmt "\n",				\
+		    curproc->p_comm, curthread->td_tid, ##__VA_ARGS__);	\
+} while (0)
+
 #define decl_mutex_data(__annot, __lock) __annot struct mtx __lock;
 #define assert(exp) KASSERT(exp, (#exp))
 #define MACH_VERIFY(exp, str) do {					\

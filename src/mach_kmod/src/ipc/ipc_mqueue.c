@@ -242,6 +242,9 @@ ipc_mqueue_send(
 	MACH_VERIFY(io_otype((ipc_object_t)port) == IOT_PORT, ("bad type %d\n", io_otype((ipc_object_t)port)));
 	assert(io_otype((ipc_object_t)port) == IOT_PORT);
 
+	LAUNCHD_TRACE("mqueue_send port=%p msgh_id=%d size=%d",
+	    port, kmsg->ikm_header->msgh_id, kmsg->ikm_header->msgh_size);
+
 	ip_lock(port);
 
 	if (port->ip_receiver == ipc_space_kernel) {
@@ -415,12 +418,15 @@ ipc_mqueue_run(thread_act_t receiver, ipc_mqueue_t mqueue, ipc_kmsg_t kmsg, ipc_
 {
 	MPASS(receiver->ith_state == MACH_RCV_IN_PROGRESS ||
 		  receiver->ith_state == MACH_RCV_IN_PROGRESS_TIMED);
+	LAUNCHD_TRACE("mqueue_run receiver=%p kmsg=%p port=%p old_state=%d",
+	    receiver, kmsg, port, receiver->ith_state);
 	receiver->ith_state = MACH_MSG_SUCCESS;
 	receiver->ith_kmsg = kmsg;
 	receiver->ith_object = (ipc_object_t)port;
 	receiver->ith_seqno = port->ip_seqno++;
 	ip_unlock(port);
 	thread_go(receiver);
+	LAUNCHD_TRACE("mqueue_run thread_go returned");
 }
 
 mach_msg_return_t
@@ -452,6 +458,9 @@ ipc_mqueue_deliver(
 	} else if (receiver == NULL) {
 		receiver = thread_pool_get_act((ipc_object_t)port, 0);
 	}
+	LAUNCHD_TRACE("deliver port=%p pset=%p receiver=%p msgcount=%d qlimit=%d msgh_id=%d",
+	    port, pset, receiver, port->ip_msgcount, port->ip_qlimit,
+	    kmsg->ikm_header->msgh_id);
 	/* we have a receiver - we're done */
 	if (receiver != NULL) {
 		ipc_mqueue_run(receiver, mqueue, kmsg, port);
@@ -462,6 +471,8 @@ ipc_mqueue_deliver(
 	ipc_kmsg_enqueue_macro(&mqueue->imq_messages, kmsg);
 	port->ip_msgcount++;
 	ip_unlock(port);
+
+	LAUNCHD_TRACE("deliver enqueued kmsg, no receiver, ip_msgcount=%d", port->ip_msgcount);
 
 	if (pset)
 		ipc_pset_signal(pset);
@@ -753,6 +764,8 @@ ipc_mqueue_receive(
 
 	io_lock(thread->ith_object);
 	io_reference(thread->ith_object);
+	LAUNCHD_TRACE("mqueue_receive entry obj=%p bits=0x%x ith_kmsg=%p",
+	    thread->ith_object, bits, thread->ith_kmsg);
 	if (thread->ith_kmsg != NULL) {
 		thread->ith_state = MACH_MSG_SUCCESS;
 		goto rx_done;
@@ -818,7 +831,13 @@ ipc_mqueue_receive(
 	thread_pool_put_act(self);
 
 	self->ith_msize = max_size;
+	LAUNCHD_TRACE("receive BLOCK self=%p object=%p (pset=%d) state=%d",
+	    self, self->ith_object,
+	    (int)(bits & MACH_PORT_TYPE_PORT_SET) != 0,
+	    self->ith_state);
 	thread_block();
+	LAUNCHD_TRACE("receive WAKE self=%p state=%d wait_result=%d kmsg=%p",
+	    self, self->ith_state, self->wait_result, self->ith_kmsg);
 	/* Save proper wait_result in case we block */
 	save_wait_result = self->wait_result;
 
