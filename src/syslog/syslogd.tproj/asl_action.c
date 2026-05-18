@@ -1674,8 +1674,13 @@ _asl_out_process_message(asl_out_module_t *m, asl_msg_t *msg)
 			if ((asl_msg_cmp(r->query, msg) != 1)) return 0;
 		}
 
-		if ((asl_msg_cmp(r->query, msg) == 1))
+		int _cmp = asl_msg_cmp(r->query, msg);
+		{ FILE *_d = fopen("/tmp/asl_route.log", "a");
+		  if (_d) { fprintf(_d, "[%d] rule action=%d cmp=%d\n", getpid(), r->action, _cmp); fclose(_d); } }
+		if ((_cmp == 1))
 		{
+			{ FILE *_d = fopen("/tmp/asl_route.log", "a");
+			  if (_d) { fprintf(_d, "[%d]   MATCH action=%d -> dispatch\n", getpid(), r->action); fclose(_d); } }
 			if (r->action == ACTION_NONE) continue;
 			else if (r->action == ACTION_IGNORE) return 1;
 			else if (r->action == ACTION_SKIP) return 0;

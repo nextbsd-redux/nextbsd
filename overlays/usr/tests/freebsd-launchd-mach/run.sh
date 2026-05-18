@@ -461,6 +461,8 @@ echo "--- /tmp/xpc_seh.log ---"
 [ -f /tmp/xpc_seh.log ] && cat /tmp/xpc_seh.log || echo "(no xpc_seh log)"
 echo "--- /tmp/process_msg.log ---"
 [ -f /tmp/process_msg.log ] && cat /tmp/process_msg.log || echo "(no process_msg log)"
+echo "--- /tmp/asl_route.log ---"
+[ -f /tmp/asl_route.log ] && cat /tmp/asl_route.log || echo "(no asl_route log)"
 
 echo "--- full /var/log tree (any new files?) ---"
 find /var/log -type f -newer /etc/asl.conf 2>&1 | head -20
