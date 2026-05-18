@@ -1055,13 +1055,20 @@ launchd_mig_demux(mach_msg_header_t *request, mach_msg_header_t *reply)
 {
 	boolean_t result = false;
 
+	fprintf(stderr, "[T41-demux] enter msgh_id=%d local_port=0x%x idx=%lu\n",
+	    request->msgh_id, (unsigned)request->msgh_local_port,
+	    MACH_PORT_INDEX(request->msgh_local_port));
 	time_of_mach_msg_return = runtime_get_opaque_time();
 	launchd_syslog(LOG_DEBUG, "MIG callout: %u", request->msgh_id);
 	mig_callback the_demux = mig_cb_table[MACH_PORT_INDEX(request->msgh_local_port)];
+	fprintf(stderr, "[T41-demux] mig_cb_table[%lu] = %p\n",
+	    MACH_PORT_INDEX(request->msgh_local_port), the_demux);
 	mach_msg_audit_trailer_t *tp = (mach_msg_audit_trailer_t *)((vm_offset_t)request + round_msg(request->msgh_size));
 	runtime_record_caller_creds(&tp->msgh_audit);
+	fprintf(stderr, "[T41-demux] pre-call the_demux\n");
 
 	result = the_demux(request, reply);
+	fprintf(stderr, "[T41-demux] post-call the_demux result=%d\n", result);
 	if (!result) {
 		launchd_syslog(LOG_DEBUG, "Demux failed. Trying other subsystems...");
 		if (request->msgh_id == MACH_NOTIFY_NO_SENDERS) {
