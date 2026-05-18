@@ -434,6 +434,9 @@ logger_rc=$?
 echo "post rc=$logger_rc out: ${logger_out:-(empty)}"
 logger -p user.notice -t phasej-test "$PING_TAG-2" 2>&1 || true
 logger -p user.notice -t phasej-test "$PING_TAG-3" 2>&1 || true
+# Also try RFC3164 directly (Apple's parser may not handle FreeBSD logger's RFC5424)
+printf '<13>%s phasej-test[%d]: %s-RFC3164\n' "$(date '+%b %d %H:%M:%S')" "$$" "$PING_TAG" | \
+    nc -uU /var/run/log -N 2>&1 || true
 
 # Also direct-write to /var/run/log via socket(1) (FreeBSD base
 # tool) to bypass libc syslog(3) — if logger silently fails to

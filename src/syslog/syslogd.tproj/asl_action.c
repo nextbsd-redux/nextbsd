@@ -1473,7 +1473,10 @@ _act_file_final(asl_out_module_t *m, asl_out_rule_t *r, asl_msg_t *msg)
 	if (r->dst->flags & MODULE_FLAG_STD_BSD_MSG)
 	{
 		const char *msgval = NULL;
-		if (asl_msg_lookup(msg, ASL_KEY_MSG, &msgval, NULL) != 0) return;
+		int lookup_rc = asl_msg_lookup(msg, ASL_KEY_MSG, &msgval, NULL);
+		{ FILE *_d = fopen("/tmp/asl_route.log", "a");
+		  if (_d) { fprintf(_d, "[%d] _act_file_final: ASL_KEY_MSG lookup_rc=%d val=%s\n", getpid(), lookup_rc, msgval ? msgval : "(null)"); fclose(_d); } }
+		if (lookup_rc != 0) return;
 		if (msgval == NULL) return;
 	}
 
