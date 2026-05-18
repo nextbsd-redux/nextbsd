@@ -602,8 +602,11 @@ x_handle_kqueue(mach_port_t junk __attribute__((unused)), integer_t fd)
 
 	bulk_kev = kev;
 
-	if ((bulk_kev_cnt = kevent(fd, NULL, 0, kev, BULK_KEV_MAX, &ts)) != -1) {
-#if 0	
+	fprintf(stderr, "[T41-xkq] enter fd=%d\n", fd);
+	bulk_kev_cnt = kevent(fd, NULL, 0, kev, BULK_KEV_MAX, &ts);
+	fprintf(stderr, "[T41-xkq] kevent returned cnt=%d\n", bulk_kev_cnt);
+	if (bulk_kev_cnt != -1) {
+#if 0
 		for (i = 0; i < bulk_kev_cnt; i++) {
 			log_kevent_struct(LOG_DEBUG, &kev[0], i);
 		}
@@ -611,6 +614,9 @@ x_handle_kqueue(mach_port_t junk __attribute__((unused)), integer_t fd)
 		for (i = 0; i < bulk_kev_cnt; i++) {
 			bulk_kev_i = i;
 			kevi = &kev[i];
+
+			fprintf(stderr, "[T41-xkq] ev[%d]/%d ident=%lu filter=%hd fflags=0x%x udata=%p\n",
+			    i, bulk_kev_cnt, kevi->ident, kevi->filter, kevi->fflags, kevi->udata);
 
 			if (kevi->filter) {
 				launchd_syslog(LOG_DEBUG, "Dispatching kevent (ident/filter): %lu/%hd", kevi->ident, kevi->filter);
@@ -622,10 +628,13 @@ x_handle_kqueue(mach_port_t junk __attribute__((unused)), integer_t fd)
 
 				struct job_check_s *check = kevi->udata;
 				if (check && check->kqc) {
+					fprintf(stderr, "[T41-xkq] ev[%d] dispatch callback=%p\n", i, check->kqc);
 					runtime_ktrace(RTKT_LAUNCHD_BSD_KEVENT|DBG_FUNC_START, kevi->ident, kevi->filter, kevi->fflags);
 					(*((kq_callback *)kevi->udata))(kevi->udata, kevi);
 					runtime_ktrace0(RTKT_LAUNCHD_BSD_KEVENT|DBG_FUNC_END);
+					fprintf(stderr, "[T41-xkq] ev[%d] callback returned\n", i);
 				} else {
+					fprintf(stderr, "[T41-xkq] ev[%d] invalid udata\n", i);
 					launchd_syslog(LOG_ERR, "The following kevent had invalid context data. Please file a bug with the following information:");
 					log_kevent_struct(LOG_EMERG, &kev[0], i);
 				}
@@ -638,6 +647,7 @@ x_handle_kqueue(mach_port_t junk __attribute__((unused)), integer_t fd)
 
 	bulk_kev = NULL;
 
+	fprintf(stderr, "[T41-xkq] exit\n");
 	return 0;
 }
 
