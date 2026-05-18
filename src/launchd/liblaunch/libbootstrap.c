@@ -33,8 +33,34 @@
 #include <sys/stat.h>
 #include <pthread.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <kenv.h>
 
 #include "job.h"
+
+/*
+ * Task #39 diagnostic trace — gated on kenv "launchd_trace=1" set at
+ * the FreeBSD loader prompt (CI enables; production silent). Same
+ * lazy-check pattern as src/libxpc/xpc_misc.c. libbootstrap links into
+ * every daemon that uses bootstrap_check_in / bootstrap_look_up, so
+ * we need a self-contained gate independent of launchd's globals.
+ */
+static int bs_trace_enabled = -1;
+static inline int
+bs_trace_check(void)
+{
+	if (bs_trace_enabled == -1) {
+		char buf[8];
+		bs_trace_enabled =
+		    (kenv(KENV_GET, "launchd_trace", buf, sizeof(buf)) > 0 &&
+		     buf[0] == '1') ? 1 : 0;
+	}
+	return bs_trace_enabled;
+}
+#define BS_TRACE(fmt, ...) do {						\
+	if (bs_trace_check())						\
+		fprintf(stderr, fmt "\n", ##__VA_ARGS__);		\
+} while (0)
 
 void
 bootstrap_init(void)
@@ -135,16 +161,28 @@ kern_return_t
 bootstrap_check_in(mach_port_t bp, const name_t service_name, mach_port_t *sp)
 {
 	uuid_t junk;
+	kern_return_t kr;
 	(void)bzero(junk, sizeof(junk));
-	return vproc_mig_check_in2(bp, (char *)service_name, sp, junk, 0);
+	BS_TRACE("[T39-bs] bootstrap_check_in pid=%d bp=0x%x name=%s",
+	    (int)getpid(), (unsigned)bp, service_name);
+	kr = vproc_mig_check_in2(bp, (char *)service_name, sp, junk, 0);
+	BS_TRACE("[T39-bs] bootstrap_check_in pid=%d name=%s -> kr=0x%x port=0x%x",
+	    (int)getpid(), service_name, (unsigned)kr, (unsigned)*sp);
+	return kr;
 }
 
 kern_return_t
 bootstrap_check_in2(mach_port_t bp, const name_t service_name, mach_port_t *sp, uint64_t flags)
 {
 	uuid_t junk;
+	kern_return_t kr;
 	(void)bzero(junk, sizeof(junk));
-	return vproc_mig_check_in2(bp, (char *)service_name, sp, junk, flags);
+	BS_TRACE("[T39-bs] bootstrap_check_in2 pid=%d bp=0x%x name=%s flags=0x%llx",
+	    (int)getpid(), (unsigned)bp, service_name, (unsigned long long)flags);
+	kr = vproc_mig_check_in2(bp, (char *)service_name, sp, junk, flags);
+	BS_TRACE("[T39-bs] bootstrap_check_in2 pid=%d name=%s -> kr=0x%x port=0x%x",
+	    (int)getpid(), service_name, (unsigned)kr, (unsigned)*sp);
+	return kr;
 }
 
 kern_return_t

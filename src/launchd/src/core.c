@@ -8919,7 +8919,11 @@ job_mig_check_in2(job_t j, name_t servicename, mach_port_t *serviceportp, uuid_t
 	struct machservice *ms = NULL;
 	job_t jo;
 
+	LD_TRACE("[T39-mig] job_mig_check_in2 j=%p service=%s flags=0x%llx",
+	    j, servicename, (unsigned long long)flags);
+
 	if (!j) {
+		LD_TRACE("[T39-mig] job_mig_check_in2 j=NULL -> BOOTSTRAP_NO_MEMORY");
 		return BOOTSTRAP_NO_MEMORY;
 	}
 
@@ -8994,6 +8998,8 @@ job_mig_check_in2(job_t j, name_t servicename, mach_port_t *serviceportp, uuid_t
 	job_log(j, LOG_INFO, "Check-in of service: %s", servicename);
 
 	*serviceportp = machservice_port(ms);
+	LD_TRACE("[T39-mig] job_mig_check_in2 service=%s -> SUCCESS port=0x%x ms=%p",
+	    servicename, (unsigned)*serviceportp, ms);
 	return BOOTSTRAP_SUCCESS;
 }
 

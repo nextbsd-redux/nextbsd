@@ -196,6 +196,31 @@ static void launch_msg_getmsgs(launch_data_t m, void *context);
 static launch_data_t launch_msg_internal(launch_data_t d);
 static void launch_mach_checkin_service(launch_data_t obj, const char *key, void *context);
 
+/*
+ * Task #39 diagnostic trace — gated on kenv "launchd_trace=1" set at
+ * the FreeBSD loader prompt (same gate as libbootstrap / libxpc / launchd).
+ * Self-contained because liblaunch links into both launchd and the
+ * daemons; can't depend on launchd's launchd_trace_enabled global.
+ */
+#include <stdio.h>
+#include <kenv.h>
+static int ll_trace_enabled = -1;
+static inline int
+ll_trace_check(void)
+{
+	if (ll_trace_enabled == -1) {
+		char buf[8];
+		ll_trace_enabled =
+		    (kenv(KENV_GET, "launchd_trace", buf, sizeof(buf)) > 0 &&
+		     buf[0] == '1') ? 1 : 0;
+	}
+	return ll_trace_enabled;
+}
+#define LL_TRACE(fmt, ...) do {						\
+	if (ll_trace_check())						\
+		fprintf(stderr, fmt "\n", ##__VA_ARGS__);		\
+} while (0)
+
 void
 _launch_init_globals(launch_globals_t globals)
 {
@@ -1019,15 +1044,24 @@ void
 launch_mach_checkin_service(launch_data_t obj, const char *key, void *context __attribute__((unused)))
 {
 	kern_return_t result;
-	mach_port_t p;
+	mach_port_t p = MACH_PORT_NULL;
 	name_t srvnm;
 
 	strlcpy(srvnm, key, sizeof(srvnm));
 
+	LL_TRACE("[T39-ll] launch_mach_checkin_service pid=%d key=%s bootstrap_port=0x%x",
+	    (int)getpid(), srvnm, (unsigned)bootstrap_port);
+
 	result = bootstrap_check_in(bootstrap_port, srvnm, &p);
 
-	if (result == BOOTSTRAP_SUCCESS)
+	LL_TRACE("[T39-ll] launch_mach_checkin_service pid=%d key=%s -> kr=0x%x port=0x%x",
+	    (int)getpid(), srvnm, (unsigned)result, (unsigned)p);
+
+	if (result == BOOTSTRAP_SUCCESS) {
 		launch_data_set_machport(obj, p);
+		LL_TRACE("[T39-ll] launch_mach_checkin_service pid=%d key=%s stitched port=0x%x",
+		    (int)getpid(), srvnm, (unsigned)p);
+	}
 }
 
 launch_data_t
