@@ -1095,6 +1095,9 @@ mach_port_move_member(
 	ipc_pset_t nset;
 	kern_return_t kr;
 
+	LAUNCHD_TRACE("move_member space=%p member=0x%x after=0x%x",
+	    space, member, after);
+
 	if (space == IS_NULL)
 		return KERN_INVALID_TASK;
 

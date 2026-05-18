@@ -275,6 +275,8 @@ ipc_pset_add(
 	port->ip_pset = pset;
 	ips_reference(pset);
 	TAILQ_INSERT_TAIL(&pset->ips_ports, port, ip_next);
+
+	LAUNCHD_TRACE("ipc_pset_add port=%p -> pset=%p", port, pset);
 }
 
 /*
