@@ -118,11 +118,24 @@ static int remote_enabled = 0;
 extern void database_server();
 
 /* Phase J runtime debug. */
+#include <execinfo.h>
 void _phasej_sig(int sig);
 void _phasej_sig(int sig)
 {
 	FILE *f = fopen("/tmp/syslogd_sig.log", "a");
-	if (f) { fprintf(f, "[%d] caught signal %d\n", getpid(), sig); fclose(f); }
+	if (f) {
+		fprintf(f, "[%d] caught signal %d\n", getpid(), sig);
+		void *bt[64];
+		int n = backtrace(bt, 64);
+		fprintf(f, "[%d] backtrace (%d frames):\n", getpid(), n);
+		char **syms = backtrace_symbols(bt, n);
+		if (syms) {
+			for (int i = 0; i < n; i++)
+				fprintf(f, "[%d]   #%-2d %s\n", getpid(), i, syms[i]);
+			free(syms);
+		}
+		fclose(f);
+	}
 	if (sig == SIGCHLD || sig == SIGPIPE) return;
 	_exit(128 + sig);
 }
