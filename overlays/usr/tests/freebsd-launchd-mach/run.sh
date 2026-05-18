@@ -435,7 +435,8 @@ echo "--- test_bsd_logger post (libc syslog(3) -> RFC3164) ---"
 
 echo "--- logger(1) post (RFC5424 may not extract MSG) ---"
 logger_out=$(logger -p user.notice -t phasej-test "$PING_TAG-logger" 2>&1)
-echo "logger rc=$? out: ${logger_out:-(empty)}"
+logger_rc=$?
+echo "logger rc=$logger_rc out: ${logger_out:-(empty)}"
 # Also try RFC3164 directly (Apple's parser may not handle FreeBSD logger's RFC5424)
 printf '<13>%s phasej-test[%d]: %s-RFC3164\n' "$(date '+%b %d %H:%M:%S')" "$$" "$PING_TAG" | \
     nc -uU /var/run/log -N 2>&1 || true
