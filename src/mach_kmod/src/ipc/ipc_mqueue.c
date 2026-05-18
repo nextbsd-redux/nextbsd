@@ -672,11 +672,15 @@ ipc_mqueue_pset_receive(
 {
 	ipc_port_t port;
 	ipc_pset_t pset;
+	int scan_count = 0;
 
 	pset = (ipc_pset_t)thread->ith_object;
 	assert(io_otype(thread->ith_object) == IOT_PORT_SET);
+	LAUNCHD_TRACE("pset_receive enter pset=%p", pset);
 restart:
 	TAILQ_FOREACH(port, &pset->ips_ports, ip_next) {
+		scan_count++;
+		LAUNCHD_TRACE("pset_receive scan port=%p msgcount=%d", port, port->ip_msgcount);
 		mtx_assert(&port->port_comm.rcd_io_lock_data, MA_NOTOWNED);
 		assert (port->ip_msgcount >= 0);
 		if (port->ip_msgcount != 0) {
@@ -695,12 +699,15 @@ restart:
 		goto restart;
 	}
 	if (port != NULL) {
+		LAUNCHD_TRACE("pset_receive found port=%p msgcount=%d scan_count=%d",
+		    port, port->ip_msgcount, scan_count);
 		mtx_assert(&port->port_comm.rcd_io_lock_data, MA_OWNED);
 		ipc_mqueue_post_on_thread(port, option, max_size, thread);
 		ip_unlock(port);
 		thread->ith_object = (ipc_object_t)port;
 		return (THREAD_NOT_WAITING);
 	}
+	LAUNCHD_TRACE("pset_receive empty scan_count=%d", scan_count);
 	if ((option & MACH_RCV_TIMEOUT) && (timeout == 0)) {
 		thread->ith_state = MACH_RCV_TIMED_OUT;
 		return (THREAD_NOT_WAITING);
@@ -861,7 +868,13 @@ rx_done:
 
 	assert(io_otype(self->ith_object) == IOT_PORT);
 
+	LAUNCHD_TRACE("receive rx_done kmsg=%p port=%p msgh_id=%d",
+	    *kmsgp, port,
+	    (*kmsgp) ? (*kmsgp)->ikm_header->msgh_id : -1);
+
 	mr = ipc_mqueue_finish_receive(kmsgp, port, option, max_size);
+
+	LAUNCHD_TRACE("receive finish_receive returned mr=%d", mr);
 
 	io_unlock(self->ith_object);
 	io_release(self->ith_object);
