@@ -490,6 +490,13 @@ fi
 # Read by directly grepping the asl store + system.log — avoids
 # /usr/bin/syslog which would hang on the same Mach IPC.
 echo "--- grepping for $PING_TAG in /var/log/{asl,system.log} ---"
+echo "--- system.log tail ---"
+tail -30 /var/log/system.log 2>&1 || true
+echo "--- /var/log/asl/*.asl grep PING ---"
+grep -ah "PHASEJ" /var/log/asl/*.asl /var/log/asl/Logs/*.asl /var/log/system.log 2>&1 | head -20 || true
+echo "--- /var/log/asl/*.asl grep phasej-test ---"
+grep -ah "phasej-test" /var/log/asl/*.asl /var/log/asl/Logs/*.asl /var/log/system.log 2>&1 | head -10 || true
+
 found=""
 if [ -f /var/log/system.log ] && grep -q "$PING_TAG" /var/log/system.log; then
     found="system.log"
