@@ -834,18 +834,16 @@ main(int argc, const char *argv[])
 	 * sigsuspend so the process stays up; bsd_in's polling thread
 	 * (and any future dispatch sources) keep doing work. */
 	if (global.server_port == 0) {
-		/* FreeBSD port (Phase J runtime iter 51): _dispatch_root_queues_init
-		 * is only fired from dispatch_main. Without it, dispatch_async
-		 * from non-dispatch pthreads SIGSEGVs in dx_push. Spawn a
-		 * dedicated pthread to call dispatch_main — root queues +
-		 * worker pool initialize there. Main thread parks; our
-		 * bsd_in recv pthreads continue receiving. */
-		_PJ_BC("server_port=0: spawn dispatch_main worker pthread");
-		pthread_t dm_thread;
-		pthread_create(&dm_thread, NULL, (void *(*)(void *))dispatch_main, NULL);
-		pthread_detach(dm_thread);
-		_PJ_BC("server_port=0: main parks in sleep loop");
-		for (;;) sleep(3600);
+		/* FreeBSD port (Phase J runtime iter 52): dispatch_main MUST
+		 * run on the main thread (asserts pthread_main_np() else
+		 * DISPATCH_CLIENT_CRASH). It calls _dispatch_root_queues_init
+		 * (needed for dispatch_async from non-dispatch pthreads to
+		 * work) then pthread_exit's the main thread. Our bsd_in recv
+		 * pthreads (spawned in init_modules above) keep the process
+		 * alive; they can dispatch_async cleanly thereafter. */
+		_PJ_BC("server_port=0: calling dispatch_main on main thread");
+		dispatch_main();
+		/* NOTREACHED — dispatch_main pthread_exit's main thread. */
 	}
 	_PJ_BC("before dispatch_main (parks forever)");
 	dispatch_main();
