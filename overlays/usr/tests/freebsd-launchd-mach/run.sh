@@ -405,6 +405,13 @@ echo "launchd-spawned pid=$syslogd_pid"
 
 # Iter 26: RunAtLoad dropped on syslogd plist. Start manually as
 # non-launchd child to bypass the launch_msg(CHECKIN) Mach hang.
+echo "--- killing any launchd-spawned syslogd (avoid dual-bind race on /var/run/log) ---"
+pkill -9 -x syslogd 2>&1 || true
+sleep 1
+echo "--- /var/run/log after kill: ---"
+ls -la /var/run/log /var/run/logpriv 2>&1 || true
+rm -f /var/run/log /var/run/logpriv
+
 echo "--- starting syslogd manually (non-launchd child, SIGHUP-immune) ---"
 # nohup gives SIGHUP immunity. FreeBSD has no setsid(1) binary, just
 # the syscall. Detach via & + disown to avoid job-control kills.
