@@ -751,7 +751,17 @@ runtime_set_timeout(timeout_callback to_cb, unsigned int sec)
 kern_return_t
 runtime_add_mport(mach_port_t name, mig_callback demux)
 {
-	size_t needed_table_sz = (MACH_PORT_INDEX(name) + 1) * sizeof(mig_callback);
+	/*
+	 * freebsd-launchd-mach (task #41 fix): use raw `name` as table
+	 * index. Apple's MACH_PORT_INDEX masks off the low 8 bits because
+	 * XNU encodes the index in bits 8+ and a generation in bits 0-7.
+	 * Our mach.ko allocates small sequential port names (0x10, 0x11,
+	 * 0x12, ...), so MACH_PORT_INDEX always returns 0 — every demux
+	 * registration overwrote slot 0, and lookups returned NULL/garbage.
+	 * Using `name` directly costs at most one entry per port name (still
+	 * tiny — launchd has < 50 ports).
+	 */
+	size_t needed_table_sz = ((size_t)name + 1) * sizeof(mig_callback);
 	mach_port_t target_set = demux ? ipc_port_set : demand_port_set;
 
 	if (unlikely(needed_table_sz > mig_cb_table_sz)) {
@@ -761,6 +771,7 @@ runtime_add_mport(mach_port_t name, mig_callback demux)
 		if (!new_table) {
 			return KERN_RESOURCE_SHORTAGE;
 		}
+		memset(new_table, 0, needed_table_sz);
 
 		if (likely(mig_cb_table)) {
 			memcpy(new_table, mig_cb_table, mig_cb_table_sz);
@@ -771,7 +782,7 @@ runtime_add_mport(mach_port_t name, mig_callback demux)
 		mig_cb_table = new_table;
 	}
 
-	mig_cb_table[MACH_PORT_INDEX(name)] = demux;
+	mig_cb_table[name] = demux;
 
 	return errno = mach_port_move_member(mach_task_self(), name, target_set);
 }
@@ -779,7 +790,7 @@ runtime_add_mport(mach_port_t name, mig_callback demux)
 kern_return_t
 runtime_remove_mport(mach_port_t name)
 {
-	mig_cb_table[MACH_PORT_INDEX(name)] = NULL;
+	mig_cb_table[name] = NULL;
 
 	return errno = mach_port_move_member(mach_task_self(), name, MACH_PORT_NULL);
 }
@@ -1055,14 +1066,15 @@ launchd_mig_demux(mach_msg_header_t *request, mach_msg_header_t *reply)
 {
 	boolean_t result = false;
 
-	fprintf(stderr, "[T41-demux] enter msgh_id=%d local_port=0x%x idx=%lu\n",
-	    request->msgh_id, (unsigned)request->msgh_local_port,
-	    MACH_PORT_INDEX(request->msgh_local_port));
+	fprintf(stderr, "[T41-demux] enter msgh_id=%d local_port=0x%x\n",
+	    request->msgh_id, (unsigned)request->msgh_local_port);
 	time_of_mach_msg_return = runtime_get_opaque_time();
 	launchd_syslog(LOG_DEBUG, "MIG callout: %u", request->msgh_id);
-	mig_callback the_demux = mig_cb_table[MACH_PORT_INDEX(request->msgh_local_port)];
-	fprintf(stderr, "[T41-demux] mig_cb_table[%lu] = %p\n",
-	    MACH_PORT_INDEX(request->msgh_local_port), the_demux);
+	/* freebsd-launchd-mach task #41: use raw port name as table index
+	 * (see runtime_add_mport comment above for why). */
+	mig_callback the_demux = mig_cb_table[request->msgh_local_port];
+	fprintf(stderr, "[T41-demux] mig_cb_table[0x%x] = %p\n",
+	    (unsigned)request->msgh_local_port, the_demux);
 	mach_msg_audit_trailer_t *tp = (mach_msg_audit_trailer_t *)((vm_offset_t)request + round_msg(request->msgh_size));
 	runtime_record_caller_creds(&tp->msgh_audit);
 	fprintf(stderr, "[T41-demux] pre-call the_demux\n");
