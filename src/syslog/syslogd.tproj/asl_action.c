@@ -1578,6 +1578,15 @@ _act_file(asl_out_module_t *m, asl_out_rule_t *r, asl_msg_t *msg)
 	if (r->dst == NULL) return;
 	{ FILE *_d = fopen("/tmp/asl_route.log", "a");
 	  if (_d) { fprintf(_d, "[%d]   dst->path=%s private=%p flags=0x%x\n", getpid(), r->dst->path ? r->dst->path : "(null)", r->dst->private, r->dst->flags); fclose(_d); } }
+	/* FreeBSD port: post_process_rule should have calloc'd private
+	 * but it's NULL — likely a state-init ordering issue we haven't
+	 * tracked down. Lazy-init here so writes still fire. */
+	if (r->dst->private == NULL) {
+		r->dst->private = calloc(1, sizeof(asl_action_file_data_t));
+		if (r->dst->private != NULL) ((asl_action_file_data_t *)(r->dst->private))->fd = -1;
+		{ FILE *_d = fopen("/tmp/asl_route.log", "a");
+		  if (_d) { fprintf(_d, "[%d]   LAZY-calloc private=%p\n", getpid(), r->dst->private); fclose(_d); } }
+	}
 	if (r->dst->private == NULL) return;
 
 	if (r->dst->flags & MODULE_FLAG_HAS_LOGGED) return;
