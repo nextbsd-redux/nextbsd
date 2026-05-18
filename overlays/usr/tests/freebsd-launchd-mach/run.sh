@@ -413,7 +413,10 @@ manual_syslogd_pid=$!
 echo "manual syslogd pid=$manual_syslogd_pid"
 disown 2>/dev/null || true
 sleep 2
-ps auxww | grep -E 'syslogd|notifyd' | grep -v grep || true
+echo "--- ps -p $manual_syslogd_pid (does pid still exist?) ---"
+ps -p "$manual_syslogd_pid" -o pid,stat,command 2>&1 || true
+echo "--- ps auxww | head -30 (all procs) ---"
+ps auxww | head -30
 ls -la /var/run/log /var/run/logpriv 2>&1 || true
 
 echo "--- /var/log/asl/ + /var/log/asl/Logs/ pre-post ---"

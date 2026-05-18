@@ -127,6 +127,13 @@ void _phasej_sig(int sig)
 	_exit(128 + sig);
 }
 
+void _phasej_exit(void);
+void _phasej_exit(void)
+{
+	FILE *f = fopen("/tmp/syslogd_sig.log", "a");
+	if (f) { fprintf(f, "[%d] atexit handler — exit() called\n", getpid()); fclose(f); }
+}
+
 static void
 init_modules()
 {
@@ -663,6 +670,14 @@ main(int argc, const char *argv[])
 		signal(SIGINT,  _phasej_sig);
 		signal(SIGPIPE, _phasej_sig);
 		signal(SIGCHLD, _phasej_sig);
+		signal(SIGSEGV, _phasej_sig);
+		signal(SIGBUS,  _phasej_sig);
+		signal(SIGILL,  _phasej_sig);
+		signal(SIGABRT, _phasej_sig);
+		signal(SIGFPE,  _phasej_sig);
+		signal(SIGSYS,  _phasej_sig);
+		extern void _phasej_exit(void);
+		atexit(_phasej_exit);
 	}
 
 	/* Phase J runtime debug: breadcrumb the post-init_globals path. */
