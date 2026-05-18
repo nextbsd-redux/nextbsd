@@ -187,7 +187,14 @@ xpc_connection_set_event_handler(xpc_connection_t xconn,
 	struct xpc_connection *conn;
 
 	debugf("connection=%p", xconn);
+	/* FreeBSD port: callers like libsystem_asl's asl_trigger_aslmanager
+	 * pass NULL when xpc_connection_create_mach_service has returned
+	 * NULL (no MachServices wired). Apple's impl crashes too; ours
+	 * SEGV'd here. Tolerate NULL silently — caller's connection is
+	 * dead anyway. (Phase J runtime iter 44.) */
+	if (xconn == NULL) return;
 	conn = conn_extract(xconn);
+	if (conn == NULL) return;
 	conn->xc_handler = (xpc_handler_t)Block_copy(handler);
 }
 
