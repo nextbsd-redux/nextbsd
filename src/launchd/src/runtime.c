@@ -1073,12 +1073,15 @@ launchd_mig_demux(mach_msg_header_t *request, mach_msg_header_t *reply)
 void
 launchd_runtime2(mach_msg_size_t msg_size)
 {
+	int iter = 0;
 	for (;;) {
 		launchd_log_push();
+		fprintf(stderr, "[T41-rt2] iter=%d pre-receive\n", iter++);
 
 		mach_port_t recvp = MACH_PORT_NULL;
 		xpc_object_t request = NULL;
 		int result = xpc_pipe_try_receive(ipc_port_set, &request, &recvp, launchd_mig_demux, msg_size, 0);
+		fprintf(stderr, "[T41-rt2] iter=%d post-receive result=%d request=%p\n", iter, result, request);
 		if (result == 0 && request) {
 			boolean_t handled = false;
 			time_of_mach_msg_return = runtime_get_opaque_time();

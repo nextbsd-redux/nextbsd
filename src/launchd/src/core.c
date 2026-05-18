@@ -4270,12 +4270,16 @@ jobmgr_callback(void *obj, struct kevent *kev)
 
 	switch (kev->filter) {
 	case EVFILT_PROC:
+		fprintf(stderr, "[T41-evt] EVFILT_PROC ident=%lu fflags=0x%x data=0x%lx\n",
+		    kev->ident, kev->fflags, kev->data);
 		jobmgr_reap_bulk(jm, kev);
 		root_jobmgr = jobmgr_do_garbage_collection(root_jobmgr);
 		break;
 	case EVFILT_SIGNAL:
+		fprintf(stderr, "[T41-evt] EVFILT_SIGNAL ident=%lu (%s)\n",
+		    kev->ident, strsignal(kev->ident));
 		switch (kev->ident) {
-		case SIGTERM:			
+		case SIGTERM:
 			jobmgr_log(jm, LOG_DEBUG, "Got SIGTERM. Shutting down.");
 			return launchd_shutdown();
 		case SIGUSR1:

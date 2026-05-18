@@ -542,7 +542,10 @@ launchd_shutdown(void)
 {
 	int64_t now;
 
+	fprintf(stderr, "[T41-shutdown] called! pid=%d pid1_magic=%d\n", getpid(), pid1_magic);
+
 	if (launchd_shutting_down) {
+		fprintf(stderr, "[T41-shutdown] already shutting down, returning\n");
 		return;
 	}
 
