@@ -1702,7 +1702,14 @@ asl_out_message(asl_msg_t *msg, int64_t msize)
 	OSAtomicIncrement32(&global.asl_queue_count);
 	asl_msg_retain(msg);
 
-	dispatch_async(asl_action_queue, ^{
+	/* FreeBSD port (Phase J runtime iter 53): inline the asl_action
+	 * dispatch — our libdispatch's dispatch_async SIGSEGVs in
+	 * dx_push from arbitrary pthreads despite root_queues_init.
+	 * Run synchronously on the calling thread (bsd_in recv pthread).
+	 * The asl_action_queue's purpose is to serialize file writes,
+	 * but with one inline caller per recv socket that's already the
+	 * case. (Tracked: task #41 — proper libdispatch fix.) */
+	{
 		int ignore = 0;
 		const char *p;
 		time_t now = time(NULL);
@@ -1726,7 +1733,7 @@ asl_out_message(asl_msg_t *msg, int64_t msize)
 				}
 			}
 		}
-		else 
+		else
 		{
 			if (m != NULL) m = m->next;
 			while (m != NULL)
@@ -1739,7 +1746,6 @@ asl_out_message(asl_msg_t *msg, int64_t msize)
 		p = asl_msg_get_val_for_key(msg, ASL_KEY_FINAL_NOTIFICATION);
 		if (p != NULL) asl_msg_set_key_val(msg, ASL_KEY_FREE_NOTE, p);
 
-		/* chain to the next output module (done this way to make queue size accounting easier */
 #if !TARGET_OS_SIMULATOR
 		if (global.bsd_out_enabled) bsd_out_message(msg, msize);
 		else OSAtomicAdd64(-1ll * msize, &global.memory_size);
@@ -1755,7 +1761,7 @@ asl_out_message(asl_msg_t *msg, int64_t msize)
 			_asl_action_close_idle_files(IDLE_CLOSE);
 			sweep_time = now;
 		}
-	});
+	}
 }
 
 static char *
