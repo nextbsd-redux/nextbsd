@@ -221,6 +221,7 @@ xpc_connection_suspend(xpc_connection_t xconn)
 {
 	struct xpc_connection *conn;
 
+	if ((uintptr_t)xconn < 0x1000) return;
 	conn = conn_extract(xconn);
 	dispatch_suspend(conn->xc_recv_source);
 }
@@ -231,6 +232,7 @@ xpc_connection_resume(xpc_connection_t xconn)
 	struct xpc_connection *conn;
 
 	debugf("connection=%p", xconn);
+	if ((uintptr_t)xconn < 0x1000) return;
 	conn = conn_extract(xconn);
 
 	/* Create dispatch source for top-level connection */
@@ -254,6 +256,7 @@ xpc_connection_send_message(xpc_connection_t xconn,
 	struct xpc_connection *conn;
 	uint64_t id;
 
+	if ((uintptr_t)xconn < 0x1000) return;
 	conn = conn_extract(xconn);
 	id = xpc_dictionary_get_uint64(message, XPC_SEQID);
 
@@ -274,6 +277,7 @@ xpc_connection_send_message_with_reply(xpc_connection_t xconn,
 	struct xpc_connection *conn;
 	struct xpc_pending_call *call;
 
+	if ((uintptr_t)xconn < 0x1000) return;
 	conn = conn_extract(xconn);
 	call = malloc(sizeof(struct xpc_pending_call));
 	call->xp_id = XPC_CONNECTION_NEXT_ID(conn);
@@ -293,9 +297,15 @@ xpc_object_t
 xpc_connection_send_message_with_reply_sync(xpc_connection_t conn,
     xpc_object_t message)
 {
-	__block xpc_object_t result;
-	dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+	__block xpc_object_t result = NULL;
+	dispatch_semaphore_t sem;
 
+	/* If conn is bogus, don't hand it to _with_reply (whose NULL
+	 * guard returns without signaling the semaphore — we'd hang
+	 * forever in dispatch_semaphore_wait). */
+	if ((uintptr_t)conn < 0x1000) return (NULL);
+
+	sem = dispatch_semaphore_create(0);
 	xpc_connection_send_message_with_reply(conn, message, NULL,
 	    ^(xpc_object_t o) {
 		result = o;
