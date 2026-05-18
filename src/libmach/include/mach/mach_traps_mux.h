@@ -58,8 +58,9 @@ extern "C" {
 #define MACH_TRAP_OP_INVALID			0
 #define MACH_TRAP_OP_HOST_SET_SPECIAL_PORT	1
 #define MACH_TRAP_OP_TASK_SET_SPECIAL_PORT	2
+#define MACH_TRAP_OP_PORT_MOVE_MEMBER		3
 
-#define MACH_TRAP_OP_MAX			2
+#define MACH_TRAP_OP_MAX			3
 
 #ifdef __cplusplus
 }

@@ -438,12 +438,31 @@ mach_port_mod_refs(mach_port_name_t task, mach_port_name_t name,
 	return KERN_SUCCESS;
 }
 
+/*
+ * mach_port_move_member: route through the Mach trap multiplexer
+ * (op=3). Task #41 root cause: this used to return KERN_SUCCESS
+ * without doing anything, so launchd's runtime_add_mport silently
+ * failed to add launchd_internal_port to its ipc_port_set. Every
+ * launchd-spawned daemon hung in launch_msg(CHECKIN) because the
+ * kqueue→handle_kqueue Mach send arrived on a port the main thread
+ * wasn't listening on.
+ */
 kern_return_t
 mach_port_move_member(mach_port_name_t task, mach_port_name_t member,
     mach_port_name_t after)
 {
-	(void)task; (void)member; (void)after;
-	return KERN_SUCCESS;
+	static int num = NO_SYSCALL;
+
+	(void)task;
+	if (num == NO_SYSCALL) {
+		num = resolve_syscall("mach_trap_mux");
+		if (num == NO_SYSCALL)
+			return (KERN_RESOURCE_SHORTAGE);
+	}
+	return ((kern_return_t)syscall(num,
+	    MACH_TRAP_OP_PORT_MOVE_MEMBER,
+	    (uint64_t)member, (uint64_t)after,
+	    (uint64_t)0, (uint64_t)0, (uint64_t)0));
 }
 
 kern_return_t

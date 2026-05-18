@@ -340,11 +340,13 @@ done
 
 echo "LAUNCHCTL-BUILD-OK: /bin/launchctl exists ($(stat -f%z /bin/launchctl) bytes), all libsystem deps resolve"
 
-# 10. ASL runtime smoke (Phase J). Currently end-to-end round-trip
-# is blocked by launchd launch_msg(CHECKIN) hang (task #41) —
-# kernel-instrumented run captures trace; SKIP keeps the suite green
-# while we iterate on the mach.ko wake fix.
-sleep 2
+# 10. ASL runtime smoke (Phase J). Task #41 fix landed: libmach's
+# mach_port_move_member stub replaced with a real mux syscall, so
+# launchd's runtime_add_mport now actually links its ports into the
+# pset and launch_msg(CHECKIN) should complete. Try the full
+# end-to-end round-trip; if it still fails, fall back to SKIP so we
+# can see the [T41] trace for the next iteration.
+sleep 3
 
 if pgrep -x notifyd >/dev/null 2>&1; then
     echo "NOTIFYD-PROC-OK: notifyd running as pid $(pgrep -x notifyd)"
@@ -363,6 +365,21 @@ else
     exit 1
 fi
 
-echo "SYSLOG-RUN-SKIP: end-to-end round-trip blocked by launchd launch_msg(CHECKIN) hang (task #41)"
+PING_TAG="PHASEJ-PING-$$-$(date +%s)"
+echo "--- post via libc syslog(3) (RFC3164 → /var/run/log) ---"
+/usr/tests/freebsd-launchd-mach/test_bsd_logger phasej-test "$PING_TAG" 2>&1 || true
+sleep 3
 
+echo "--- /var/log/system.log size + grep ---"
+[ -f /var/log/system.log ] && ls -la /var/log/system.log
+if [ -f /var/log/system.log ] && grep -q "$PING_TAG" /var/log/system.log; then
+    echo "SYSLOG-RUN-OK: '$PING_TAG' in /var/log/system.log (launchd CHECKIN works)"
+    exit 0
+fi
+
+echo "SYSLOG-RUN-SKIP: tag '$PING_TAG' not in /var/log/system.log; CHECKIN fix may not be complete"
+echo "--- system.log tail (post-test) ---"
+[ -f /var/log/system.log ] && tail -10 /var/log/system.log
+echo "--- /var/run/log socket state ---"
+ls -la /var/run/log /var/run/logpriv 2>&1 || true
 exit 0

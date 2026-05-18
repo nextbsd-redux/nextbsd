@@ -358,6 +358,27 @@ mux_task_set_special_port(struct thread *td,
 	return (0);
 }
 
+/*
+ * mach_port_move_member via the mux. Task #41 root cause: libmach's
+ * mach_port_move_member was a no-op stub returning KERN_SUCCESS, so
+ * launchd's runtime_add_mport silently failed to link
+ * launchd_internal_port into ipc_port_set. Result: every kqueue→Mach
+ * bridge message enqueued on a port with no pset, the main thread's
+ * pset receive never woke, every launchd-spawned daemon hung in
+ * launch_msg(CHECKIN). The kernel-side trap existed
+ * (sys__kernelrpc_mach_port_move_member_trap) but had no dedicated
+ * lkmnosys slot left to wire it to. Route through the mux instead.
+ */
+static int
+mux_port_move_member(struct thread *td __unused,
+    mach_port_name_t member, mach_port_name_t after)
+{
+	ipc_space_t space = current_task()->itk_space;
+
+	td->td_retval[0] = mach_port_move_member(space, member, after);
+	return (0);
+}
+
 int
 sys_mach_trap_mux_trap(struct thread *td,
     struct mach_trap_mux_trap_args *uap)
@@ -374,6 +395,10 @@ sys_mach_trap_mux_trap(struct thread *td,
 		    (mach_port_name_t)uap->a1,
 		    (int)uap->a2,
 		    (mach_port_name_t)uap->a3));
+	case 3:		/* MACH_TRAP_OP_PORT_MOVE_MEMBER */
+		return (mux_port_move_member(td,
+		    (mach_port_name_t)uap->a1,
+		    (mach_port_name_t)uap->a2));
 	default:
 		td->td_retval[0] = KERN_INVALID_ARGUMENT;
 		return (0);
