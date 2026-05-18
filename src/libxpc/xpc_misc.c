@@ -37,6 +37,31 @@
 #include <uuid/uuid.h>
 
 #include "xpc_internal.h"
+#include <kenv.h>
+
+/*
+ * Verbose diagnostic trace for xpc_pipe_try_receive / send. Read once
+ * (lazily, on first call) from kenv "launchd_trace=1" — same flag
+ * the launchd binary uses, set at the FreeBSD loader. Off by default.
+ * libxpc is a shared library used by more than just launchd, so this
+ * goes through its own check rather than depending on launchd's global.
+ */
+static int xpc_trace_enabled = -1;
+static inline int
+xpc_trace_check(void)
+{
+	if (xpc_trace_enabled == -1) {
+		char buf[8];
+		xpc_trace_enabled =
+		    (kenv(KENV_GET, "launchd_trace", buf, sizeof(buf)) > 0 &&
+		     buf[0] == '1') ? 1 : 0;
+	}
+	return xpc_trace_enabled;
+}
+#define XPC_TRACE(fmt, ...) do {					\
+	if (xpc_trace_check())						\
+		fprintf(stderr, fmt "\n", ##__VA_ARGS__);		\
+} while (0)
 
 #define MAX_RECV 8192
 #define XPC_RECV_SIZE			\
@@ -507,13 +532,13 @@ xpc_pipe_try_receive(mach_port_t portset, xpc_object_t *requestobj, mach_port_t 
 	/* should be size - but what about arbitrary XPC data? */
 	request->msgh_size = MAX_RECV;
 	request->msgh_local_port = portset;
-	fprintf(stderr, "[T41-xpc] pre-mach_msg portset=0x%x\n", (unsigned)portset);
+	XPC_TRACE("[T41-xpc] pre-mach_msg portset=0x%x", (unsigned)portset);
 	kr = mach_msg(request, MACH_RCV_MSG |
 	    MACH_RCV_TRAILER_TYPE(MACH_MSG_TRAILER_FORMAT_0) |
 	    MACH_RCV_TRAILER_ELEMENTS(MACH_RCV_TRAILER_AUDIT),
 	    0, request->msgh_size, request->msgh_local_port,
 	    MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
-	fprintf(stderr, "[T41-xpc] mach_msg ret kr=0x%x msgh_id=%d remote=0x%x local=0x%x\n",
+	XPC_TRACE("[T41-xpc] mach_msg ret kr=0x%x msgh_id=%d remote=0x%x local=0x%x",
 	    (unsigned)kr, request->msgh_id,
 	    (unsigned)request->msgh_remote_port,
 	    (unsigned)request->msgh_local_port);
@@ -523,18 +548,18 @@ xpc_pipe_try_receive(mach_port_t portset, xpc_object_t *requestobj, mach_port_t 
 		return TRUE; // ??
 	}
 	*rcvport = request->msgh_remote_port;
-	fprintf(stderr, "[T41-xpc] pre-demux\n");
+	XPC_TRACE("[T41-xpc] pre-demux");
 	int handled = demux(request, response);
-	fprintf(stderr, "[T41-xpc] post-demux handled=%d response_remote=0x%x\n",
+	XPC_TRACE("[T41-xpc] post-demux handled=%d response_remote=0x%x",
 	    handled, (unsigned)response->msgh_remote_port);
 	if (handled) {
         mig_reply_error_t *err = (mig_reply_error_t *)response;
         if(!(err->Head.msgh_bits & MACH_MSGH_BITS_COMPLEX) && err->RetCode == MIG_NO_REPLY)
             err->Head.msgh_remote_port = MACH_PORT_NULL;
         if(response->msgh_remote_port != MACH_PORT_NULL) {
-            fprintf(stderr, "[T41-xpc] pre-mach_msg_send reply\n");
+            XPC_TRACE("[T41-xpc] pre-mach_msg_send reply");
             (void)mach_msg_send(response);
-            fprintf(stderr, "[T41-xpc] post-mach_msg_send reply\n");
+            XPC_TRACE("[T41-xpc] post-mach_msg_send reply");
         }
 		/*  can't do anything with the return code
 		* just tell the caller this has been handled

@@ -602,9 +602,9 @@ x_handle_kqueue(mach_port_t junk __attribute__((unused)), integer_t fd)
 
 	bulk_kev = kev;
 
-	fprintf(stderr, "[T41-xkq] enter fd=%d\n", fd);
+	LD_TRACE("[T41-xkq] enter fd=%d", fd);
 	bulk_kev_cnt = kevent(fd, NULL, 0, kev, BULK_KEV_MAX, &ts);
-	fprintf(stderr, "[T41-xkq] kevent returned cnt=%d\n", bulk_kev_cnt);
+	LD_TRACE("[T41-xkq] kevent returned cnt=%d", bulk_kev_cnt);
 	if (bulk_kev_cnt != -1) {
 #if 0
 		for (i = 0; i < bulk_kev_cnt; i++) {
@@ -615,7 +615,7 @@ x_handle_kqueue(mach_port_t junk __attribute__((unused)), integer_t fd)
 			bulk_kev_i = i;
 			kevi = &kev[i];
 
-			fprintf(stderr, "[T41-xkq] ev[%d]/%d ident=%lu filter=%hd fflags=0x%x udata=%p\n",
+			LD_TRACE("[T41-xkq] ev[%d]/%d ident=%lu filter=%hd fflags=0x%x udata=%p",
 			    i, bulk_kev_cnt, kevi->ident, kevi->filter, kevi->fflags, kevi->udata);
 
 			if (kevi->filter) {
@@ -628,13 +628,13 @@ x_handle_kqueue(mach_port_t junk __attribute__((unused)), integer_t fd)
 
 				struct job_check_s *check = kevi->udata;
 				if (check && check->kqc) {
-					fprintf(stderr, "[T41-xkq] ev[%d] dispatch callback=%p\n", i, check->kqc);
+					LD_TRACE("[T41-xkq] ev[%d] dispatch callback=%p", i, check->kqc);
 					runtime_ktrace(RTKT_LAUNCHD_BSD_KEVENT|DBG_FUNC_START, kevi->ident, kevi->filter, kevi->fflags);
 					(*((kq_callback *)kevi->udata))(kevi->udata, kevi);
 					runtime_ktrace0(RTKT_LAUNCHD_BSD_KEVENT|DBG_FUNC_END);
-					fprintf(stderr, "[T41-xkq] ev[%d] callback returned\n", i);
+					LD_TRACE("[T41-xkq] ev[%d] callback returned", i);
 				} else {
-					fprintf(stderr, "[T41-xkq] ev[%d] invalid udata\n", i);
+					LD_TRACE("[T41-xkq] ev[%d] invalid udata", i);
 					launchd_syslog(LOG_ERR, "The following kevent had invalid context data. Please file a bug with the following information:");
 					log_kevent_struct(LOG_EMERG, &kev[0], i);
 				}
@@ -647,7 +647,7 @@ x_handle_kqueue(mach_port_t junk __attribute__((unused)), integer_t fd)
 
 	bulk_kev = NULL;
 
-	fprintf(stderr, "[T41-xkq] exit\n");
+	LD_TRACE("[T41-xkq] exit");
 	return 0;
 }
 
@@ -1066,21 +1066,21 @@ launchd_mig_demux(mach_msg_header_t *request, mach_msg_header_t *reply)
 {
 	boolean_t result = false;
 
-	fprintf(stderr, "[T41-demux] enter msgh_id=%d local_port=0x%x\n",
+	LD_TRACE("[T41-demux] enter msgh_id=%d local_port=0x%x",
 	    request->msgh_id, (unsigned)request->msgh_local_port);
 	time_of_mach_msg_return = runtime_get_opaque_time();
 	launchd_syslog(LOG_DEBUG, "MIG callout: %u", request->msgh_id);
 	/* freebsd-launchd-mach task #41: use raw port name as table index
 	 * (see runtime_add_mport comment above for why). */
 	mig_callback the_demux = mig_cb_table[request->msgh_local_port];
-	fprintf(stderr, "[T41-demux] mig_cb_table[0x%x] = %p\n",
+	LD_TRACE("[T41-demux] mig_cb_table[0x%x] = %p",
 	    (unsigned)request->msgh_local_port, the_demux);
 	mach_msg_audit_trailer_t *tp = (mach_msg_audit_trailer_t *)((vm_offset_t)request + round_msg(request->msgh_size));
 	runtime_record_caller_creds(&tp->msgh_audit);
-	fprintf(stderr, "[T41-demux] pre-call the_demux\n");
+	LD_TRACE("[T41-demux] pre-call the_demux");
 
 	result = the_demux(request, reply);
-	fprintf(stderr, "[T41-demux] post-call the_demux result=%d\n", result);
+	LD_TRACE("[T41-demux] post-call the_demux result=%d", result);
 	if (!result) {
 		launchd_syslog(LOG_DEBUG, "Demux failed. Trying other subsystems...");
 		if (request->msgh_id == MACH_NOTIFY_NO_SENDERS) {
@@ -1105,12 +1105,12 @@ launchd_runtime2(mach_msg_size_t msg_size)
 	int iter = 0;
 	for (;;) {
 		launchd_log_push();
-		fprintf(stderr, "[T41-rt2] iter=%d pre-receive\n", iter++);
+		LD_TRACE("[T41-rt2] iter=%d pre-receive", iter++);
 
 		mach_port_t recvp = MACH_PORT_NULL;
 		xpc_object_t request = NULL;
 		int result = xpc_pipe_try_receive(ipc_port_set, &request, &recvp, launchd_mig_demux, msg_size, 0);
-		fprintf(stderr, "[T41-rt2] iter=%d post-receive result=%d request=%p\n", iter, result, request);
+		LD_TRACE("[T41-rt2] iter=%d post-receive result=%d request=%p", iter, result, request);
 		if (result == 0 && request) {
 			boolean_t handled = false;
 			time_of_mach_msg_return = runtime_get_opaque_time();

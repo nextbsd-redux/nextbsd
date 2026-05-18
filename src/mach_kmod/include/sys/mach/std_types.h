@@ -116,15 +116,23 @@
 extern int mach_debug_enable;
 
 /*
- * Task #41 (launchd CHECKIN hang) diagnostic trace. Always-on,
- * filtered to launchd / syslogd / notifyd to keep noise bounded.
- * Removable as a single block after the bug is fixed.
+ * Mach IPC + launchd dispatch diagnostic trace. Gated on the
+ * mach.debug_enable sysctl (CTLFLAG_RWTUN; settable at loader via
+ * `set mach.debug_enable=1` then `boot`, or live via `sysctl -w
+ * mach.debug_enable=1`). Default off → zero overhead in production.
+ *
+ * Filtered to processes whose p_comm starts with "lau" (launchd,
+ * launchctl, launchproxy) to keep noise bounded even when enabled.
+ *
+ * Kept after the task #41 fix as a foundation for future Mach IPC
+ * regression hunts. CI enables via expect at loader prompt in
+ * tests/boot-test.sh; the shipped ISO is silent by default.
  */
 #define LAUNCHD_TRACE_PROC()						\
 	(curproc->p_comm[0] == 'l' && curproc->p_comm[1] == 'a' &&	\
-	 curproc->p_comm[2] == 'u') /* launchd */
+	 curproc->p_comm[2] == 'u') /* launchd / launchctl / launchproxy */
 #define LAUNCHD_TRACE(fmt, ...) do {					\
-	if (LAUNCHD_TRACE_PROC())					\
+	if (mach_debug_enable && LAUNCHD_TRACE_PROC())			\
 		printf("[T41] %s:%d " fmt "\n",				\
 		    curproc->p_comm, curthread->td_tid, ##__VA_ARGS__);	\
 } while (0)

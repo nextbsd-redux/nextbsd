@@ -30,6 +30,7 @@
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <sys/sysctl.h>
+#include <kenv.h>
 #include <sys/sockio.h>
 #include <sys/time.h>
 #include <sys/resource.h>
@@ -115,12 +116,27 @@ bool network_up;
 uid_t launchd_uid;
 FILE *launchd_console = NULL;
 int32_t launchd_sync_frequency = 30;
+bool launchd_trace_enabled = false;
 
 int
 main(int argc, char *const *argv)
 {
 	bool sflag = false;
 	int ch;
+
+	/*
+	 * Read the loader-set kenv "launchd_trace" once at startup. Set via
+	 * `set launchd_trace=1` at the FreeBSD loader prompt (see
+	 * tests/boot-test.sh for CI's usage). Survives the kernel→PID-1
+	 * handoff. Off by default — kenv() returns -1 / errno set on
+	 * missing variable, which leaves launchd_trace_enabled = false.
+	 */
+	{
+		char tbuf[8];
+		if (kenv(KENV_GET, "launchd_trace", tbuf, sizeof(tbuf)) > 0 &&
+		    tbuf[0] == '1')
+			launchd_trace_enabled = true;
+	}
 
 	/* This needs to be cleaned up. Currently, we risk tripping assumes() macros
 	 * before we've properly set things like launchd's log database paths, the
@@ -542,10 +558,10 @@ launchd_shutdown(void)
 {
 	int64_t now;
 
-	fprintf(stderr, "[T41-shutdown] called! pid=%d pid1_magic=%d\n", getpid(), pid1_magic);
+	LD_TRACE("[T41-shutdown] called! pid=%d pid1_magic=%d", getpid(), pid1_magic);
 
 	if (launchd_shutting_down) {
-		fprintf(stderr, "[T41-shutdown] already shutting down, returning\n");
+		LD_TRACE("[T41-shutdown] already shutting down, returning");
 		return;
 	}
 

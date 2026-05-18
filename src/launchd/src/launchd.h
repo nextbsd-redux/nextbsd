@@ -37,6 +37,20 @@ extern bool network_up;
 extern FILE *launchd_console;
 extern uid_t launchd_uid;
 
+/*
+ * Verbose diagnostic trace enable. Read once at launchd startup from
+ * kenv "launchd_trace=1" (set at the FreeBSD loader prompt, survives
+ * the kernel→PID-1 handoff). Off by default. CI enables via expect
+ * in tests/boot-test.sh. Gates [T41-*] fprintf trace points across
+ * launchd; the matching kernel-side gate is sysctl mach.debug_enable.
+ */
+extern bool launchd_trace_enabled;
+#include <stdio.h>
+#define LD_TRACE(fmt, ...) do {						\
+	if (launchd_trace_enabled)					\
+		fprintf(stderr, fmt "\n", ##__VA_ARGS__);		\
+} while (0)
+
 void launchd_SessionCreate(void);
 void launchd_shutdown(void);
 

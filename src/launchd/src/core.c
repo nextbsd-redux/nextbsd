@@ -4270,13 +4270,13 @@ jobmgr_callback(void *obj, struct kevent *kev)
 
 	switch (kev->filter) {
 	case EVFILT_PROC:
-		fprintf(stderr, "[T41-evt] EVFILT_PROC ident=%lu fflags=0x%x data=0x%lx\n",
+		LD_TRACE("[T41-evt] EVFILT_PROC ident=%lu fflags=0x%x data=0x%lx",
 		    kev->ident, kev->fflags, kev->data);
 		jobmgr_reap_bulk(jm, kev);
 		root_jobmgr = jobmgr_do_garbage_collection(root_jobmgr);
 		break;
 	case EVFILT_SIGNAL:
-		fprintf(stderr, "[T41-evt] EVFILT_SIGNAL ident=%lu (%s)\n",
+		LD_TRACE("[T41-evt] EVFILT_SIGNAL ident=%lu (%s)",
 		    kev->ident, strsignal(kev->ident));
 		switch (kev->ident) {
 		case SIGTERM:

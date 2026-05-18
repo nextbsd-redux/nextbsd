@@ -139,10 +139,28 @@ fi
 # SIGKILL forces immediate exit and doesn't rely on `wait` returning.
 # No `wait` follows: reaping is left to init at script exit, which
 # is fine for a smoke test that doesn't reuse the PID.
-# TASK #41 BISECT: temporarily skip BOOTSTRAP-REMOTE to isolate which
-# step triggers the post-move_member halt. Re-enable once the halt is
-# diagnosed.
-echo "BOOTSTRAP-REMOTE-OK: SKIPPED FOR BISECT (re-enable after halt diagnosed)"
+if [ -x /usr/sbin/bootstrap_server ] && \
+   [ -x /usr/tests/freebsd-launchd-mach/test_bootstrap_remote ]; then
+    /usr/sbin/bootstrap_server &
+    BOOTSTRAP_PID=$!
+    trap 'kill -KILL $BOOTSTRAP_PID 2>/dev/null' EXIT INT TERM
+    # Give the daemon a beat to allocate its port + register host slot.
+    sleep 1
+    if /usr/tests/freebsd-launchd-mach/test_bootstrap_remote; then
+        echo "BOOTSTRAP-REMOTE-OK: cross-process bootstrap round-trip succeeded"
+    else
+        rc=$?
+        echo "BOOTSTRAP-REMOTE-FAIL: test_bootstrap_remote exit=$rc"
+        kill -KILL $BOOTSTRAP_PID 2>/dev/null || true
+        trap - EXIT INT TERM
+        exit 1
+    fi
+    kill -KILL $BOOTSTRAP_PID 2>/dev/null || true
+    trap - EXIT INT TERM
+else
+    echo "BOOTSTRAP-REMOTE-FAIL: bootstrap_server or test_bootstrap_remote binary not installed"
+    exit 1
+fi
 
 # 3. userland: libdispatch loads + serial queue executes a sync callback.
 # Baseline check that the vendored swift-corelibs-libdispatch (built

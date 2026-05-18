@@ -100,6 +100,16 @@ send "set comconsole_speed=115200\r"
 expect "OK "
 send "set boot_multicons=YES\r"
 expect "OK "
+# Verbose diagnostic trace toggles. CI-only — the shipped ISO is
+# silent by default. The kernel reads mach.debug_enable as a tunable
+# (CTLFLAG_RWTUN) at boot; launchd PID 1 and libxpc both read kenv
+# "launchd_trace=1" once at startup. Together these gate the [T41-*]
+# trace points that diagnosed the launchd CHECKIN hang in May 2026;
+# keeping them on for CI gives a paper trail for the next regression.
+send "set mach.debug_enable=1\r"
+expect "OK "
+send "set launchd_trace=1\r"
+expect "OK "
 send "boot\r"
 
 # Stage 1: wait for the getty "login:" prompt. Boot is complete:
