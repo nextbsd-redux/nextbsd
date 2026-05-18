@@ -1566,11 +1566,18 @@ _act_file(asl_out_module_t *m, asl_out_rule_t *r, asl_msg_t *msg)
 {
 	asl_action_file_data_t *f_data;
 
+	{ FILE *_d = fopen("/tmp/asl_route.log", "a");
+	  if (_d) { fprintf(_d, "[%d] _act_file ENTRY m=%p r=%p msg=%p\n", getpid(), (void*)m, (void*)r, (void*)msg); fclose(_d); } }
+
 	if (r == NULL) return;
 	if (msg == NULL) return;
 	if (m == NULL) return;
+	{ FILE *_d = fopen("/tmp/asl_route.log", "a");
+	  if (_d) { fprintf(_d, "[%d]   m->flags=0x%x dst=%p\n", getpid(), m->flags, (void*)r->dst); fclose(_d); } }
 	if ((m->flags & MODULE_FLAG_ENABLED) == 0) return;
 	if (r->dst == NULL) return;
+	{ FILE *_d = fopen("/tmp/asl_route.log", "a");
+	  if (_d) { fprintf(_d, "[%d]   dst->path=%s private=%p flags=0x%x\n", getpid(), r->dst->path ? r->dst->path : "(null)", r->dst->private, r->dst->flags); fclose(_d); } }
 	if (r->dst->private == NULL) return;
 
 	if (r->dst->flags & MODULE_FLAG_HAS_LOGGED) return;
@@ -1594,7 +1601,11 @@ _act_file(asl_out_module_t *m, asl_out_rule_t *r, asl_msg_t *msg)
 	}
 #endif
 
+	{ FILE *_d = fopen("/tmp/asl_route.log", "a");
+	  if (_d) { fprintf(_d, "[%d]   calling _act_file_final\n", getpid()); fclose(_d); } }
 	_act_file_final(m, r, msg);
+	{ FILE *_d = fopen("/tmp/asl_route.log", "a");
+	  if (_d) { fprintf(_d, "[%d]   _act_file_final returned\n", getpid()); fclose(_d); } }
 }
 
 static void
