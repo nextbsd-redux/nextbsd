@@ -342,22 +342,15 @@ echo "LAUNCHCTL-BUILD-OK: /bin/launchctl exists ($(stat -f%z /bin/launchctl) byt
 
 # 10. ASL runtime smoke (Phase J).
 #
-# What this test honestly checks:
-#   - NOTIFYD-PROC-OK: launchd spawned notifyd (RunAtLoad)
-#   - SYSLOGD-PROC-OK: launchd spawned syslogd (RunAtLoad)
-#   - SYSLOG-RUN-SKIP: end-to-end user-message round-trip is BLOCKED
-#     by the launchd launch_msg(CHECKIN) hang (task #41). syslogd
-#     calls launch_msg() to fetch its MachServices dict — that RPC
-#     into launchd never returns because launchd's MIG demuxer
-#     doesn't have the child's bootstrap port registered in
-#     mig_cb_table (see phase_j_runtime_partial memory). Without
-#     reaching init_modules, syslogd never opens /var/run/log
-#     (bsd_in) or /dev/klog (klog_in), so user messages go nowhere.
-#
-# When task #41 lands and launch_msg returns, this test should be
-# upgraded to actually post via test_bsd_logger and grep
-# /var/log/system.log for the tag.
-sleep 2
+# After the launchd kqueue-bridge fix (task #41 workaround in
+# runtime.c — kqueue_demand_thread calls x_handle_kqueue directly
+# instead of round-tripping through Mach), launchd-spawned syslogd
+# should reach init_modules: bsd_in_init binds /var/run/log,
+# klog_in_init opens /dev/klog. End-to-end:
+#   logger via libc syslog(3) -> /var/run/log SOCK_DGRAM
+#     -> syslogd's bsd_in recv thread -> asl_input_parse
+#     -> process_message -> _act_file_final -> /var/log/system.log
+sleep 3
 
 if pgrep -x notifyd >/dev/null 2>&1; then
     echo "NOTIFYD-PROC-OK: notifyd running as pid $(pgrep -x notifyd)"
@@ -372,10 +365,24 @@ if pgrep -x syslogd >/dev/null 2>&1; then
 else
     echo "SYSLOGD-PROC-FAIL: syslogd not running"
     ps auxww | grep -E 'syslogd|notifyd' || true
-    ls -la /System/Library/LaunchDaemons/ 2>&1 || true
     exit 1
 fi
 
-echo "SYSLOG-RUN-SKIP: end-to-end round-trip blocked by launchd launch_msg(CHECKIN) hang (task #41)"
+PING_TAG="PHASEJ-PING-$$-$(date +%s)"
+echo "--- post via libc syslog(3) (RFC3164 → /var/run/log) ---"
+/usr/tests/freebsd-launchd-mach/test_bsd_logger phasej-test "$PING_TAG" 2>&1 || true
+sleep 3
 
-exit 0
+echo "--- /var/log/system.log size + grep ---"
+[ -f /var/log/system.log ] && ls -la /var/log/system.log
+if [ -f /var/log/system.log ] && grep -q "$PING_TAG" /var/log/system.log; then
+    echo "SYSLOG-RUN-OK: '$PING_TAG' in /var/log/system.log (launchd CHECKIN works)"
+    exit 0
+fi
+
+echo "SYSLOG-RUN-FAIL: tag '$PING_TAG' not in /var/log/system.log"
+echo "--- system.log tail (post-test) ---"
+[ -f /var/log/system.log ] && tail -10 /var/log/system.log
+echo "--- /var/run/log socket state ---"
+ls -la /var/run/log /var/run/logpriv 2>&1 || true
+exit 1
