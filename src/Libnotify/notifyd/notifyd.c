@@ -1369,11 +1369,17 @@ main(int argc, const char *argv[])
 
 	log_message(ASL_LEVEL_DEBUG, "--------------------\nnotifyd start PID %u\n", getpid());
 
+	fprintf(stderr, "notifyd[%d]: CP1 before init_launch_config\n", getpid()); fflush(stderr);
 	init_launch_config(service_name);
+	fprintf(stderr, "notifyd[%d]: CP2 after init_launch_config\n", getpid()); fflush(stderr);
 
 	if (global.nslots > 0)
 	{
+		fprintf(stderr, "notifyd[%d]: CP3 before open_shared_memory(\"%s\") nslots=%u\n",
+		    getpid(), shm_name, global.nslots); fflush(stderr);
 		status = open_shared_memory(shm_name);
+		fprintf(stderr, "notifyd[%d]: CP4 open_shared_memory returned %d (base=%p)\n",
+		    getpid(), status, global.shared_memory_base); fflush(stderr);
 		if (status != 0) {
 			fprintf(stderr,
 			    "notifyd: open_shared_memory(\"%s\") failed "
@@ -1383,22 +1389,30 @@ main(int argc, const char *argv[])
 		}
 	}
 
+	fprintf(stderr, "notifyd[%d]: CP5 before dispatch_workloop_create_inactive\n", getpid()); fflush(stderr);
 	global.workloop = dispatch_workloop_create_inactive("com.apple.notifyd.main");
+	fprintf(stderr, "notifyd[%d]: CP6 workloop=%p\n", getpid(), global.workloop); fflush(stderr);
 	dispatch_set_qos_class_fallback(global.workloop, QOS_CLASS_UTILITY);
 	dispatch_activate(global.workloop);
+	fprintf(stderr, "notifyd[%d]: CP7 after dispatch_activate\n", getpid()); fflush(stderr);
 
 	/* init from config file before starting the listener */
 	init_config();
+	fprintf(stderr, "notifyd[%d]: CP8 after init_config\n", getpid()); fflush(stderr);
 
 	mach_port_options_t opts = {
 		.flags = MPO_STRICT | MPO_CONTEXT_AS_GUARD,
 	};
 	kr = mach_port_construct(current_task(), &opts, (mach_port_context_t)&global, &global.mach_notify_port);
+	fprintf(stderr, "notifyd[%d]: CP9 mach_port_construct kr=0x%x port=0x%x\n",
+	    getpid(), kr, global.mach_notify_port); fflush(stderr);
 	if (kr != KERN_SUCCESS) {
 		NOTIFY_INTERNAL_CRASH(kr, "Unable to allocate Mach notification port");
 	}
 	global.mach_notifs_channel = dispatch_mach_create_f("com.apple.notifyd.mach-notifs",
 			global.workloop, NULL, mach_notifs_handle);
+	fprintf(stderr, "notifyd[%d]: CP10 mach_notifs_channel=%p\n",
+	    getpid(), global.mach_notifs_channel); fflush(stderr);
 	dispatch_set_qos_class_fallback(global.mach_notifs_channel, QOS_CLASS_USER_INITIATED);
 	// dispatch_mach_connect happens in XPC_EVENT_PUBLISHER_ACTION_INITIAL_BARRIER
 
