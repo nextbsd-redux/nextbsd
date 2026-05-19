@@ -109,8 +109,11 @@
 /* Define to 1 if you have the <libproc_internal.h> header file. */
 #cmakedefine HAVE_LIBPROC_INTERNAL_H
 
-/* Define if mach is present */
-#cmakedefine HAVE_MACH
+/* Define if mach is present.
+ * cmakedefine01 (not bare cmakedefine) so HAVE_MACH expands to 0 or 1
+ * rather than empty — libdispatch's source uses `#if HAVE_MACH` and
+ * `#if !HAVE_MACH`, which needs a value. */
+#cmakedefine01 HAVE_MACH
 
 /* Define to 1 if you have the `mach_absolute_time' function. */
 #cmakedefine HAVE_MACH_ABSOLUTE_TIME
