@@ -17,7 +17,8 @@ add_library(dispatch
   transform.c
   voucher.c
   shims.c
-  protocol.defs
+  ${CMAKE_CURRENT_BINARY_DIR}/protocolUser.c
+  ${CMAKE_CURRENT_BINARY_DIR}/protocolServer.c
   provider.d
   allocator_internal.h
   data_internal.h
@@ -59,6 +60,28 @@ if(WIN32)
     shims/generic_win_stubs.c
     shims/generic_win_stubs.h
     shims/getprogname.c)
+endif()
+
+# Task #39: generate MIG stubs from protocol.defs. init.c includes
+# protocolServer.h, mach.c uses protocolUser stubs. Apple's Xcode
+# handled this; cmake didn't. We invoke /usr/bin/mig (installed by
+# our build.sh:325 from src/bootstrap_cmds).
+if(HAVE_MACH)
+  find_program(MIG_EXECUTABLE mig PATHS /usr/bin /usr/local/bin REQUIRED)
+  add_custom_command(
+    OUTPUT
+      ${CMAKE_CURRENT_BINARY_DIR}/protocol.h
+      ${CMAKE_CURRENT_BINARY_DIR}/protocolServer.h
+      ${CMAKE_CURRENT_BINARY_DIR}/protocolUser.c
+      ${CMAKE_CURRENT_BINARY_DIR}/protocolServer.c
+    COMMAND ${MIG_EXECUTABLE}
+            -header  ${CMAKE_CURRENT_BINARY_DIR}/protocol.h
+            -sheader ${CMAKE_CURRENT_BINARY_DIR}/protocolServer.h
+            -user    ${CMAKE_CURRENT_BINARY_DIR}/protocolUser.c
+            -server  ${CMAKE_CURRENT_BINARY_DIR}/protocolServer.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/protocol.defs
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/protocol.defs
+    COMMENT "MIG protocol.defs -> protocol{,Server,User}.{h,c}")
 endif()
 
 # FreeBSD Mach IPC backend stub. Provides definitions for the public
