@@ -104,11 +104,18 @@ expect "OK "
 # silent by default. The kernel reads mach.debug_enable as a tunable
 # (CTLFLAG_RWTUN) at boot; launchd PID 1 and libxpc both read kenv
 # "launchd_trace=1" once at startup. Together these gate the [T41-*]
-# trace points that diagnosed the launchd CHECKIN hang in May 2026;
-# keeping them on for CI gives a paper trail for the next regression.
+# / [T39-*] trace points; keeping them on for CI gives a paper trail
+# for the next regression.
+#
+# Match the echoed command, not just "OK ", to avoid races where
+# expect matches a stale OK from a prior `set` before the loader has
+# processed the current send. Without this, run 26068578062 ate the
+# second `set` and merged "set lau" with the next "boot".
 send "set mach.debug_enable=1\r"
+expect "set mach.debug_enable=1"
 expect "OK "
 send "set launchd_trace=1\r"
+expect "set launchd_trace=1"
 expect "OK "
 send "boot\r"
 
