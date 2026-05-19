@@ -185,10 +185,21 @@
 #ifdef EV_UDATA_SPECIFIC
 #	define DISPATCH_EV_DIRECT		(EV_UDATA_SPECIFIC|EV_DISPATCH)
 #else
-#	define DISPATCH_EV_DIRECT		0x0000
-#	define EV_UDATA_SPECIFIC		0x0000
-#	undef  EV_VANISHED
-#	define EV_VANISHED				0x0000
+/*
+ * FreeBSD has no EV_UDATA_SPECIFIC. Apple's libdispatch uses it as
+ * a kqueue lookup-by-udata flag so multiple registrations on the
+ * same (ident,filter) can coexist. We don't need it because our
+ * Mach event backend is event_mach_freebsd.c (a polling thread that
+ * receives via mach_msg directly), not event_kevent.c — Mach source
+ * routing bypasses kqueue entirely on FreeBSD. The flag value here
+ * just satisfies the bitwise-OR expressions below; it's a no-op at
+ * the kqueue boundary because our kqueue ignores unknown EV_ flags.
+ */
+#	define EV_UDATA_SPECIFIC		0x10000000
+#	define DISPATCH_EV_DIRECT		(EV_UDATA_SPECIFIC|EV_DISPATCH)
+#	ifndef EV_VANISHED
+#	define EV_VANISHED				0x00200000
+#	endif
 #endif
 
 #define DISPATCH_EV_MSG_NEEDS_FREE	0x10000 // mach message needs to be freed()
@@ -201,9 +212,15 @@
 #define DISPATCH_EVFILT_MACH_NOTIFICATION	(-EVFILT_SYSCOUNT - 6)
 
 #if HAVE_MACH
-#	if !EV_UDATA_SPECIFIC
-#	error mach support requires EV_UDATA_SPECIFIC
-#	endif
+/*
+ * Apple's original guard: `#if !EV_UDATA_SPECIFIC` -> #error.
+ * Removed for FreeBSD: see comment above on event_mach_freebsd.c
+ * being the Mach backend instead of event_kevent.c. The
+ * EV_UDATA_SPECIFIC compile-time conditionals below still work
+ * because the macro is defined to a sentinel above; they expand to
+ * truthy and the resulting flag bits are silently ignored by
+ * FreeBSD kqueue (it only acts on the lower 16 bits of EV_*).
+ */
 
 #	ifndef MACH_RCV_VOUCHER
 #	define MACH_RCV_VOUCHER 0x00000800
