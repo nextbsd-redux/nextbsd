@@ -56,6 +56,7 @@ SRCS+=	task_server.c vm_map_server.c clock_server.c
 SRCS+=	proc_info.c mach_clock.c mach_convert.c mach_host.c mach_host_priv.c
 SRCS+=	mach_misc.c mach_module.c mach_processor.c mach_semaphore.c
 SRCS+=	mach_task.c mach_thread.c mach_traps.c mach_vm.c
+SRCS+=	mach_event_bridge.c
 
 # compat/mach/ipc
 SRCS+=	ipc_entry.c ipc_hash.c ipc_init.c ipc_kmsg.c ipc_kobject.c ipc_mqueue.c ipc_notify.c

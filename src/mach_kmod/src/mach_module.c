@@ -48,6 +48,8 @@ SYSCTL_INT(_mach, OID_AUTO, debug_enable, CTLFLAG_RWTUN,
 
 extern struct filterops machport_filtops;
 
+#include "mach_event_bridge.h"
+
 static struct syscall_helper_data osx_syscalls[] = {
 	SYSCALL_INIT_HELPER(__proc_info),
 	SYSCALL_INIT_HELPER(__iopolicysys),
@@ -145,6 +147,15 @@ mach_mod_init(void)
 		    "the EVFILT_SYSCOUNT bump)\n");
 		/* fall through — module still useful for non-kqueue Mach IPC */
 	}
+	/*
+	 * Task #39 Path B: pset/pipe wakeup bridge. Since EVFILT_MACHPORT
+	 * is unavailable (above), libdispatch bridges Mach events into its
+	 * main kqueue thread via a pipe: a registration trap stores a
+	 * (pset → struct file *) mapping; ipc_pset_signal() fires a byte
+	 * down the pipe; libdispatch wakes via EVFILT_READ on the read-end.
+	 * See src/mach_event_bridge.c for details.
+	 */
+	mach_event_bridge_init();
 	return (0);
 }
 

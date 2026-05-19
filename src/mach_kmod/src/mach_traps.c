@@ -26,6 +26,9 @@
  */
 
 #include <sys/cdefs.h>
+
+#include "mach_event_bridge.h"
+
 __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
@@ -399,6 +402,11 @@ sys_mach_trap_mux_trap(struct thread *td,
 		return (mux_port_move_member(td,
 		    (mach_port_name_t)uap->a1,
 		    (mach_port_name_t)uap->a2));
+	case 4:		/* MACH_TRAP_OP_REGISTER_EVENT_BELL */
+		td->td_retval[0] = mach_event_bridge_register(td,
+		    (mach_port_name_t)uap->a1,
+		    (int)uap->a2);
+		return (0);
 	default:
 		td->td_retval[0] = KERN_INVALID_ARGUMENT;
 		return (0);

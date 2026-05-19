@@ -41,6 +41,14 @@ extern "C" {
  *       KERN_INVALID_ARGUMENT.
  *   1 — host_set_special_port(host, which, port)
  *   2 — task_set_special_port(task, which, port)
+ *   3 — _kernelrpc_mach_port_move_member(target, member, after)
+ *   4 — mach_event_register_bell(pset_name, write_fd)
+ *       Task #39 Path B: registers the write-end of a userland pipe
+ *       with a Mach port set. ipc_pset_signal() writes one byte to
+ *       the pipe when a message arrives on any port in the set,
+ *       waking libdispatch's main kqueue thread (which is registered
+ *       for EVFILT_READ on the pipe's read-end). See
+ *       src/mach_kmod/src/mach_event_bridge.c.
  *
  * task_set_special_port migrated into the multiplexer to free its
  * previous dedicated FreeBSD syscall slot for the multiplexer
@@ -59,8 +67,9 @@ extern "C" {
 #define MACH_TRAP_OP_HOST_SET_SPECIAL_PORT	1
 #define MACH_TRAP_OP_TASK_SET_SPECIAL_PORT	2
 #define MACH_TRAP_OP_PORT_MOVE_MEMBER		3
+#define MACH_TRAP_OP_REGISTER_EVENT_BELL	4
 
-#define MACH_TRAP_OP_MAX			3
+#define MACH_TRAP_OP_MAX			4
 
 #ifdef __cplusplus
 }
