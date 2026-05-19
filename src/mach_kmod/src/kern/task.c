@@ -1143,6 +1143,11 @@ mach_task_init_lazy(struct proc *p)
 	queue_init(&task->semaphore_list);
 	task_create_internal(task);
 	task_init_internal(TASK_NULL, task);
+	/* Task #39: same audit_token fix as mach_task_fork_bsport — without
+	 * this, lazy-initialized tasks (pre-existing processes that came up
+	 * before mach.ko loaded) carry KERNEL_AUDIT_TOKEN, breaking any
+	 * MIG call whose handler keys on audit_token.val[5]. */
+	set_security_token(task);
 
 	if (atomic_cmpset_ptr((volatile uintptr_t *)&p->p_machdata,
 	    (uintptr_t)NULL, (uintptr_t)task))
@@ -1276,6 +1281,15 @@ mach_task_fork_bsport(void *arg __unused, struct proc *p1, struct proc *p2,
 	} else {
 		child_task = p2->p_machdata;
 	}
+
+	/* Task #39: task_init_internal(TASK_NULL, ...) above leaves
+	 * audit_token = KERNEL_AUDIT_TOKEN (val[5]=0). Without this,
+	 * launchd's job_mig_intran looks up the caller by PID=0, finds
+	 * nothing, falls through to job_new_anonymous(jm, 0) which
+	 * short-circuits and returns NULL — so job_mig_check_in2 sees
+	 * j=NULL and returns BOOTSTRAP_NO_MEMORY. Stamp the real PID
+	 * and ucred into the child's audit_token now. */
+	set_security_token(child_task);
 
 	itk_lock(parent_task);
 	itk_lock(child_task);
