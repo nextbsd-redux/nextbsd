@@ -43,7 +43,11 @@
 #endif // __APPLE__
 
 
-#if !defined(DISPATCH_MACH_SPI) && TARGET_OS_MAC
+/* Task #39 Path B: enable mach SPI (dispatch_mach_t channel API,
+ * dispatch_mach_msg_t, etc.) on FreeBSD too when HAVE_MACH is set.
+ * Without this, mach_private.h doesn't get pulled in via private.h's
+ * include chain, and mach_internal.h fails to find the type names. */
+#if !defined(DISPATCH_MACH_SPI) && (TARGET_OS_MAC || HAVE_MACH)
 #define DISPATCH_MACH_SPI 1
 #endif
 #if !defined(OS_VOUCHER_CREATION_SPI) && TARGET_OS_MAC

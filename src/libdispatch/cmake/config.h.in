@@ -230,7 +230,9 @@
 #cmakedefine01 USE_LIBDISPATCH_INIT_CONSTRUCTOR
 
 /* Define to use Mach semaphores */
-#cmakedefine USE_MACH_SEM
+/* cmakedefine01 (task #39) so #if USE_MACH_SEM works the same as
+ * #if HAVE_MACH — both gates use #if-with-value semantics. */
+#cmakedefine01 USE_MACH_SEM
 
 /* Define to use POSIX semaphores */
 #cmakedefine01 USE_POSIX_SEM

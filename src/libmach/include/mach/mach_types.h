@@ -65,6 +65,9 @@ typedef exception_handler_t *exception_handler_array_t;
  * launchd's voucher tracking) parse. */
 typedef mach_port_t	mach_voucher_t;
 typedef mach_port_t	ipc_voucher_t;
+#ifndef MACH_VOUCHER_NULL
+#define MACH_VOUCHER_NULL ((mach_voucher_t)0)
+#endif
 
 /* Polymorphic / convenience names. */
 typedef mach_port_t	mach_port_poly_t;
