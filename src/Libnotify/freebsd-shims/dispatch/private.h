@@ -1,64 +1,38 @@
-/* dispatch/private.h — FreeBSD shim. Apple's libdispatch private API
- * exposes lower-level scheduling primitives our libdispatch port
- * already provides via the public surface. This header just re-exports
- * the public one — Apple-private dispatch APIs that notifyd actually
- * uses (dispatch_mach_create_4libxpc etc.) are covered by the libxpc
- * + libdispatch builds. */
+/* dispatch/private.h — FreeBSD shim.
+ *
+ * Chain to the real Apple-private dispatch headers installed by our
+ * libdispatch port (at ${SYSROOT}/usr/include/dispatch/), so notifyd
+ * and friends pick up the actual function declarations and types
+ * (dispatch_workloop_t, dispatch_mach_t, dispatch_mach_create_f,
+ * dispatch_workloop_create_inactive, ...).
+ *
+ * History: earlier J2 iterations stubbed these as #defines returning
+ * NULL because notifyd didn't yet run far enough to exercise them.
+ * With the Path A bootstrap chain landed (task #39), notifyd now
+ * reaches dispatch_workloop_create_inactive at startup; the NULL
+ * stub crashed the daemon when it dereferenced the returned NULL.
+ * The real implementations exist in libdispatch.so.
+ */
 #ifndef _FREEBSD_SHIM_DISPATCH_PRIVATE_H_
 #define _FREEBSD_SHIM_DISPATCH_PRIVATE_H_
 
-#include <dispatch/dispatch.h>
+/* libdispatch's private.h gates dispatch/mach_private.h on this. */
+#ifndef DISPATCH_MACH_SPI
+#define DISPATCH_MACH_SPI 1
+#endif
 
-/* Apple-private dispatch types notifyd / configd / etc. use. Our
- * libdispatch doesn't yet ship these; stub as opaque void* so
- * source compiles. Runtime uses won't work until libdispatch is
- * extended (deferred); notifyd's Mach RPC server loop still works
- * via dispatch_source MACH_RECV that we DO have. */
-typedef void * dispatch_mach_t;
-typedef void * dispatch_mach_msg_t;
-typedef void * dispatch_workloop_t;
-typedef long   dispatch_mach_reason_t;
+#include_next <dispatch/private.h>
 
-#define DISPATCH_MACH_CONNECTED		1
-#define DISPATCH_MACH_MESSAGE_RECEIVED	2
-#define DISPATCH_MACH_MESSAGE_SENT	3
-#define DISPATCH_MACH_BARRIER_COMPLETED	4
-#define DISPATCH_MACH_DISCONNECTED	5
-
-#define DISPATCH_MACH_OPTIONS_INSTALL_HANDLER 0x0001
-
-/* QoS classes for dispatch_queue_attr / dispatch_workloop creation.
- * Apple defines via os/qos.h; we don't have it, so define here.
- * dispatch_qos_class_t is `unsigned int` in our libdispatch
- * (src/libdispatch/dispatch/queue.h:559), so don't re-typedef. */
-
+/* QoS class macros normally provided by <pthread/qos.h> on macOS.
+ * FreeBSD has no equivalent; libdispatch treats these as opaque
+ * integer values passed back into the kernel-side workloop config. */
+#ifndef QOS_CLASS_USER_INTERACTIVE
 #define QOS_CLASS_USER_INTERACTIVE	0x21
 #define QOS_CLASS_USER_INITIATED	0x19
 #define QOS_CLASS_DEFAULT		0x15
 #define QOS_CLASS_UTILITY		0x11
 #define QOS_CLASS_BACKGROUND		0x09
 #define QOS_CLASS_UNSPECIFIED		0x00
-
-/* Stub workloop / dispatch_mach creators. Return NULL/sentinel. */
-#define dispatch_workloop_create(label)			NULL
-#define dispatch_workloop_create_inactive(label)	NULL
-#define dispatch_workloop_set_qos_class(wl, qos)	(void)0
-#define dispatch_workloop_set_qos_class_floor(wl, qos, rel) (void)0
-#define dispatch_workloop_set_autorelease_frequency(wl, freq) (void)0
-#define dispatch_mach_create(label, q, handler)		NULL
-#define dispatch_mach_create_4libxpc(label, q, handler)	NULL
-#define dispatch_mach_create_f(label, q, ctx, handler)	NULL
-#define dispatch_mach_connect(mach, recv, checkin, handler) (void)0
-#define dispatch_mach_send(mach, msg, options)		(void)0
-#define dispatch_mach_msg_get_msg(msg, sz)		NULL
-#define dispatch_mach_msg_create(msg, len, dispose, retmsg) NULL
-
-/* DISPATCH_MEMORYPRESSURE_* event types for DISPATCH_SOURCE_TYPE_MEMORYPRESSURE.
- * Apple defines via dispatch/source.h; not all variants are in our port. */
-#define DISPATCH_MEMORYPRESSURE_NORMAL		0x01
-#define DISPATCH_MEMORYPRESSURE_WARN		0x02
-#define DISPATCH_MEMORYPRESSURE_CRITICAL	0x04
-#define DISPATCH_MEMORYPRESSURE_PROC_LIMIT_WARN		0x10
-#define DISPATCH_MEMORYPRESSURE_PROC_LIMIT_CRITICAL	0x20
+#endif
 
 #endif
