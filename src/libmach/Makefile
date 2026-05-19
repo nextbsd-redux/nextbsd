@@ -61,7 +61,10 @@ INCS=		include/mach/mach.h \
 		include/mach/mach_time.h \
 		include/mach/exception.h \
 		include/mach/host_reboot.h \
-		include/mach/task_policy.h
+		include/mach/task_policy.h \
+		include/mach/std_types.defs \
+		include/mach/mach_types.defs \
+		include/mach/machine_types.defs
 INCSDIR=	${PREFIX}/include/mach
 LIBDIR=		${PREFIX}/lib/system
 

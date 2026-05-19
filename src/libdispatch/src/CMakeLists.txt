@@ -75,6 +75,7 @@ if(HAVE_MACH)
       ${CMAKE_CURRENT_BINARY_DIR}/protocolUser.c
       ${CMAKE_CURRENT_BINARY_DIR}/protocolServer.c
     COMMAND ${MIG_EXECUTABLE}
+            -I/usr/include
             -header  ${CMAKE_CURRENT_BINARY_DIR}/protocol.h
             -sheader ${CMAKE_CURRENT_BINARY_DIR}/protocolServer.h
             -user    ${CMAKE_CURRENT_BINARY_DIR}/protocolUser.c
