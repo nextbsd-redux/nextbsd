@@ -39,6 +39,7 @@ INCS=		include/mach/mach.h \
 		include/mach/message.h \
 		include/mach/task_special_ports.h \
 		include/mach/host_special_ports.h \
+		include/mach/host_notify.h \
 		include/mach/boolean.h \
 		include/mach/kern_return.h \
 		include/mach/std_types.h \

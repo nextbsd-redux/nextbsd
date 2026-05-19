@@ -237,17 +237,17 @@ typedef struct {
 	((bits) & ~(MACH_MSGH_BITS_PORTS_MASK | MACH_MSGH_BITS_VOUCHER_MASK))
 
 /*
- * MACH_MSGH_BITS_REPLY — flip remote/local for a reply message.
- * MIG-server demux generates reply headers with this. Guarded
- * because some MIG-generated files (e.g. libdispatch's
- * protocolServer.c, generated from protocol.defs) emit their own
- * identical definition; without the guard we get -Werror,-Wmacro-
- * redefined.
+ * MACH_MSGH_BITS_REPLY — removed from libmach. The MIG generator
+ * (bootstrap_cmds/migcom) emits its own definition at the top of
+ * every generated server.c (vm_map_server.c:112 etc.,
+ * protocolServer.c:82 etc.) bracketed by __MigKernelSpecificCode.
+ * Defining it here too caused -Werror,-Wmacro-redefined when the
+ * MIG-generated userland files (e.g. libdispatch's protocolServer.c)
+ * included this header transitively before their own #define ran.
+ *
+ * No non-MIG userland consumer references MACH_MSGH_BITS_REPLY
+ * (grep src/libxpc src/launchd src/Libnotify src/syslog — empty).
  */
-#ifndef MACH_MSGH_BITS_REPLY
-#define MACH_MSGH_BITS_REPLY(bits) \
-	(MACH_MSGH_BITS_LOCAL(bits) | (MACH_MSGH_BITS_REMOTE(bits) << 8))
-#endif
 
 /*
  * round_msg(x) — round x up to the next natural_t boundary. Used by

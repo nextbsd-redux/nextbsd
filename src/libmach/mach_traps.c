@@ -780,6 +780,51 @@ mach_port_destruct(mach_port_name_t task, mach_port_name_t name,
 }
 
 /*
+ * mach_port_construct — Apple's options-bearing port allocator.
+ * libdispatch (_dispatch_mach_notify_port_init) passes
+ * MPO_CONTEXT_AS_GUARD | MPO_STRICT to attach a guard cookie that
+ * mach_port_destruct must present on tear-down. Our kernel doesn't
+ * track guards yet; we route to mach_port_allocate(RECEIVE) and
+ * discard the options.
+ */
+kern_return_t
+mach_port_construct(mach_port_name_t task, struct mach_port_options *opts,
+    mach_port_context_t guard, mach_port_name_t *name)
+{
+	(void)opts;
+	(void)guard;
+	return mach_port_allocate(task, MACH_PORT_RIGHT_RECEIVE, name);
+}
+
+/*
+ * host_get_host_port — drop privileges from a HOST_PRIV port to the
+ * unprivileged host port. We don't distinguish; copy the input name.
+ */
+kern_return_t
+host_get_host_port(mach_port_name_t host_priv, mach_port_name_t *host_port)
+{
+	if (host_port != NULL)
+		*host_port = host_priv;
+	return KERN_SUCCESS;
+}
+
+/*
+ * host_request_notification — register a port to receive host
+ * notifications (calendar change etc.). Stub: succeed but never
+ * deliver. libdispatch's calendar-change subscriber still works at
+ * call time; the timer subsystem polls clock_gettime independently.
+ */
+kern_return_t
+host_request_notification(mach_port_name_t host, int notify_type,
+    mach_port_name_t notify_port)
+{
+	(void)host;
+	(void)notify_type;
+	(void)notify_port;
+	return KERN_SUCCESS;
+}
+
+/*
  * mach_msg_server_once() — MIG runtime helper: receive one message,
  * dispatch it through the given demux, send the reply. liblaunch's
  * libvproc.c uses it to service helper-downcall requests.

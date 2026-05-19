@@ -104,6 +104,40 @@ kern_return_t mach_port_destruct(mach_port_name_t task,
     mach_port_name_t name, mach_port_delta_t srdelta,
     mach_port_context_t guard);
 
+/*
+ * mach_port_construct — Apple's port creation with options (guards,
+ * qlimit, etc.). libdispatch's notify-port-init path passes
+ * MPO_CONTEXT_AS_GUARD | MPO_STRICT plus a per-port guard cookie.
+ * Forward-decl `struct mach_port_options` here so we don't have to
+ * pull in <mach/message.h>; the actual struct is defined there.
+ */
+struct mach_port_options;
+typedef struct mach_port_options *mach_port_options_ptr_t_decl;
+kern_return_t mach_port_construct(mach_port_name_t task,
+    struct mach_port_options *opts, mach_port_context_t guard,
+    mach_port_name_t *name);
+
+/*
+ * host_get_host_port — return the unprivileged host port. Apple's
+ * mach_host_self() returns the HOST_PRIV port for root processes and
+ * the unprivileged host port otherwise; libdispatch
+ * (_dispatch_mach_host_port_init) tries to demote via this trap.
+ * Stub: succeed with the input port (already unprivileged on our
+ * stack).
+ */
+kern_return_t host_get_host_port(mach_port_name_t host_priv,
+    mach_port_name_t *host_port);
+
+/*
+ * host_request_notification — Apple host-notification subscription
+ * (calendar change, etc.). libdispatch registers a port to receive
+ * HOST_NOTIFY_CALENDAR_CHANGE notifies. Stub: KERN_SUCCESS (no
+ * notifications ever delivered). Calendar-change updates can be
+ * picked up via clock_gettime/timezone polling if needed.
+ */
+kern_return_t host_request_notification(mach_port_name_t host,
+    int notify_type, mach_port_name_t notify_port);
+
 #ifdef __cplusplus
 }
 #endif

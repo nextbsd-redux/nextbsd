@@ -20,6 +20,7 @@
 #include <mach/message.h>		/* mach_msg, mach_msg_header_t, ... */
 #include <mach/task_special_ports.h>	/* task_get_bootstrap_port, ... */
 #include <mach/host_special_ports.h>	/* host_set_special_port, HOST_BOOTSTRAP_PORT */
+#include <mach/host_notify.h>		/* HOST_NOTIFY_*, HOST_CALENDAR_*_REPLYID */
 #include <mach/machine.h>		/* cpu_type_t, cpu_subtype_t */
 #include <mach/vm_map.h>			/* vm_deallocate, mach_vm_address_t */
 #include <mach/mig.h>			/* mig_routine_descriptor, struct mig_subsystem */
