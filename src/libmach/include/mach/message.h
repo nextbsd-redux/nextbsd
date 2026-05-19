@@ -392,12 +392,26 @@ typedef struct {
 	audit_token_t			msgh_audit;
 } mach_msg_audit_trailer_t;
 
+/* mach_msg_context_trailer_t — audit trailer + per-message context
+ * pointer. Used by libdispatch's mach channel API (private header
+ * dispatch/mach_private.h typedef's dispatch_mach_trailer_t off this).
+ * Our kernel doesn't currently populate the context field, but the
+ * struct shape must match Apple's so the includers type-check. */
+typedef struct {
+	mach_msg_trailer_type_t		msgh_trailer_type;
+	mach_msg_trailer_size_t		msgh_trailer_size;
+	mach_port_seqno_t		msgh_seqno;
+	security_token_t		msgh_sender;
+	audit_token_t			msgh_audit;
+	mach_port_context_t		msgh_context;
+} mach_msg_context_trailer_t;
+
 /*
  * mach_msg_max_trailer_t — largest fixed trailer shape, used by MIG
- * stubs to size receive buffers. The audit trailer is the largest
- * we ship, so alias it under the canonical name.
+ * stubs to size receive buffers. The context trailer is the largest
+ * Apple ships, so alias it under the canonical name.
  */
-typedef mach_msg_audit_trailer_t mach_msg_max_trailer_t;
+typedef mach_msg_context_trailer_t mach_msg_max_trailer_t;
 
 /* Timeout sentinel for mach_msg(): wait forever. */
 #define MACH_MSG_TIMEOUT_NONE		((mach_msg_timeout_t)0)
@@ -574,7 +588,7 @@ typedef mach_port_t voucher_mach_msg_state_t;
 /* MAX_TRAILER_SIZE — largest possible Mach message trailer size.
  * Apple defines as 116; matches their <mach/message.h>. */
 #ifndef MAX_TRAILER_SIZE
-#define MAX_TRAILER_SIZE	(sizeof(mach_msg_audit_trailer_t) + 8)
+#define MAX_TRAILER_SIZE	sizeof(mach_msg_max_trailer_t)
 #endif
 
 /*
