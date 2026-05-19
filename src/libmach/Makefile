@@ -25,16 +25,14 @@ CFLAGS+=	-I${.CURDIR}/include
 NO_MAN=		yes
 WARNS?=		6
 
-# <mach/mach.h> (the Apple-canonical umbrella header) is INTENTIONALLY
-# absent from INCS. libdispatch's source build auto-detects via
-# `__has_include(<mach/mach.h>)` and turns on HAVE_MACH if present,
-# which then pulls in Apple-internal types (mach_msg_overwrite,
-# mach_voucher_t, OS_NONNULL* attrs, dispatch_mig_callback_t, ...)
-# that our freebsd-launchd-mach stack doesn't provide. Installing
-# the umbrella before libdispatch builds breaks libdispatch's build.
-# build.sh installs <mach/mach.h> manually *after* libdispatch is
-# done (in the libxpc step) — same pattern as <servers/bootstrap.h>.
-INCS=		include/mach/mach_traps.h \
+# Task #39 update: <mach/mach.h> + <mach/clock.h> are now installed
+# alongside the rest of the libmach headers. libdispatch's HAVE_MACH
+# path (build.sh:380, -DHAVE_MACH:BOOL=ON) wants both: internal.h
+# includes <mach/clock.h> and <mach/mach.h> unconditionally on the
+# HAVE_MACH branch. Apple-internal types referenced from those
+# headers (mach_voucher_t, etc.) are kept minimal or stubbed.
+INCS=		include/mach/mach.h \
+		include/mach/mach_traps.h \
 		include/mach/mach_traps_mux.h \
 		include/mach/mach_port.h \
 		include/mach/message.h \
@@ -46,6 +44,7 @@ INCS=		include/mach/mach_traps.h \
 		include/mach/ndr.h \
 		include/mach/machine.h \
 		include/mach/vm_map.h \
+		include/mach/clock.h \
 		include/mach/clock_types.h \
 		include/mach/port.h \
 		include/mach/notify.h \
