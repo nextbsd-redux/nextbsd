@@ -48,10 +48,23 @@ main(void)
 
 	printf("task = 0x%x\n", task);
 
+	/* Task #39 (2026-05-19): launchd's fork eventhandler now propagates
+	 * its bootstrap_port to child tasks (see kern/task.c
+	 * mach_task_fork_bsport). That means run.sh → getty → login → run.sh
+	 * → us inherits launchd's per-task bootstrap port instead of NULL.
+	 *
+	 * This test specifically validates the HOST_BOOTSTRAP_PORT fallback
+	 * path (bootstrap_port NULL → kernel uses realhost.special slot).
+	 * Force that path by clearing our inherited per-task slot. The
+	 * launchd-as-bootstrap path is exercised elsewhere via the real
+	 * MachServices CHECKIN flow.
+	 */
+	(void)task_set_bootstrap_port(task, MACH_PORT_NULL);
+
 	/* 1. Bootstrap-port discovery via HOST_BOOTSTRAP_PORT fallback.
-	 * This task didn't inherit a per-task slot (no launchd PID 1
-	 * yet); kernel falls back to realhost.special[HOST_BOOTSTRAP_PORT]
-	 * which the daemon populated at its startup. */
+	 * Per-task slot now null (just cleared above); kernel falls back
+	 * to realhost.special[HOST_BOOTSTRAP_PORT] which the daemon
+	 * populated at its startup. */
 	kr = task_get_bootstrap_port(task, &bp);
 	if (kr != KERN_SUCCESS || bp == MACH_PORT_NULL) {
 		printf("FAIL: task_get_bootstrap_port: kr=0x%x bp=0x%x "
