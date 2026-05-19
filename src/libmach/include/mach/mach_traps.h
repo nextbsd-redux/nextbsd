@@ -12,6 +12,7 @@
 #ifndef _MACH_MACH_TRAPS_H_
 #define _MACH_MACH_TRAPS_H_
 
+#include <stdint.h>		/* uint32_t, uint64_t, int32_t */
 #include <mach/kern_return.h>	/* kern_return_t */
 
 #ifdef __cplusplus
@@ -45,6 +46,63 @@ mach_port_name_t task_self_trap(void);
  */
 kern_return_t task_name_for_pid(mach_port_name_t target_task,
     int pid, mach_port_name_t *t);
+
+/*
+ * thread_switch() — Apple's Mach trap that voluntarily yields the
+ * current thread, optionally directing the scheduler to run a
+ * specific thread next. libdispatch's shims/yield.h + shims/lock.c
+ * call it for adaptive spin/wait on contention paths.
+ *
+ * FreeBSD has no equivalent kernel trap; we back it with
+ * sched_yield(). The thread argument is ignored, and the kernel
+ * never gets to do directed handoff — calls just yield.
+ *
+ * `option` selects yield flavor (Apple enum). We honor
+ * SWITCH_OPTION_WAIT by sleeping for `option_time` ms before
+ * yielding; SWITCH_OPTION_NONE / SWITCH_OPTION_DEPRESS just yield.
+ */
+#ifndef _SWITCH_OPTION_DEFINED
+#define _SWITCH_OPTION_DEFINED
+#define SWITCH_OPTION_NONE	0
+#define SWITCH_OPTION_DEPRESS	1
+#define SWITCH_OPTION_WAIT	2
+#endif
+
+kern_return_t thread_switch(mach_port_name_t thread_name, int option,
+    uint32_t option_time);
+
+/*
+ * thread_destruct_special_reply_port() — XNU-private trap that
+ * releases the per-thread "special reply port" used by sync-IPC
+ * mach_msg_send_sync. libdispatch's mach.c references it on the
+ * DISPATCH_USE_MACH_SEND_SYNC_OVERRIDE branch (turned off on
+ * FreeBSD; see internal.h:782 — the macro never gets defined to 1
+ * on a non-macOS-10.13 target). The function is still
+ * referenced in compiled-but-dead-at-runtime code, so we provide
+ * a declaration and a stub returning KERN_FAILURE.
+ */
+enum thread_destruct_special_reply_port_rights {
+	THREAD_SPECIAL_REPLY_PORT_ALL = 0,
+	THREAD_SPECIAL_REPLY_PORT_RECEIVE_ONLY = 1,
+	THREAD_SPECIAL_REPLY_PORT_SEND_ONLY = 2,
+};
+
+kern_return_t thread_destruct_special_reply_port(mach_port_name_t reply_port,
+    enum thread_destruct_special_reply_port_rights rights);
+
+/*
+ * mach_port_destruct() — Apple's port-deallocation trap that drops
+ * receive + send-once rights in a single call. libdispatch's mach.c
+ * uses it for thread MIG reply ports. Routed to mach_port_deallocate
+ * for now — the receive-vs-send-once distinction is a no-op for the
+ * single-process port universe we have today.
+ */
+typedef int32_t mach_port_delta_t;
+typedef uint64_t mach_port_context_t;
+
+kern_return_t mach_port_destruct(mach_port_name_t task,
+    mach_port_name_t name, mach_port_delta_t srdelta,
+    mach_port_context_t guard);
 
 #ifdef __cplusplus
 }

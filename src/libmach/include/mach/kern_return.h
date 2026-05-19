@@ -18,4 +18,14 @@
 typedef int kern_return_t;
 #endif
 
+/*
+ * KERN_OPERATION_TIMED_OUT — libdispatch's shims/lock.c (line 182,
+ * line 238 _DSEMA4_TIMEOUT) and HAVE_MACH semaphore.c paths compare
+ * kr against this constant. Apple defines it as 49 in
+ * <mach/kern_return.h>. We carry the same value.
+ */
+#ifndef KERN_OPERATION_TIMED_OUT
+#define KERN_OPERATION_TIMED_OUT 49
+#endif
+
 #endif /* !_MACH_KERN_RETURN_H_ */

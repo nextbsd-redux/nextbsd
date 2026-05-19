@@ -153,6 +153,18 @@ struct dispatch_tsd {
 	void *dispatch_wlh_key;
 	void *dispatch_voucher_key;
 	void *dispatch_deferred_items_key;
+#if HAVE_MACH
+	/*
+	 * Task #39 Path B: HAVE_MACH paths in mach.c cache thread-local
+	 * MIG / special reply ports. On macOS these ride on dedicated
+	 * pthread direct-TSD slots (__TSD_MACH_SPECIAL_REPLY,
+	 * _PTHREAD_TSD_SLOT_MIG_REPLY). FreeBSD's libthr has no Apple
+	 * direct-TSD slot reservation surface; carry them as struct
+	 * members on this TLS-backed dispatch_tsd instead.
+	 */
+	void *dispatch_mach_special_reply_key;
+	void *dispatch_mig_reply_key;
+#endif
 };
 
 extern _Thread_local struct dispatch_tsd __dispatch_tsd;
@@ -337,6 +349,20 @@ _dispatch_thread_setspecific_packed_pair(pthread_key_t k1, pthread_key_t k2,
 #endif
 
 #if HAVE_MACH
+/*
+ * Task #39 Path B: in the TLS path (FreeBSD), these slot names are
+ * struct members on dispatch_tsd rather than integer slot indices.
+ * The _dispatch_thread_getspecific(key) macro expands to
+ * _dispatch_get_tsd_base()->key, so the names just need to match
+ * the struct members added above. The DIRECT_TSD path (Apple) already
+ * has these defined as ints at the top of this file.
+ */
+#ifndef __TSD_MACH_SPECIAL_REPLY
+#define __TSD_MACH_SPECIAL_REPLY dispatch_mach_special_reply_key
+#endif
+#ifndef _PTHREAD_TSD_SLOT_MIG_REPLY
+#define _PTHREAD_TSD_SLOT_MIG_REPLY dispatch_mig_reply_key
+#endif
 #define _dispatch_get_thread_mig_reply_port() ((mach_port_t)(uintptr_t) \
 		_dispatch_thread_getspecific(_PTHREAD_TSD_SLOT_MIG_REPLY))
 #define _dispatch_set_thread_mig_reply_port(p) ( \

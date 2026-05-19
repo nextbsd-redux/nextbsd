@@ -11,9 +11,11 @@
 
 #include <sys/types.h>
 #include <sys/sysctl.h>
+#include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <mach/mach_traps.h>
@@ -723,6 +725,58 @@ mach_port_get_context(mach_port_name_t task, mach_port_name_t name,
 	if (context != NULL)
 		*context = 0;
 	return KERN_SUCCESS;
+}
+
+/*
+ * thread_switch() — yield + optional short wait. See mach_traps.h for
+ * the design note. Reuses sched_yield(); SWITCH_OPTION_WAIT adds a
+ * nanosleep before the yield. option_time is in milliseconds (Apple's
+ * convention).
+ */
+kern_return_t
+thread_switch(mach_port_name_t thread_name, int option, uint32_t option_time)
+{
+	(void)thread_name;
+
+	if (option == SWITCH_OPTION_WAIT && option_time != 0) {
+		struct timespec ts;
+		ts.tv_sec = option_time / 1000;
+		ts.tv_nsec = (long)(option_time % 1000) * 1000000L;
+		(void)nanosleep(&ts, NULL);
+	}
+	(void)sched_yield();
+	return KERN_SUCCESS;
+}
+
+/*
+ * thread_destruct_special_reply_port — XNU-private sync-IPC helper.
+ * Never called at runtime on FreeBSD because
+ * DISPATCH_USE_MACH_SEND_SYNC_OVERRIDE is 0 (target.h:58 makes
+ * DISPATCH_MIN_REQUIRED_OSX_AT_LEAST return 0 on non-Apple). Stub
+ * fails closed so any unexpected runtime call is detectable.
+ */
+kern_return_t
+thread_destruct_special_reply_port(mach_port_name_t reply_port,
+    enum thread_destruct_special_reply_port_rights rights)
+{
+	(void)reply_port;
+	(void)rights;
+	return KERN_FAILURE;
+}
+
+/*
+ * mach_port_destruct — Apple-API tear-down of a port's receive + a
+ * single send-once right in one call. We currently model the universe
+ * as single-task, so receive and send-once aren't separable; route to
+ * mach_port_deallocate. srdelta and guard are accepted but ignored.
+ */
+kern_return_t
+mach_port_destruct(mach_port_name_t task, mach_port_name_t name,
+    mach_port_delta_t srdelta, mach_port_context_t guard)
+{
+	(void)srdelta;
+	(void)guard;
+	return mach_port_deallocate(task, name);
 }
 
 /*
