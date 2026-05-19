@@ -53,7 +53,11 @@ LDFLAGS+=	-Wl,-rpath,/usr/lib/system
 LDFLAGS+=	-Wl,--allow-shlib-undefined
 .endif
 
-LDADD+=		-lnotify -lsystem_asl -lxpc -ldispatch -lsystem_kernel \
+# Task #39 Path A: -llaunch provides bootstrap_port + bootstrap_check_in
+# (Apple MIG version). notifyd calls these directly at notifyd.c:894.
+# Previously satisfied by libxpc's vendored BST copy; libxpc no longer
+# ships those symbols.
+LDADD+=		-lnotify -lsystem_asl -llaunch -lxpc -ldispatch -lsystem_kernel \
 		-lpthread -lBlocksRuntime -lbsm
 
 BINDIR=		/usr/sbin
