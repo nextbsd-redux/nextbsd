@@ -120,7 +120,16 @@ _notify_shm_id(void)
     
     return shm_id;
 #else
+#ifdef __FreeBSD__
+    /* FreeBSD's shm_open requires a POSIX-portable name beginning
+     * with a slash; Apple's bare "apple.shm.notification_center"
+     * returns EINVAL on FreeBSD. Both notifyd (server) and
+     * notify_client (clients) resolve SHM_ID through this single
+     * helper, so the prefix stays consistent across them. */
+    return "/apple.shm.notification_center";
+#else
     return "apple.shm.notification_center";
+#endif
 #endif
 }
 
