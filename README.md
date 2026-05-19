@@ -91,9 +91,11 @@ as the design doc:
   bsdinstall / etc. that base.txz had no opt-out for.
 - **`libmach` &rarr; `libsystem_kernel`.** Renamed and relocated to
   `/usr/lib/system/libsystem_kernel.so` with `libsystem_kernel.pc`
-  pkg-config and headers at `/usr/include/mach/`. ldconfig drop-in at
-  `/usr/local/libdata/ldconfig/freebsd-launchd-mach` registers
-  `/usr/lib/system` with the runtime linker.
+  pkg-config and headers at `/usr/include/mach/`. `build.sh`
+  primes `/var/run/ld-elf.so.hints` inside `rootfs.uzip` via
+  `chroot $rootfs ldconfig -m /usr/lib /usr/lib/system` so the
+  runtime linker resolves `/usr/lib/system/` libraries without an
+  `/etc/ld-elf.so.conf` entry &mdash; nothing under `/usr/local`.
 - **`swift-corelibs-libdispatch` vendored** under
   [`src/libdispatch/`](src/libdispatch/), built in our `build.sh`
   chroot pipeline (cmake/ninja). gershwin-developer's FreeBSD
@@ -266,7 +268,7 @@ Audit plan documenting the trade space:
 [freebsd-mach-kmod-syscall-slots-spike](https://pkgdemon.github.io/freebsd-mach-kmod-syscall-slots-spike.html).
 
 **Phase G2c + G2d (standalone daemon + cross-process)** &mdash;
-*done.* `/usr/local/sbin/bootstrap_server` is a real binary: at
+*done.* `/usr/sbin/bootstrap_server` is a real binary: at
 startup it allocates a service port, inserts a `MAKE_SEND` right,
 publishes via `host_set_special_port(HOST_BOOTSTRAP_PORT)`, and
 enters `bootstrap_server_run`. `run.sh` backgrounds the daemon
