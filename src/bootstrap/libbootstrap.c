@@ -17,6 +17,7 @@
 #include <mach/mach_traps.h>
 #include <mach/mach_port.h>
 #include <mach/message.h>
+#include <mach/task_special_ports.h>
 #include <servers/bootstrap.h>
 
 #include "bootstrap_protocol.h"
