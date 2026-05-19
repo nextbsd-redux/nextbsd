@@ -823,6 +823,20 @@ ipc_mqueue_receive(
 	/* must block waiting for a message */
 	if (option & MACH_RCV_TIMEOUT) {
 		if (timeout == 0) {
+			/* Task #39: io_lock + io_reference acquired at the
+			 * top of the function (line 772). The pset path's
+			 * early returns (786-789) and the port path's
+			 * no-message return (816-818) both pair them with
+			 * io_unlock + io_release. This zero-timeout fast
+			 * poll was leaking both, leaving the port/pset
+			 * mutex held across return to userspace — which
+			 * panicked the kernel ("sleeping thread holds
+			 * ETAP_IPC_RPC") the next time any thread tried
+			 * to acquire the same lock while the leaker was
+			 * blocked in a later syscall. Pattern is the
+			 * libdispatch peek used by notifyd/syslogd. */
+			io_unlock(thread->ith_object);
+			io_release(thread->ith_object);
 			return MACH_RCV_TIMED_OUT;
 		}
 
