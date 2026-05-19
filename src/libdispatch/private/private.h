@@ -187,18 +187,22 @@ void _dispatch_prohibit_transition_to_multithreaded(bool prohibit);
 
 #define DISPATCH_CF_SPI_VERSION 20160712
 
-#if TARGET_OS_MAC || HAVE_MACH
-/*
- * Task #39 Path B: on FreeBSD with HAVE_MACH the runloop handle IS
- * a Mach port, just like macOS. queue.c:6727 (`mach_port_t mp =
- * handle;`) is otherwise a -Wshorten-64-to-32 warning because the
- * old uint64_t typedef would narrow into mach_port_t. Aligning the
- * typedef with macOS's lets that assignment compile clean.
- */
+#if TARGET_OS_MAC
 typedef mach_port_t dispatch_runloop_handle_t;
 #elif defined(__linux__)
 typedef int dispatch_runloop_handle_t;
 #elif defined(__unix__)
+/*
+ * Task #39 Path B: keep uint64_t on FreeBSD even with HAVE_MACH. The
+ * runloop handle on FreeBSD is a packed pair of pipe fds
+ * (DISPATCH_RUNLOOP_HANDLE_PACK at queue.c:6669), not a Mach port —
+ * we have no Mach-port-based runloop server wired yet. The
+ * HAVE_MACH branch at queue.c:6728 (`mach_port_t mp = handle;`) is
+ * therefore dead code on FreeBSD; we silence its -Wshorten-64-to-32
+ * with an explicit (mach_port_t) cast at the use site rather than
+ * changing the typedef and breaking the pipe-packed
+ * representation.
+ */
 typedef uint64_t dispatch_runloop_handle_t;
 #elif defined(_WIN32)
 typedef void *dispatch_runloop_handle_t;

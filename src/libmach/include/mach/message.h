@@ -86,13 +86,21 @@ typedef struct {
 	mach_msg_id_t     msgh_id;
 } mach_msg_header_t;
 
-/* Options bitmask values (matches sys/mach/message.h). */
-#define MACH_MSG_OPTION_NONE	0x00000000
-#define MACH_SEND_MSG		0x00000001
-#define MACH_RCV_MSG		0x00000002
-#define MACH_RCV_LARGE		0x00000004
-#define MACH_SEND_TIMEOUT	0x00000010
-#define MACH_RCV_TIMEOUT	0x00000100
+/*
+ * Options bitmask values (matches sys/mach/message.h). The U suffix
+ * matters: libdispatch's mach.c assigns these into mach_msg_option_t
+ * (unsigned int) under -Werror -Wsign-conversion, so bare-hex (int)
+ * triggers warnings.
+ */
+#define MACH_MSG_OPTION_NONE	0x00000000U
+#define MACH_SEND_MSG		0x00000001U
+#define MACH_RCV_MSG		0x00000002U
+#define MACH_RCV_LARGE		0x00000004U
+#define MACH_RCV_LARGE_IDENTITY	0x00000008U	/* MACH_RCV_TOO_LARGE
+						 * names the port in ke.data */
+#define MACH_SEND_TIMEOUT	0x00000010U
+#define MACH_RCV_TIMEOUT	0x00000100U
+#define MACH_SEND_NOIMPORTANCE	0x00040000U	/* don't boost dest task */
 
 /*
  * Return codes (mach_msg_return_t). Apple's canonical numbering —
@@ -101,30 +109,35 @@ typedef struct {
  */
 #define MACH_MSG_SUCCESS		0x00000000
 
-#define MACH_SEND_IN_PROGRESS		0x10000001
-#define MACH_SEND_INVALID_DATA		0x10000002
-#define MACH_SEND_INVALID_DEST		0x10000003
-#define MACH_SEND_TIMED_OUT		0x10000004
-#define MACH_SEND_INVALID_NOTIFY	0x10000005
-#define MACH_SEND_INVALID_REPLY		0x10000009
-#define MACH_SEND_INVALID_RIGHT		0x1000000a
-#define MACH_SEND_INVALID_TYPE		0x1000000f
-#define MACH_SEND_MSG_TOO_SMALL		0x10000008
-#define MACH_SEND_INTERRUPTED		0x10000007
-#define MACH_SEND_INVALID_HEADER	0x10000010
+#define MACH_SEND_IN_PROGRESS		0x10000001U
+#define MACH_SEND_INVALID_DATA		0x10000002U
+#define MACH_SEND_INVALID_DEST		0x10000003U
+#define MACH_SEND_TIMED_OUT		0x10000004U
+#define MACH_SEND_INVALID_VOUCHER	0x10000005U	/* canonical Apple value */
+#define MACH_SEND_INTERRUPTED		0x10000007U
+#define MACH_SEND_MSG_TOO_SMALL		0x10000008U
+#define MACH_SEND_INVALID_REPLY		0x10000009U
+#define MACH_SEND_INVALID_RIGHT		0x1000000aU
+#define MACH_SEND_INVALID_NOTIFY	0x1000000bU	/* fixed: prior libmach
+							 * value 0x10000005
+							 * collided with the
+							 * canonical
+							 * INVALID_VOUCHER */
+#define MACH_SEND_INVALID_TYPE		0x1000000fU
+#define MACH_SEND_INVALID_HEADER	0x10000010U
 
-#define MACH_RCV_IN_PROGRESS		0x10004001
-#define MACH_RCV_INVALID_NAME		0x10004002
-#define MACH_RCV_TIMED_OUT		0x10004003
-#define MACH_RCV_TOO_LARGE		0x10004004
-#define MACH_RCV_INTERRUPTED		0x10004005
-#define MACH_RCV_PORT_CHANGED		0x10004006
-#define MACH_RCV_INVALID_NOTIFY		0x10004007
-#define MACH_RCV_INVALID_DATA		0x10004008
-#define MACH_RCV_PORT_DIED		0x10004009
-#define MACH_RCV_HEADER_ERROR		0x1000400b
-#define MACH_RCV_BODY_ERROR		0x1000400c
-#define MACH_RCV_INVALID_TYPE		0x1000400d
+#define MACH_RCV_IN_PROGRESS		0x10004001U
+#define MACH_RCV_INVALID_NAME		0x10004002U
+#define MACH_RCV_TIMED_OUT		0x10004003U
+#define MACH_RCV_TOO_LARGE		0x10004004U
+#define MACH_RCV_INTERRUPTED		0x10004005U
+#define MACH_RCV_PORT_CHANGED		0x10004006U
+#define MACH_RCV_INVALID_NOTIFY		0x10004007U
+#define MACH_RCV_INVALID_DATA		0x10004008U
+#define MACH_RCV_PORT_DIED		0x10004009U
+#define MACH_RCV_HEADER_ERROR		0x1000400bU
+#define MACH_RCV_BODY_ERROR		0x1000400cU
+#define MACH_RCV_INVALID_TYPE		0x1000400dU
 
 /*
  * MACH_MSG_TYPE_* — port-right disposition values used in msgh_bits and

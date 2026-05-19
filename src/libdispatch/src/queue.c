@@ -6725,7 +6725,15 @@ _dispatch_runloop_queue_class_poke(dispatch_lane_t dq)
 
 	_dispatch_trace_runtime_event(worker_request, dq, 1);
 #if HAVE_MACH
-	mach_port_t mp = handle;
+	/*
+	 * Task #39 Path B: explicit narrow. dispatch_runloop_handle_t on
+	 * FreeBSD is uint64_t (packed pipe-fd pair); on macOS it's a
+	 * mach_port_t. The HAVE_MACH branch only runs on the Mach
+	 * runloop wakeup path (not yet wired on FreeBSD) — the cast
+	 * silences -Wshorten-64-to-32 without altering the pipe-pair
+	 * layout the FreeBSD __unix__ branch depends on.
+	 */
+	mach_port_t mp = (mach_port_t)handle;
 	kern_return_t kr = _dispatch_send_wakeup_runloop_thread(mp, 0);
 	switch (kr) {
 	case MACH_SEND_TIMEOUT:
