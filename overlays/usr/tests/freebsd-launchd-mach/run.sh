@@ -345,6 +345,18 @@ echo "LAUNCHCTL-BUILD-OK: /bin/launchctl exists ($(stat -f%z /bin/launchctl) byt
 # under investigation. Keep test at SKIP for now.
 sleep 2
 
+# Task #39 debugging: each daemon plist redirects stderr to its own
+# /var/log/<daemon>.stderr file. Dump those into the boot console
+# BEFORE the proc check so [T39-bs] / [T39-ll] traces (and any other
+# diagnostic output) survive the halt that follows a PROC-FAIL exit.
+for slog in /var/log/syslogd.stderr /var/log/notifyd.stderr /var/log/hwregd.stderr /var/log/aslmanager.stderr; do
+    if [ -s "$slog" ]; then
+        echo "=== begin $slog ==="
+        cat "$slog" || true
+        echo "=== end $slog ==="
+    fi
+done
+
 if pgrep -x notifyd >/dev/null 2>&1; then
     echo "NOTIFYD-PROC-OK: notifyd running as pid $(pgrep -x notifyd)"
 else
