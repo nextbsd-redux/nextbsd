@@ -278,10 +278,11 @@ same service name across IPC spaces &mdash; the cross-task
 port-right transfer Phase G2a's complex-message wire encoding
 made possible. Asserts non-`MACH_PORT_NULL` returns and that
 both calls yield the same port name in the receiver's IPC space.
-Smoke marker: `BOOTSTRAP-REMOTE-OK`. The daemon is *not* wired
-into `rc.local` &mdash; its real home is a launchd-managed job
-once launchd is PID 1 (Phase J-ish). Until then it's ephemeral,
-started by the smoke harness and SIGKILL'd after.
+Smoke marker: `BOOTSTRAP-REMOTE-OK`. The standalone daemon is
+*not* wired into `rc.local`; with launchd now PID 1 (Phase I1) +
+the Path A MIG bootstrap chain landing in Phase J, this binary
+remains as a harness-only artifact and a fallback test path
+exercising `host_set_special_port`.
 
 **Phase H (libxpc port)** &mdash; *done.* Forked ravynOS's
 `lib/libxpc/` into `src/libxpc/`, built against our libsystem_kernel
@@ -329,7 +330,7 @@ come from `FreeBSD-toolchain`. Smoke marker: `MIG-BUILD-OK`. MIG is
 the prerequisite for the launchd-842 port &mdash; launchd ships seven
 `.defs` files whose Mach-RPC stubs are code-generated.
 
-**Phase I1 (launchd-842 port)** &mdash; *in progress.* Vendored
+**Phase I1 (launchd-842 port)** &mdash; *done.* Vendored
 Apple's last open-source launchd (`launchd-842.92.1`,
 `apple-oss-distributions/launchd`) into `src/launchd/` &mdash; `src/`
 + `liblaunch/` + `support/`, ~27k LOC; `SystemStarter/` skipped.
@@ -362,18 +363,90 @@ Sub-phases:
   `libmach`, the launchd-internal XPC vocabulary in
   `<xpc/private.h>`, and ~25 libsystem_kernel stubs in
   `libmach/mach_traps.c` so the link succeeds and runtime calls
-  fail closed. 23 smoke markers green.
-- **I1d &mdash; `LAUNCHD-BUILD-OK` marker** &mdash; *next.* `run.sh`
-  step that execs `/sbin/launchd` on a no-IPC CLI path (`launchd -h`
-  or equivalent), checks for expected output, prints
-  `LAUNCHD-BUILD-OK`. Closes out Phase I1c proper.
-- **I1e &mdash; `launchctl`** &mdash; *pending; gated on
-  libCoreFoundation.* `support/launchctl.c` is 4,549 LOC of
-  CoreFoundation-using C. The
-  [launchctl CoreFoundation spike](https://pkgdemon.github.io/freebsd-launchctl-corefoundation-spike.html)
-  audits its needs (49 distinct CF function calls, 1 SPI symbol, 17
-  types, 25 constants) and the porting plan that follows it. See the
-  next section.
+  fail closed. Smoke marker: `LAUNCHD-BUILD-OK` (`run.sh:262` execs
+  `/sbin/launchd` on the no-IPC PID-check path and asserts it
+  rejects non-PID-1 with the expected diagnostic).
+- **I1d &mdash; `libCoreFoundation` + `lib_FoundationICU`** &mdash;
+  *done.* Vendored swift-corelibs CoreFoundation as
+  `src/libCoreFoundation/` (78 `.c` files, ~915 `CF*` symbols),
+  built standalone with `DEPLOYMENT_RUNTIME_SWIFT=0` (skips the
+  `libswiftCore.so` dep). Apple's slimmed ICU fork
+  (`lib_FoundationICU`) vendored alongside, since CF's plist
+  parser pulls in ICU headers via the private namespace. Both
+  install under `/usr/lib/system/`
+  (`libCoreFoundation.so.6` + `lib_FoundationICU.so`). Smoke
+  marker: `COREFOUNDATION-OK` (CF + plist round-trip on the
+  ISO). Rationale &mdash; why swift-corelibs CF over GNUstep
+  `libs-corebase` &mdash; in the next section.
+- **I1e &mdash; `launchctl`** &mdash; *done.* `/bin/launchctl`
+  builds against `libCoreFoundation` and links via
+  `/usr/lib/system/`. Smoke marker: `LAUNCHCTL-BUILD-OK`. The
+  49th CF call missing from swift-corelibs was swapped for a
+  two-line `CFReadStream` + `CFPropertyListCreateFromStream`
+  equivalent, per the
+  [launchctl-corefoundation-spike](https://pkgdemon.github.io/freebsd-launchctl-corefoundation-spike.html).
+
+`launchd` is PID 1 on the running ISO. Boot path:
+`loader -> kernel -> /init.sh (unionfs pivot) -> stock init in
+chroot -> rc multi-user -> getty`, with launchd-managed daemons
+started via plists in `/System/Library/LaunchDaemons/`. The
+runtime checkpoint for actual PID-1 work (KeepAlive, WatchPaths,
+Sockets, &hellip;) is Phase I2, gated on Phase J landing
+green &mdash; see the
+[launchd-842 porting plan](https://pkgdemon.github.io/freebsd-launchd-842-porting-plan.html).
+
+**Phase J (launchd-managed daemons port)** &mdash; *in progress.*
+Once launchd was PID 1, the next bring-up was the daemons it
+manages: Apple Syslog (ASL) + libnotify, plus `notifyd` /
+`syslogd` / `aslmanager`. All build green; runtime integration
+is in flight.
+
+- **J0 &mdash; vendor ASL + libnotify** &mdash; *done.* Apple's
+  `Libnotify-279.40.4` and `syslog-450.10` imported into
+  `src/Libnotify/` and `src/syslog/`.
+- **J1 &mdash; `libnotify` client lib** &mdash; *done.* Builds
+  and installs. Build marker: `NOTIFY-LIB-OK`.
+- **J2 &mdash; `notifyd` + `syslogd` daemon binaries** &mdash;
+  *done.* Both build and install via `src/Libnotify/notifyd/`
+  and `src/syslog/syslogd.tproj/`. Apple's static ASL lib
+  (`libsystem_asl.a`) builds and links into both. Build
+  markers: `ASL-LIB-OK`, `NOTIFYD-BUILD-OK`,
+  `SYSLOGD-BUILD-OK`, `SYSLOG-CLI-BUILD-OK`.
+- **J4 &mdash; `aslmanager`** &mdash; *done.* Apple's log
+  rotator builds with `copyfile` + `setattrlist` runtime
+  stubs. Build marker: `ASLMANAGER-BUILD-OK`.
+- **Path A &mdash; real Mach-IPC bootstrap chain (task #39)**
+  &mdash; *in progress.* The hand-rolled BST bootstrap protocol
+  (used by the Phase G2 tests) is being replaced by Apple's
+  real MIG path so daemons can call `bootstrap_check_in`
+  against launchd PID 1. Four pieces shipped:
+  1. Kernel fork eventhandler in `mach.ko`
+     (`src/mach_kmod/src/kern/task.c:1234`,
+     `mach_task_fork_bsport`) propagates the parent task's
+     `itk_bootstrap` send right to the child at fork time
+     &mdash; lazy thread init preserved, since full task-init
+     panicked under Phase C2.
+  2. liblaunch's `.so`-load constructor
+     (`src/launchd/liblaunch/libbootstrap.c:101`) populates the
+     userspace `bootstrap_port` via `task_get_special_port` so
+     daemons see launchd's port immediately at startup.
+  3. libxpc migrated off the BST hand-rolled protocol; the
+     production path is now Apple-canonical MIG via
+     `liblaunch.so` (commit `119bf44`). libxpc, libnotify and
+     notifyd link `-llaunch`.
+  4. `set_security_token` is called in `mach_task_fork_bsport`
+     and `mach_task_init_lazy` (commit `701cf90`) so the
+     child's `audit_token.val[5]` carries its real PID &mdash;
+     without this, the MIG trailer reaches launchd with PID=0
+     and `job_mig_intran` can't find the calling job, so
+     `job_mig_check_in2` sees `j=NULL` and returns
+     `BOOTSTRAP_NO_MEMORY`.
+
+  Currently chasing the `NOTIFYD-PROC-FAIL` marker (`pgrep -x
+  notifyd` after launchctl). When `NOTIFYD-PROC-OK` lands and
+  `SYSLOGD-PROC-OK` follows, J closes out and the runtime
+  checkpoint moves to Phase I2 (KeepAlive, WatchPaths,
+  Sockets, &hellip;).
 
 ## CoreFoundation for system services &mdash; swift-corelibs CF
 
@@ -385,12 +458,12 @@ Any consumer that talks to launchd over Mach RPC &mdash; test
 programs, eventually `configd`, third-party daemons &mdash; can do
 so without a CF implementation.
 
-`launchctl` is the first CF-using binary on the roadmap. After
+`launchctl` is the first CF-using binary on the ISO. After
 auditing three candidate CoreFoundation implementations
 (`gnustep/libs-base`, `gnustep/libs-corebase`,
 `swiftlang/swift-corelibs-foundation` &mdash; see the
 [launchctl-corefoundation-spike](https://pkgdemon.github.io/freebsd-launchctl-corefoundation-spike.html)
-for the full evidence), the answer is:
+for the full evidence), the answer landed on swift-corelibs CF:
 
 - **`libs-base`** contributes zero CF C surface (it's Foundation
   NSXxx for Obj-C consumers). Not relevant to a pure-C CF client.
@@ -405,13 +478,12 @@ for the full evidence), the answer is:
   two-line `CFReadStream` + `CFPropertyListCreateFromStream` swap).
   Apache 2.0, actively maintained.
 
-**Decision: vendor swift-corelibs CoreFoundation as
-`src/libCoreFoundation/`, build with `DEPLOYMENT_RUNTIME_SWIFT=0`
-(skips the libswiftCore.so dep), install as
-`/usr/lib/system/libCoreFoundation.so.6`.** Same install lane as
-liblaunch / libxpc / libdispatch / libsystem_kernel /
-libBlocksRuntime &mdash; the Apple-libsystem family this project
-ships.
+Shipped as `src/libCoreFoundation/`, built with
+`DEPLOYMENT_RUNTIME_SWIFT=0` (skips the libswiftCore.so dep),
+installed as `/usr/lib/system/libCoreFoundation.so.6` &mdash;
+same install lane as liblaunch / libxpc / libdispatch /
+libsystem_kernel / libBlocksRuntime, the Apple-libsystem family
+this project ships. See Phase I1d above.
 
 **GNUstep is not on this ISO.** Per the
 [launchctl spike](https://pkgdemon.github.io/freebsd-launchctl-corefoundation-spike.html),
@@ -428,11 +500,6 @@ The companion
 is being rewritten to match this conclusion; the
 [launchctl-corefoundation-spike](https://pkgdemon.github.io/freebsd-launchctl-corefoundation-spike.html)
 is the current authoritative source while that update lands.
-
-After I1, an explicit checkpoint precedes any PID-1 work (Phase I2:
-core functionality &mdash; KeepAlive, WatchPaths, Sockets, &hellip;).
-See the [launchd-842 porting
-plan](https://pkgdemon.github.io/freebsd-launchd-842-porting-plan.html).
 
 Plan docs:
 
