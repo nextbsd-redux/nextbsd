@@ -24,33 +24,22 @@
 
 /*
  * Process-global bootstrap port. Apple's dyld populates this from
- * TASK_BOOTSTRAP_PORT before main(). Our equivalent: the
- * __attribute__((constructor)) below runs at .so load time (before
- * the daemon's main) and calls task_get_bootstrap_port to pull in
- * whatever the task has — which, with the task #39 fork
- * inheritance fix, is the bsport launchd set just before forking
- * us.
+ * TASK_BOOTSTRAP_PORT before main(); we leave it MACH_PORT_NULL at
+ * process load. A loader-time constructor was tried (task #39
+ * follow-up) AND a kernel fork eventhandler now inherits the
+ * parent's itk_bootstrap on fork — together they put a real port
+ * into bootstrap_port for every launchd-spawned daemon.
  *
- * Why this was previously removed (see git history): on a fresh
- * boot WITHOUT fork inheritance, every task's itk_bootstrap was
- * IP_NULL, so task_get_special_port fell through to
- * realhost.special[HOST_BOOTSTRAP_PORT]. If the test harness had
- * SIGKILLed bootstrap_server, the host slot had a dangling
- * reference and kernel page-faulted on ipc_port_copyout_send.
- *
- * Post-task-#39: launchd-spawned daemons have a valid itk_bootstrap
- * from the fork eventhandler, so task_get_special_port returns
- * THAT port and doesn't touch the host slot. The kernel bug
- * (mach_host_special_dangling_port) is still real but no longer in
- * the path. Constructor is safe to restore.
+ * BUT: this libbootstrap implements our HAND-ROLLED BST protocol
+ * (msgh_id 0x42535401 etc., see bootstrap_protocol.h), not Apple's
+ * MIG (vproc_mig_check_in2). The bootstrap_port now resolves to
+ * launchd, but launchd's MIG demux doesn't recognize BST msgh_ids
+ * and exits when handed one. Constructor is held back until the
+ * libbootstrap impl migrates to Apple's MIG protocol (and our
+ * Phase G2 test_bootstrap_remote either also migrates or keeps a
+ * private BST helper). See task39_machservices_port_chain memory.
  */
 mach_port_t bootstrap_port = MACH_PORT_NULL;
-
-static void __attribute__((constructor))
-bootstrap_load_port(void)
-{
-	(void)task_get_bootstrap_port(mach_task_self(), &bootstrap_port);
-}
 
 /*
  * BOOTSTRAP_DEBUG: when set non-zero, libbootstrap traces each
