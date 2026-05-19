@@ -13,6 +13,7 @@
 #ifndef _MACH_MACH_H_
 #define _MACH_MACH_H_
 
+#include <mach/sync_policy.h>		/* SYNC_POLICY_FIFO, ... */
 #include <mach/mach_traps.h>		/* mach_reply_port, mach_task_self, ... */
 #include <mach/port.h>			/* mach_port_t, mach_port_array_t, ... */
 #include <mach/mach_port.h>		/* mach_port_allocate, kern_return_t */
