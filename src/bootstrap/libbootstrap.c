@@ -23,19 +23,33 @@
 
 /*
  * Process-global bootstrap port. Apple's dyld populates this from
- * TASK_BOOTSTRAP_PORT before main(); we leave it MACH_PORT_NULL at
- * process load and rely on callers to set it explicitly. A previous
- * iteration tried a __attribute__((constructor)) that called
- * task_get_bootstrap_port at .so load time, but that exposed a latent
- * mach.ko bug: when the test harness SIGKILLs bootstrap_server, the
- * host slot HOST_BOOTSTRAP_PORT keeps a dangling reference, and the
- * next task_get_special_port → ipc_port_copyout_send page-faults the
- * kernel. Until the kernel sweeps host special slots on port
- * destruction (or NULL-checks before copyout), the constructor stays
- * removed. xpc_connection.c consumers that read bootstrap_port
- * directly will see MACH_PORT_NULL until somebody assigns it.
+ * TASK_BOOTSTRAP_PORT before main(). Our equivalent: the
+ * __attribute__((constructor)) below runs at .so load time (before
+ * the daemon's main) and calls task_get_bootstrap_port to pull in
+ * whatever the task has — which, with the task #39 fork
+ * inheritance fix, is the bsport launchd set just before forking
+ * us.
+ *
+ * Why this was previously removed (see git history): on a fresh
+ * boot WITHOUT fork inheritance, every task's itk_bootstrap was
+ * IP_NULL, so task_get_special_port fell through to
+ * realhost.special[HOST_BOOTSTRAP_PORT]. If the test harness had
+ * SIGKILLed bootstrap_server, the host slot had a dangling
+ * reference and kernel page-faulted on ipc_port_copyout_send.
+ *
+ * Post-task-#39: launchd-spawned daemons have a valid itk_bootstrap
+ * from the fork eventhandler, so task_get_special_port returns
+ * THAT port and doesn't touch the host slot. The kernel bug
+ * (mach_host_special_dangling_port) is still real but no longer in
+ * the path. Constructor is safe to restore.
  */
 mach_port_t bootstrap_port = MACH_PORT_NULL;
+
+static void __attribute__((constructor))
+bootstrap_load_port(void)
+{
+	(void)task_get_bootstrap_port(mach_task_self(), &bootstrap_port);
+}
 
 /*
  * BOOTSTRAP_DEBUG: when set non-zero, libbootstrap traces each
