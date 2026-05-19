@@ -30,6 +30,16 @@
 #ifndef __DISPATCH_INDIRECT__
 #error "Please #include <dispatch/dispatch.h> instead of this file directly."
 #include <dispatch/base.h> // for HeaderDoc
+
+/* Task #39: forward-declare struct mig_subsystem so the
+ * dispatch_mach_mig_demux() prototype below doesn't trip
+ * -Werror=visibility on FreeBSD's stricter clang. On Apple,
+ * <mach/mach.h> via <mig.h> brings the full def into scope; on
+ * FreeBSD, libmach's <mach/mig.h> would do the same but it isn't
+ * always pulled in via <mach/mach.h>. The forward decl is enough
+ * for the prototype here; users that actually call demux already
+ * #include <mach/mig.h>. */
+struct mig_subsystem;
 #endif
 
 __BEGIN_DECLS

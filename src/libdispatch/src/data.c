@@ -673,7 +673,15 @@ dispatch_data_copy_region(dispatch_data_t dd, size_t location,
 	return _dispatch_data_copy_region(dd, 0, dd->size, location, offset_ptr);
 }
 
-#if HAVE_MACH
+/* Task #39: gate dispatch_data_make_memory_entry on a separate flag —
+ * the function depends on Mach VM memory-entry APIs
+ * (mach_make_memory_entry_64, vm_prot_t, VM_FLAGS_ANYWHERE,
+ * memory_object_size_t, vm_page_size, MAP_MEM_*) that aren't part
+ * of our libmach surface. With HAVE_MACH=1 on FreeBSD we keep the
+ * dispatch_mach_t channel API but lose this VM-entry shortcut for
+ * large dispatch_data buffers. Consumers that hit this path fall
+ * through to the standard malloc-based dispatch_data path. */
+#if HAVE_MACH && HAVE_MACH_VM_MEMORY_ENTRIES
 
 #ifndef MAP_MEM_VM_COPY
 #define MAP_MEM_VM_COPY 0x200000 // <rdar://problem/13336613>
