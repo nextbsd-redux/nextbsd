@@ -1374,7 +1374,13 @@ main(int argc, const char *argv[])
 	if (global.nslots > 0)
 	{
 		status = open_shared_memory(shm_name);
-		assert(status == 0);
+		if (status != 0) {
+			fprintf(stderr,
+			    "notifyd: open_shared_memory(\"%s\") failed "
+			    "(status=%d errno=%d %s)\n",
+			    shm_name, status, errno, strerror(errno));
+			abort();
+		}
 	}
 
 	global.workloop = dispatch_workloop_create_inactive("com.apple.notifyd.main");
