@@ -224,6 +224,19 @@ typedef struct {
 	((bits) & MACH_MSGH_BITS_PORTS_MASK)
 
 /*
+ * MACH_MSGH_BITS_OTHER — bits left over after stripping the port +
+ * voucher fields. libdispatch's _dispatch_mach_msg_debug uses it to
+ * print unknown flags. Apple's canonical:
+ *   #define MACH_MSGH_BITS_OTHER(bits) ((bits) &~ MACH_MSGH_BITS_USED)
+ * with MACH_MSGH_BITS_USED bundling all the defined fields. We
+ * approximate by masking out the three known mask groups; control
+ * bits like MACH_MSGH_BITS_COMPLEX (bit 31) are intentionally not
+ * masked out so they surface in the "other" print.
+ */
+#define MACH_MSGH_BITS_OTHER(bits) \
+	((bits) & ~(MACH_MSGH_BITS_PORTS_MASK | MACH_MSGH_BITS_VOUCHER_MASK))
+
+/*
  * MACH_MSGH_BITS_REPLY — flip remote/local for a reply message.
  * MIG-server demux generates reply headers with this.
  */
@@ -372,8 +385,16 @@ typedef uint64_t     mach_port_context_t;
 #define MACH_RCV_TRAILER_AUDIT		3
 #define MACH_RCV_TRAILER_CTX		4
 
-#define MACH_RCV_TRAILER_TYPE(x)	(((x) & 0xf) << 28)
-#define MACH_RCV_TRAILER_ELEMENTS(x)	(((x) & 0xf) << 24)
+/*
+ * Bare-hex shifts produce int; libdispatch's DISPATCH_MACH_RCV_OPTIONS
+ * OR's the result into mach_msg_option_t (unsigned int) under
+ * -Werror,-Wsign-conversion (mach.c:728). Cast to unsigned int so the
+ * OR-chain stays type-clean.
+ */
+#define MACH_RCV_TRAILER_TYPE(x) \
+	((mach_msg_option_t)((((unsigned int)(x)) & 0xfU) << 28))
+#define MACH_RCV_TRAILER_ELEMENTS(x) \
+	((mach_msg_option_t)((((unsigned int)(x)) & 0xfU) << 24))
 
 typedef struct {
 	mach_msg_trailer_type_t		msgh_trailer_type;
@@ -580,20 +601,20 @@ typedef union {
  * doesn't implement.
  */
 #ifndef MACH_SEND_PROPAGATE_QOS
-#define MACH_SEND_PROPAGATE_QOS		0x00200000
+#define MACH_SEND_PROPAGATE_QOS		0x00200000U
 #endif
 #ifndef MACH_SEND_FILTER_NONFATAL
-#define MACH_SEND_FILTER_NONFATAL	0x00010000
+#define MACH_SEND_FILTER_NONFATAL	0x00010000U
 #endif
 
 /* Apple Mach voucher-related option bits + types. We don't implement
  * vouchers; consumers that try to attach/receive vouchers see no-op
  * behavior. */
 #ifndef MACH_RCV_VOUCHER
-#define MACH_RCV_VOUCHER	0x00000800
+#define MACH_RCV_VOUCHER	0x00000800U
 #endif
 #ifndef MACH_SEND_NO_BUFFER
-#define MACH_SEND_NO_BUFFER	0x00020000
+#define MACH_SEND_NO_BUFFER	0x00020000U
 #endif
 
 typedef mach_port_t voucher_mach_msg_state_t;

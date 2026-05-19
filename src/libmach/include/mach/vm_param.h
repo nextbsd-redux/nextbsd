@@ -37,10 +37,21 @@ extern "C" {
 #define vm_page_mask		((unsigned long)(vm_page_size - 1))
 #endif
 
-#define mach_vm_trunc_page(x)	((__typeof__(x))( \
-		((unsigned long)(x)) & ~vm_page_mask))
-#define mach_vm_round_page(x)	((__typeof__(x))( \
-		(((unsigned long)(x)) + vm_page_mask) & ~vm_page_mask))
+/*
+ * Always return unsigned long. The original __typeof__(x) version
+ * broke when libdispatch passes `addr + vm_page_size` where addr is
+ * `void *` — pointer arithmetic kept the void* typedef and the
+ * macro tried to cast back to void*, hitting -Wint-conversion at the
+ * `mach_vm_address_t p = ...` assignment (mach.c:701). Returning a
+ * fixed unsigned long matches Apple's `mach_vm_offset_t` return and
+ * makes the void*→unsigned long conversion explicit (well-defined
+ * intptr coercion). Call sites that assign to a narrower type
+ * (mach.c:724 `mach_msg_size_t siz = ...`) need an explicit cast.
+ */
+#define mach_vm_trunc_page(x)	\
+	((unsigned long)(((unsigned long)(x)) & ~vm_page_mask))
+#define mach_vm_round_page(x)	\
+	((unsigned long)((((unsigned long)(x)) + vm_page_mask) & ~vm_page_mask))
 
 #ifdef __cplusplus
 }

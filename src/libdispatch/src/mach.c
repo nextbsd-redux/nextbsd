@@ -24,7 +24,12 @@
 #define DISPATCH_MACH_RETURN_IMMEDIATE_SEND_RESULT 0x1
 #define DISPATCH_MACH_REGISTER_FOR_REPLY 0x2
 #define DISPATCH_MACH_WAIT_FOR_REPLY 0x4
-#define DISPATCH_MACH_OPTIONS_MASK 0xffff
+/*
+ * Task #39 Path B: U suffix so the mask OR's cleanly with
+ * mach_msg_option_t (unsigned int) under -Werror,-Wsign-conversion
+ * (mach.c:1002, 1763, 1778, 1853, 1873, 1903).
+ */
+#define DISPATCH_MACH_OPTIONS_MASK 0xffffU
 
 #define DM_SEND_STATUS_SUCCESS 0x1
 #define DM_SEND_STATUS_RETURNING_IMMEDIATE_SEND_RESULT 0x2
@@ -721,7 +726,15 @@ _dispatch_mach_msg_reply_recv(dispatch_mach_t dm,
 	mach_msg_return_t kr;
 	mach_msg_option_t options;
 	mach_port_t notify = MACH_PORT_NULL;
-	siz = mach_vm_round_page(DISPATCH_MACH_RECEIVE_MAX_INLINE_MESSAGE_SIZE +
+	/*
+	 * Task #39 Path B: explicit narrow. mach_vm_round_page returns
+	 * unsigned long (libmach <mach/vm_param.h>); siz is mach_msg_size_t
+	 * (uint32). The cast silences -Wshorten-64-to-32 — the page-aligned
+	 * buffer size fits in 32 bits by construction (caller-bounded
+	 * DISPATCH_MACH_RECEIVE_MAX_INLINE_MESSAGE_SIZE).
+	 */
+	siz = (mach_msg_size_t)mach_vm_round_page(
+			DISPATCH_MACH_RECEIVE_MAX_INLINE_MESSAGE_SIZE +
 			DISPATCH_MACH_TRAILER_SIZE);
 	hdr = alloca(siz);
 	_dispatch_mach_stack_probe(hdr, siz);
@@ -3230,7 +3243,10 @@ _dispatch_mach_debug_attr(dispatch_mach_t dm, char *buf, size_t bufsiz)
 			(mach_port_t)dmsr->du_ident,
 			dmsr->dmsr_notification_armed ? " (armed)" : "",
 			dmsr->dmsr_checkin_port, dmsr->dmsr_checkin ? " (pending)" : "",
-			dmsr->dmsr_state, dmsr->dmsr_disconnect_cnt,
+			/* %llx format wants unsigned long long; uint64_t is
+			 * unsigned long on FreeBSD/amd64 (LP64). */
+			(unsigned long long)dmsr->dmsr_state,
+			dmsr->dmsr_disconnect_cnt,
 			(bool)(dm->dq_atomic_flags & DSF_CANCELED));
 }
 
