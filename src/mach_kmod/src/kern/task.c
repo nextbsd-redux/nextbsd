@@ -1208,6 +1208,82 @@ uma_task_fini(void *_thread, int a)
 }
 
 
+/*
+ * Task #39 fix: minimal fork-time bootstrap port inheritance.
+ *
+ * Apple's model: fork() copies parent's task port state (including
+ * itk_bootstrap) into child. Our Phase C2 disabled the full
+ * task-init / task-fork eventhandlers because they panicked in
+ * thread_self_trap when only task (not thread) eventhandlers were
+ * wired — full restoration needs both layers safe.
+ *
+ * But the daemons launchd spawns *must* see launchd's bootstrap_port
+ * inherited at fork time. By the time syslogd's lazy mach_task_init
+ * runs (via task_self_trap), launchd has already reset its own
+ * bootstrap port back to NULL after the fork. So lazy-side "look at
+ * parent" inheritance won't work — the snapshot must happen at fork.
+ *
+ * This handler does the bare minimum: at fork, if the parent has a
+ * non-NULL itk_bootstrap, give the child a fresh task with that
+ * bootstrap port pre-set. Does NOT call task_init_internal (which is
+ * what panicked in 2026-05-11). Threads are still lazy.
+ */
+static eventhandler_tag mach_fork_eh_tag;
+
+static void
+mach_task_fork_bsport(void *arg __unused, struct proc *p1, struct proc *p2,
+    int flags __unused)
+{
+	task_t parent_task = p1->p_machdata;
+	task_t child_task;
+
+	if (parent_task == NULL)
+		return; /* parent has no Mach state — nothing to inherit */
+	if (parent_task->itk_bootstrap == IP_NULL)
+		return; /* parent has no bootstrap port — nothing to inherit */
+
+	/* Child should have p_machdata set up the same way mach_task_init_lazy
+	 * does on first syscall. We pre-create it here so the bootstrap port
+	 * is available immediately. If the child already has a task (race),
+	 * use the existing one. */
+	if (p2->p_machdata == NULL) {
+		child_task = uma_zalloc(task_zone, M_NOWAIT | M_ZERO);
+		if (child_task == NULL)
+			return; /* OOM; fall back to no inheritance */
+		child_task->itk_p = p2;
+		mach_mutex_init(&child_task->lock, "ETAP_THREAD_TASK_NEW");
+		mach_mutex_init(&child_task->itk_lock_data, "ETAP_THREAD_TASK_ITK");
+		queue_init(&child_task->semaphore_list);
+		task_create_internal(child_task);
+		/* TASK_NULL parent — full inheritance is what tripped the
+		 * earlier panic. Just init the empty task, then patch in
+		 * the bootstrap port below. */
+		task_init_internal(TASK_NULL, child_task);
+
+		if (!atomic_cmpset_ptr((volatile uintptr_t *)&p2->p_machdata,
+		    (uintptr_t)NULL, (uintptr_t)child_task)) {
+			/* lost race; leak our task, fall through to use the
+			 * winner */
+			child_task = p2->p_machdata;
+		}
+	} else {
+		child_task = p2->p_machdata;
+	}
+
+	itk_lock(parent_task);
+	itk_lock(child_task);
+
+	/* Replace whatever the child's itk_bootstrap was (probably IP_NULL
+	 * from task_init_internal's TASK_NULL-parent branch) with a send
+	 * right to the parent's bootstrap port. */
+	if (IP_VALID(child_task->itk_bootstrap))
+		ipc_port_release_send(child_task->itk_bootstrap);
+	child_task->itk_bootstrap = ipc_port_copy_send(parent_task->itk_bootstrap);
+
+	itk_unlock(child_task);
+	itk_unlock(parent_task);
+}
+
 static void
 task_sysinit(void *arg __unused)
 {
@@ -1217,19 +1293,19 @@ task_sysinit(void *arg __unused)
 							uma_task_fini, 1, 0);
 
 	/*
-	 * Phase C2 is lazy-init-only: do NOT re-enable the process_init
-	 * or process_fork eventhandlers. mach_task_init_lazy() (above) is
-	 * called from the wired syscall wrappers on first use, which is
-	 * sufficient for any process that wants Mach state. Re-enabling
-	 * the eventhandlers re-introduces a kldload-time / first-fork
-	 * panic chain that Phase B's bisect originally isolated; the
-	 * existing NULL guards in the handlers were necessary but not
-	 * sufficient (a smoke run completed through task_self_trap then
-	 * panicked on thread_self_trap during 2026-05-11 C2 attempt — the
-	 * task eventhandlers may be safe, but enabling them without the
-	 * thread eventhandlers leaves an inconsistent state that's worse
-	 * than off entirely). Keep handlers OFF; rely on lazy paths.
+	 * Phase C2 (still in effect): do NOT re-enable the full
+	 * process_init or process_fork eventhandlers — they panicked in
+	 * thread_self_trap when only task (not thread) state was prepped
+	 * at fork time. Lazy init is the baseline.
+	 *
+	 * Task #39 (2026-05-18): register a MINIMAL fork eventhandler that
+	 * does ONLY bootstrap port inheritance. This is the smallest patch
+	 * that lets launchd-spawned daemons see launchd's bootstrap_port
+	 * via task_get_special_port at startup — which they need to call
+	 * bootstrap_check_in for their MachServices.
 	 */
+	mach_fork_eh_tag = EVENTHANDLER_REGISTER(process_fork,
+	    mach_task_fork_bsport, NULL, EVENTHANDLER_PRI_ANY);
 }
 
 /* before SI_SUB_INTRINSIC and after SI_SUB_EVENTHANDLER */
