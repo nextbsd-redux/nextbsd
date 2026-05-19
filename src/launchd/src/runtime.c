@@ -705,8 +705,10 @@ runtime_fork(mach_port_t bsport)
 
 	sigemptyset(&emptyset);
 
+	LD_TRACE("[T39-fork] runtime_fork pre-set_bport bsport=0x%x", (unsigned)bsport);
 	(void)os_assumes_zero(launchd_mport_make_send(bsport));
 	(void)os_assumes_zero(launchd_set_bport(bsport));
+	LD_TRACE("[T39-fork] runtime_fork post-set_bport bsport=0x%x", (unsigned)bsport);
 	(void)os_assumes_zero(launchd_mport_deallocate(bsport));
 
 	__OS_COMPILETIME_ASSERT__(SIG_ERR == (typeof(SIG_ERR))-1);

@@ -1237,6 +1237,13 @@ mach_task_fork_bsport(void *arg __unused, struct proc *p1, struct proc *p2,
 	task_t parent_task = p1->p_machdata;
 	task_t child_task;
 
+	if (mach_debug_enable)
+		printf("[T39-fork] p1=%s(%d) -> p2=%s(%d) parent_task=%p "
+		    "itk_bootstrap=%p\n",
+		    p1->p_comm, p1->p_pid, p2->p_comm, p2->p_pid,
+		    parent_task,
+		    parent_task ? (void *)parent_task->itk_bootstrap : NULL);
+
 	if (parent_task == NULL)
 		return; /* parent has no Mach state — nothing to inherit */
 	if (parent_task->itk_bootstrap == IP_NULL)
@@ -1279,6 +1286,11 @@ mach_task_fork_bsport(void *arg __unused, struct proc *p1, struct proc *p2,
 	if (IP_VALID(child_task->itk_bootstrap))
 		ipc_port_release_send(child_task->itk_bootstrap);
 	child_task->itk_bootstrap = ipc_port_copy_send(parent_task->itk_bootstrap);
+
+	if (mach_debug_enable)
+		printf("[T39-fork] %s(%d) inherited bsport %p -> child_task=%p\n",
+		    p2->p_comm, p2->p_pid,
+		    (void *)child_task->itk_bootstrap, child_task);
 
 	itk_unlock(child_task);
 	itk_unlock(parent_task);
