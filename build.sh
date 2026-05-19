@@ -377,6 +377,7 @@ cmake -G Ninja /tmp/libdispatch \
     -DINSTALL_BLOCK_HEADERS_DIR=/usr/include \
     -DINSTALL_OS_HEADERS_DIR=/usr/include/os \
     -DINSTALL_PRIVATE_HEADERS=ON \
+    -DHAVE_MACH:BOOL=ON \
     -DCMAKE_C_COMPILER=clang \
     -DCMAKE_CXX_COMPILER=clang++ \
     -DCMAKE_BUILD_TYPE=Release
