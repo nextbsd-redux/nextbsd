@@ -92,13 +92,26 @@ expect {
     "OK " { puts "\n==> at loader prompt; setting serial console vars" }
 }
 
-send "set console=\"comconsole vidconsole\"\r"
+# Match the echoed command BEFORE matching "OK " to avoid expect races
+# where a stale OK from a prior `set` is matched before the loader has
+# consumed the current send. Without this, run 26070245676 ate
+# `boot_multicons=YES` and merged the next `set` into the partial line.
+#
+# Also dropped vidconsole from console var: QEMU CI runs with
+# -display none, so vidconsole always fails to bind and the loader
+# prints "console vidconsole is unavailable" on every boot. comconsole
+# alone is sufficient for serial-only capture.
+send "set console=comconsole\r"
+expect "set console=comconsole"
 expect "OK "
 send "set boot_serial=YES\r"
+expect "set boot_serial=YES"
 expect "OK "
 send "set comconsole_speed=115200\r"
+expect "set comconsole_speed=115200"
 expect "OK "
 send "set boot_multicons=YES\r"
+expect "set boot_multicons=YES"
 expect "OK "
 # Verbose diagnostic trace toggles. CI-only — the shipped ISO is
 # silent by default. The kernel reads mach.debug_enable as a tunable
@@ -106,11 +119,6 @@ expect "OK "
 # "launchd_trace=1" once at startup. Together these gate the [T41-*]
 # / [T39-*] trace points; keeping them on for CI gives a paper trail
 # for the next regression.
-#
-# Match the echoed command, not just "OK ", to avoid races where
-# expect matches a stale OK from a prior `set` before the loader has
-# processed the current send. Without this, run 26068578062 ate the
-# second `set` and merged "set lau" with the next "boot".
 send "set mach.debug_enable=1\r"
 expect "set mach.debug_enable=1"
 expect "OK "
