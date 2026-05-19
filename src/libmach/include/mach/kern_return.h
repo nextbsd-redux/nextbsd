@@ -28,4 +28,26 @@ typedef int kern_return_t;
 #define KERN_OPERATION_TIMED_OUT 49
 #endif
 
+/*
+ * KERN_NOT_SUPPORTED — libdispatch's voucher.c (1888, 1898) returns
+ * this from the voucher activity_trace / personas APIs we don't
+ * implement. Apple's canonical value is 46.
+ */
+#ifndef KERN_NOT_SUPPORTED
+#define KERN_NOT_SUPPORTED 46
+#endif
+
+/*
+ * KERN_FAILURE / KERN_SUCCESS — the two most-used codes. We already
+ * carry KERN_SUCCESS via the Apple-canonical 0 fallback elsewhere
+ * (mach_port.h, message.h), but libdispatch's voucher.c and other
+ * paths reference them explicitly with this header alone in scope.
+ */
+#ifndef KERN_SUCCESS
+#define KERN_SUCCESS 0
+#endif
+#ifndef KERN_FAILURE
+#define KERN_FAILURE 5
+#endif
+
 #endif /* !_MACH_KERN_RETURN_H_ */
