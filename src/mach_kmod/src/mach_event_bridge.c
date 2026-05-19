@@ -48,13 +48,15 @@
 #include <sys/uio.h>
 #include <sys/capsicum.h>
 
+#include <sys/mach/port.h>
+#include <sys/mach/kern_return.h>
 #include <sys/mach/mach_types.h>
+#include <sys/mach/ipc/ipc_object.h>	/* rpc_common_data via ipc_object */
+#include <sys/mach/ipc/ipc_port.h>	/* required before ipc_pset.h */
 #include <sys/mach/ipc/ipc_pset.h>
-#include <sys/mach/ipc/ipc_object.h>
 #include <sys/mach/ipc/ipc_entry.h>
 #include <sys/mach/ipc/ipc_space.h>
-#include <sys/mach/kern_return.h>
-#include <sys/mach/port.h>
+#include <sys/mach/thread.h>		/* current_task() */
 
 #include "mach_event_bridge.h"
 
@@ -224,9 +226,11 @@ mach_event_bridge_fire(ipc_pset_t pset)
 		return;
 	}
 	/* Hold an extra ref so we can release the bells lock before the
-	 * potentially-sleeping fo_write call. */
+	 * potentially-sleeping fo_write call. fhold() is __warn_unused_result
+	 * on FreeBSD 15 (returns true on success); we don't have a useful
+	 * fallback path if it fails, so cast away. */
 	fp = bell->meb_fp;
-	fhold(fp);
+	(void)fhold(fp);
 	mtx_unlock(&mach_event_bells_lock);
 
 	iov.iov_base = &byte;
