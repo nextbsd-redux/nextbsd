@@ -197,16 +197,20 @@
 #	define DISPATCH_EV_DIRECT		(EV_UDATA_SPECIFIC|EV_DISPATCH)
 #else
 /*
- * FreeBSD has no EV_UDATA_SPECIFIC. Apple's libdispatch uses it as
- * a kqueue lookup-by-udata flag so multiple registrations on the
- * same (ident,filter) can coexist. We don't need it because our
- * Mach event backend is event_mach_freebsd.c (a polling thread that
- * receives via mach_msg directly), not event_kevent.c — Mach source
- * routing bypasses kqueue entirely on FreeBSD. The flag value here
- * just satisfies the bitwise-OR expressions below; it's a no-op at
- * the kqueue boundary because our kqueue ignores unknown EV_ flags.
+ * FreeBSD has no EV_UDATA_SPECIFIC. Task #39 Path B: with
+ * DISPATCH_USE_KEVENT_QOS=1, the flag value goes into
+ * struct kevent_qos_s.flags (uint16_t — see libmach
+ * <mach/dispatch_kevent.h>), so we must pick a 16-bit value that
+ * doesn't collide with FreeBSD's defined EV_* bits (EV_ADD 0x1,
+ * DELETE 0x2, ENABLE 0x4, DISABLE 0x8, ONESHOT 0x10, CLEAR 0x20,
+ * RECEIPT 0x40, DISPATCH 0x80, EOF 0x8000, ERROR 0x4000). Apple's
+ * canonical value is 0x0100, which fits and doesn't collide.
+ *
+ * Prior value here was 0x10000000 — a 28-bit constant that exceeded
+ * uint16_t and tripped -Werror,-Wconstant-conversion at event/event.c
+ * (lines 227-313) once the kevent_qos_s typedef became active.
  */
-#	define EV_UDATA_SPECIFIC		0x10000000
+#	define EV_UDATA_SPECIFIC		0x0100
 #	define DISPATCH_EV_DIRECT		(EV_UDATA_SPECIFIC|EV_DISPATCH)
 #	ifndef EV_VANISHED
 #	define EV_VANISHED				0x00200000

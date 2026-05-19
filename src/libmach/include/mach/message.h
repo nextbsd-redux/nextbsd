@@ -238,10 +238,16 @@ typedef struct {
 
 /*
  * MACH_MSGH_BITS_REPLY — flip remote/local for a reply message.
- * MIG-server demux generates reply headers with this.
+ * MIG-server demux generates reply headers with this. Guarded
+ * because some MIG-generated files (e.g. libdispatch's
+ * protocolServer.c, generated from protocol.defs) emit their own
+ * identical definition; without the guard we get -Werror,-Wmacro-
+ * redefined.
  */
+#ifndef MACH_MSGH_BITS_REPLY
 #define MACH_MSGH_BITS_REPLY(bits) \
 	(MACH_MSGH_BITS_LOCAL(bits) | (MACH_MSGH_BITS_REMOTE(bits) << 8))
+#endif
 
 /*
  * round_msg(x) — round x up to the next natural_t boundary. Used by
