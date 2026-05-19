@@ -983,7 +983,13 @@ _dispatch_ktrace_impl(uint32_t code, uint64_t a, uint64_t b,
 #define DISPATCH_USE_IMPORTANCE_ASSERTION 0
 #else
 #undef MACH_RCV_VOUCHER
-#define MACH_RCV_VOUCHER 0
+/*
+ * Task #39 Path B: U suffix so DISPATCH_MACH_RCV_OPTIONS' OR-chain
+ * stays type-clean under -Werror,-Wsign-conversion (mach.c:741).
+ * The non-voucher path zeros out MACH_RCV_VOUCHER's bit; the U just
+ * keeps the constant from being int.
+ */
+#define MACH_RCV_VOUCHER 0U
 #define VOUCHER_USE_PERSONA 0
 #endif // VOUCHER_USE_MACH_VOUCHER
 
