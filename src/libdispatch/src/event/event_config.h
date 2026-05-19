@@ -28,6 +28,17 @@
 #	define DISPATCH_EVENT_BACKEND_WINDOWS 0
 #elif __has_include(<sys/event.h>)
 #	include <sys/event.h>
+/*
+ * Task #39 Path B: when HAVE_MACH is on, pull in libmach's
+ * <mach/dispatch_kevent.h> here — it defines struct kevent_qos_s
+ * (with ext[4]) and EV_SET_QOS, both required by the DISPATCH_USE_
+ * KEVENT_QOS gate further down. The header must be included before
+ * that gate AND before event_internal.h's
+ * `typedef struct kevent_qos_s dispatch_kevent_s` (line 401).
+ */
+#	if HAVE_MACH && __has_include(<mach/dispatch_kevent.h>)
+#		include <mach/dispatch_kevent.h>
+#	endif
 #	define DISPATCH_EVENT_BACKEND_EPOLL 0
 #	define DISPATCH_EVENT_BACKEND_KEVENT 1
 #	define DISPATCH_EVENT_BACKEND_WINDOWS 0

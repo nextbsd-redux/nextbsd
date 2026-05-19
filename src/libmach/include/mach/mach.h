@@ -25,5 +25,6 @@
 #include <mach/mig_errors.h>		/* mig_reply_error_t, MIG_NO_REPLY */
 #include <mach/mach_error.h>		/* mach_error_string */
 #include <mach/task_policy.h>		/* TASK_BASE_QOS_POLICY, task_policy_set */
+#include <mach/dispatch_kevent.h>	/* EVFILT_MACHPORT (task #39 Path B) */
 
 #endif /* !_MACH_MACH_H_ */

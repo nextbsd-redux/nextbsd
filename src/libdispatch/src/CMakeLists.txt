@@ -188,6 +188,13 @@ if(LibRT_FOUND)
 endif()
 target_link_libraries(dispatch PRIVATE
   Threads::Threads)
+if(HAVE_MACH AND NOT APPLE)
+  # Task #39 Path B: on FreeBSD HAVE_MACH builds, libsystem_kernel
+  # supplies mach_msg, kevent_qos, struct kevent_qos_s, mach_task_self,
+  # the trap-mux op-4 bell, and the EVFILT_MACHPORT bridge wrapper
+  # (src/libmach/dispatch_kevent.c).
+  target_link_libraries(dispatch PRIVATE system_kernel)
+endif()
 target_link_libraries(dispatch PUBLIC
   BlocksRuntime::BlocksRuntime)
 if(WIN32)
