@@ -537,23 +537,10 @@ chroot "$WORK/rootfs" ldconfig -r | grep -q libxpc \
 echo "==> libxpc install verified"
 
 #
-# 3j. build test_libxpc — Phase H2 smoke check. Links libxpc.so so
-#     the in-process xpc_dictionary_* round-trip exercises the
-#     newly-installed library; rpath /usr/lib/system matches the
-#     pattern used by test_libdispatch and friends.
-#
-echo "==> building test_libxpc"
-cc -I"$WORK/rootfs/usr/include" \
-   -L"$WORK/rootfs/usr/lib/system" \
-   -Wl,-rpath,/usr/lib/system \
-   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/test_libxpc" \
-   "$ROOT/src/libxpc-tests/test_libxpc.c" \
-   -lxpc -ldispatch -lsystem_kernel -lpthread
-
-chroot "$WORK/rootfs" ldd /usr/tests/freebsd-launchd-mach/test_libxpc \
-    | grep -q "libxpc.so.* => /usr/lib/system/" \
-    || { echo "FAIL: ldd doesn't resolve test_libxpc to /usr/lib/system/libxpc.so"; exit 1; }
-echo "==> test_libxpc built + ldd verified"
+# 3j. test_libxpc build moved to AFTER step 3m (liblaunch) because
+# task #39 Path A migration left libxpc.so with unresolved
+# bootstrap_check_in / bootstrap_port refs that liblaunch.so resolves.
+# See the moved block below the liblaunch step.
 
 #
 # 3k. build bootstrap_cmds (src/bootstrap_cmds, vendored from Apple's
@@ -680,6 +667,27 @@ ls -lh "$WORK/rootfs/usr/lib/system/liblaunch.so" \
        "$WORK/rootfs/usr/lib/system/liblaunch.so.1"
 chroot "$WORK/rootfs" ldconfig -m /usr/lib /usr/lib/system
 echo "==> Phase I1b: liblaunch built + installed"
+
+#
+# 3j (moved here). build test_libxpc — Phase H2 smoke check. Links
+# libxpc.so so the in-process xpc_dictionary_* round-trip exercises
+# the newly-installed library. Moved past liblaunch build because
+# task #39 Path A made libxpc.so depend on liblaunch.so for the
+# bootstrap_check_in / bootstrap_port symbols; rtld needs liblaunch
+# in the dependency graph when libxpc is loaded.
+#
+echo "==> building test_libxpc (post-liblaunch)"
+cc -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/test_libxpc" \
+   "$ROOT/src/libxpc-tests/test_libxpc.c" \
+   -lxpc -llaunch -ldispatch -lsystem_kernel -lpthread
+
+chroot "$WORK/rootfs" ldd /usr/tests/freebsd-launchd-mach/test_libxpc \
+    | grep -q "libxpc.so.* => /usr/lib/system/" \
+    || { echo "FAIL: ldd doesn't resolve test_libxpc to /usr/lib/system/libxpc.so"; exit 1; }
+echo "==> test_libxpc built + ldd verified"
 
 #
 # 3n. Phase I1c — launchd daemon moved AFTER libCoreFoundation step
