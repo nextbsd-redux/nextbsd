@@ -65,6 +65,28 @@
 #define OS_ASSUME_NONNULL_END
 #endif
 
+/* Apple's <os/base.h> provides OS_NONNULL1 .. OS_NONNULL7 as
+ * shorthand for __attribute__((__nonnull__(N))). They appear in
+ * libdispatch's os/voucher_private.h. Define them inline here so
+ * non-Apple unix builds compile. */
+#if __has_attribute(__nonnull__)
+#define OS_NONNULL1 __attribute__((__nonnull__(1)))
+#define OS_NONNULL2 __attribute__((__nonnull__(2)))
+#define OS_NONNULL3 __attribute__((__nonnull__(3)))
+#define OS_NONNULL4 __attribute__((__nonnull__(4)))
+#define OS_NONNULL5 __attribute__((__nonnull__(5)))
+#define OS_NONNULL6 __attribute__((__nonnull__(6)))
+#define OS_NONNULL7 __attribute__((__nonnull__(7)))
+#else
+#define OS_NONNULL1
+#define OS_NONNULL2
+#define OS_NONNULL3
+#define OS_NONNULL4
+#define OS_NONNULL5
+#define OS_NONNULL6
+#define OS_NONNULL7
+#endif
+
 #if __has_builtin(__builtin_assume)
 #define OS_COMPILER_CAN_ASSUME(expr) __builtin_assume(expr)
 #else

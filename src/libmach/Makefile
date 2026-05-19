@@ -46,6 +46,7 @@ INCS=		include/mach/mach.h \
 		include/mach/vm_map.h \
 		include/mach/clock.h \
 		include/mach/clock_types.h \
+		include/mach/mach_vm.h \
 		include/mach/port.h \
 		include/mach/notify.h \
 		include/mach/mach_types.h \

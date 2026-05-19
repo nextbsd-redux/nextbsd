@@ -59,6 +59,13 @@ typedef mach_port_t	coalition_t;
 typedef mach_port_t	exception_handler_t;
 typedef exception_handler_t *exception_handler_array_t;
 
+/* Voucher subsystem object port. Apple's voucher API (mach_voucher,
+ * voucher_recipe, etc.) is not implemented here; the typedef exists
+ * so Apple-source consumers (libdispatch/os/voucher_private.h,
+ * launchd's voucher tracking) parse. */
+typedef mach_port_t	mach_voucher_t;
+typedef mach_port_t	ipc_voucher_t;
+
 /* Polymorphic / convenience names. */
 typedef mach_port_t	mach_port_poly_t;
 typedef integer_t	ledger_item_t;
