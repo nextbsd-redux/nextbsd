@@ -21,14 +21,20 @@
 LIB=		xpc
 SHLIB_MAJOR=	4
 
-# Vendored bootstrap protocol (libbootstrap.c) is compiled in directly
-# so libxpc.so resolves bootstrap_check_in / bootstrap_look_up without
-# needing a separate libbootstrap.so on disk. The same .c is also
-# compiled directly into bootstrap_server + the smoke tests; no symbol
-# conflict because those binaries don't link libxpc. A future cleanup
-# commit can promote libbootstrap to its own .so once its API is
-# stable, at which point libxpc and the daemon/tests all link -lbootstrap.
-.PATH:		${.CURDIR}/../bootstrap
+# Path A (task #39, 2026-05-19): bootstrap_check_in / _look_up /
+# bootstrap_port now come from liblaunch.so (the Apple MIG-based
+# version). Previously libxpc vendored src/bootstrap/libbootstrap.c
+# (our hand-rolled BST protocol), which baked BST `bootstrap_check_in`
+# into libxpc.so. Any xpc_connection_* path that called
+# bootstrap_check_in internally always resolved to that BST copy
+# regardless of link order — and launchd's MIG demux doesn't speak
+# BST, so a single launchctl call panicked init. Drop the vendoring;
+# link -llaunch dynamically.
+#
+# src/bootstrap/libbootstrap.c is still consumed (compiled directly)
+# by Phase G2 tests + bootstrap_server which DON'T link libxpc, so
+# no symbol collision and they keep their BST-on-the-wire test
+# infrastructure.
 
 SRCS=		xpc_dictionary.c \
 		xpc_misc.c \
@@ -38,8 +44,7 @@ SRCS=		xpc_dictionary.c \
 		subr_nvlist.c \
 		subr_nvpair.c \
 		msgio.c \
-		stubs.c \
-		libbootstrap.c
+		stubs.c
 
 # SYSROOT — points at the in-build rootfs so we can find the headers
 # libxpc consumes (mach/*, dispatch/*, servers/bootstrap.h) and the
@@ -74,6 +79,16 @@ LIBDIR=		${PREFIX}/lib/system
 # sbuf_* API xpc_misc.c uses for xpc_copy_description. -rpath lets
 # rtld find our libsystem dir at runtime.
 LDADD+=		-lsystem_kernel -ldispatch -lBlocksRuntime -lsbuf -lpthread
+# bootstrap_check_in / bootstrap_look_up / bootstrap_port are now
+# provided by liblaunch.so (Apple MIG protocol — see SRCS comment
+# above for the Path A migration). Cannot link -llaunch here without
+# reordering build.sh because liblaunch builds AFTER libxpc; use
+# --allow-shlib-undefined so libxpc.so accepts these symbols as
+# unresolved at build time. At runtime, every consumer that loads
+# libxpc.so also links liblaunch.so (the daemons via -llaunch -lxpc;
+# launchctl via -llaunch -lxpc), so the rtld dependency graph
+# provides them.
+LDADD+=		-Wl,--allow-shlib-undefined
 LDADD+=		-Wl,-rpath,${PREFIX}/lib/system
 
 PREFIX?=	/usr

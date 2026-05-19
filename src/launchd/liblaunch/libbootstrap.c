@@ -62,13 +62,47 @@ bs_trace_check(void)
 		fprintf(stderr, fmt "\n", ##__VA_ARGS__);		\
 } while (0)
 
+/*
+ * Process-global bootstrap port. Apple's dyld populates this from
+ * TASK_BOOTSTRAP_PORT before main() via libSystem. Our equivalent is
+ * the constructor below.
+ *
+ * Path A (task #39, 2026-05-19): definition moved here from
+ * src/bootstrap/libbootstrap.c. That file is now consumed only by
+ * Phase G2 test binaries (test_bootstrap, test_bootstrap_remote,
+ * bootstrap_server) which compile it directly and ship their own
+ * private bootstrap_port copy. libxpc.so no longer vendors that
+ * file — daemons get bootstrap_check_in / _look_up / bootstrap_port
+ * from THIS lib (liblaunch.so) via dynamic linkage, which means the
+ * Apple-MIG protocol (vproc_mig_check_in2) wires through to
+ * launchd's job_mig_check_in2 handler.
+ */
+mach_port_t bootstrap_port = MACH_PORT_NULL;
+
 void
 bootstrap_init(void)
 {
 	kern_return_t kr = task_get_special_port(task_self_trap(), TASK_BOOTSTRAP_PORT, &bootstrap_port);
 	if (kr != KERN_SUCCESS) {
-		abort();
+		/* Don't abort — Apple-canonical bootstrap_init() does, but
+		 * a daemon that pre-existed launchd (early-boot init scripts
+		 * spawned before launchd PID 1, etc.) can legitimately have
+		 * itk_bootstrap == IP_NULL. Leave bootstrap_port at
+		 * MACH_PORT_NULL and let callers handle it. */
+		bootstrap_port = MACH_PORT_NULL;
 	}
+}
+
+/* Run bootstrap_init at .so load time. Equivalent to dyld's behavior
+ * on Apple: bootstrap_port is populated before any user code runs.
+ * Pairs with mach.ko's fork eventhandler (kern/task.c
+ * mach_task_fork_bsport) which puts the parent's itk_bootstrap into
+ * the child task at fork time. */
+__attribute__((constructor))
+static void
+liblaunch_bootstrap_ctor(void)
+{
+	bootstrap_init();
 }
 
 kern_return_t
