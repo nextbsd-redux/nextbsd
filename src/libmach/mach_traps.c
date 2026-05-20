@@ -21,6 +21,7 @@
 
 #include <mach/mach_traps.h>
 #include <mach/mach_port.h>
+#include <mach/mach_vm.h>	/* mach_vm_allocate / mach_vm_deallocate */
 #include <mach/message.h>
 #include <mach/ndr.h>
 #include <mach/task_special_ports.h>
