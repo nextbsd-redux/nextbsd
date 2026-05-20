@@ -32,7 +32,11 @@ MIRROR="https://download.freebsd.org/ftp/releases/${ARCH}/${FREEBSD_VERSION}-REL
 
 mkdir -p "$WORK" "$OUT" "$DIST"
 
-# Clean any prior partial build (but keep distfiles cached)
+# Clean any prior partial build (but keep distfiles cached).
+# A prior run's $WORK/rootfs holds pkgbase base-system libs that carry
+# the schg (system-immutable) flag, so plain rm fails on re-runs; clear
+# file flags first. No-op on a fresh CI VM where $WORK is empty.
+chflags -R noschg "$WORK" 2>/dev/null || true
 rm -rf "$WORK"/* "$OUT"/*
 
 echo "==> build: FreeBSD $FREEBSD_VERSION ($ARCH), compress=$COMPRESS"
@@ -379,9 +383,9 @@ echo "==> mig install verified (early)"
 #     SONAME rename to libsystem_dispatch is a future cleanup; symlinks
 #     keep both -ldispatch and -lsystem_dispatch link lines working.
 #
-echo "==> rsyncing src/libdispatch to chroot"
+echo "==> copying src/libdispatch to chroot"
 mkdir -p "$WORK/rootfs/tmp/libdispatch"
-rsync -a --delete "$ROOT/src/libdispatch/" "$WORK/rootfs/tmp/libdispatch/"
+cp -a "$ROOT/src/libdispatch/." "$WORK/rootfs/tmp/libdispatch/"
 
 echo "==> building libdispatch in chroot"
 chroot "$WORK/rootfs" /bin/sh -ex <<'CHROOT_DISPATCH'
@@ -710,9 +714,9 @@ echo "==> test_libxpc built + ldd verified"
 #
 #     Plan: pkgdemon.github.io/freebsd-libicu-port-plan.html
 #
-echo "==> rsyncing src/swift-foundation-icu to chroot"
+echo "==> copying src/swift-foundation-icu to chroot"
 mkdir -p "$WORK/rootfs/tmp/swift-foundation-icu"
-rsync -a --delete "$ROOT/src/swift-foundation-icu/" "$WORK/rootfs/tmp/swift-foundation-icu/"
+cp -a "$ROOT/src/swift-foundation-icu/." "$WORK/rootfs/tmp/swift-foundation-icu/"
 
 echo "==> building swift-foundation-icu in chroot"
 chroot "$WORK/rootfs" /bin/sh -ex <<'CHROOT_ICU'
