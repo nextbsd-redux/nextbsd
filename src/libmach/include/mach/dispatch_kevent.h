@@ -70,6 +70,33 @@ extern "C" {
 #endif
 
 /*
+ * EV_UDATA_SPECIFIC — Apple kqueue flag meaning "match knotes by
+ * udata, allowing multiple registrations per (ident,filter)".
+ * FreeBSD's <sys/event.h> has no such flag.
+ *
+ * It MUST be defined here, not in libdispatch's event_config.h
+ * shim. event_config.h computes DISPATCH_HAVE_DIRECT_KNOTES from
+ * `defined(EV_UDATA_SPECIFIC) && EV_UDATA_SPECIFIC` near its top —
+ * BEFORE its own fallback `#define EV_UDATA_SPECIFIC` further down.
+ * This header is pulled in by event_config.h right after
+ * <sys/event.h>, i.e. before that check, so defining the flag here
+ * makes DISPATCH_HAVE_DIRECT_KNOTES evaluate to 1.
+ *
+ * Why that matters (task #39 Bug C): with DIRECT_KNOTES=0 every
+ * unote — including EVFILT_MACHPORT mach_recv sources — registers
+ * through libdispatch's MUXED path, which tags kevent udata with
+ * DISPATCH_KEVENT_MUXED_MARKER (low bit). But
+ * _dispatch_kevent_mach_msg_drain only handles DIRECT knotes — it
+ * casts udata straight to a unote pointer. A marked udata is then
+ * a misaligned pointer → SIGBUS. Apple always has DIRECT_KNOTES=1;
+ * libdispatch's mach paths are written for it. 0x0100 fits in the
+ * uint16 flags field and collides with no FreeBSD EV_* bit.
+ */
+#ifndef EV_UDATA_SPECIFIC
+#define EV_UDATA_SPECIFIC 0x0100
+#endif
+
+/*
  * kevent_qos_s — matches Apple's <sys/event.h> declaration exactly.
  *
  * Field order is wire-stable on macOS (XNU treats this as ABI).

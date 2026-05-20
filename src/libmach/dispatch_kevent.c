@@ -40,6 +40,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -350,6 +351,13 @@ machport_change_translate(int kq, const struct kevent_qos_s *src,
 	struct mach_kev_reg *r;
 	int err;
 
+	if (getenv("MACH_DEBUG_WRAP") != NULL) {
+		fprintf(stderr, "[WRAP] change kq=%d ident=0x%llx flags=0x%x "
+		    "fflags=0x%x udata=0x%llx\n", kq,
+		    (unsigned long long)src->ident, src->flags, src->fflags,
+		    (unsigned long long)src->udata);
+	}
+
 	pthread_mutex_lock(&g_reg_mtx);
 	if (src->flags & EV_DELETE) {
 		r = reg_find_locked(kq, src->ident);
@@ -466,8 +474,30 @@ backlog_recv_one_locked(struct mach_kev_reg *r)
 }
 
 /*
- * Drain the pipe's wakeup bytes and pull every available message
- * from the pset into the backlog. Caller holds g_reg_mtx.
+ * Drain the pipe's wakeup bytes, then populate the backlog. Caller
+ * holds g_reg_mtx.
+ *
+ * Two modes, selected by the registration's fflags (saved from the
+ * EVFILT_MACHPORT registration libdispatch issued):
+ *
+ *  - Message mode (fflags & MACH_RCV_MSG): the registration is a
+ *    dispatch_mach_t channel (_dispatch_mach_type_recv, dst_fflags =
+ *    DISPATCH_MACH_RCV_OPTIONS). libdispatch wants the message
+ *    delivered inline — drain the pset via mach_msg into the backlog
+ *    so each message becomes an EVFILT_MACHPORT event with ext[0].
+ *
+ *  - Notify mode (no MACH_RCV_MSG): the registration is a plain
+ *    DISPATCH_SOURCE_TYPE_MACH_RECV source (dst_fflags = 0,
+ *    dst_merge_msg = NULL). libdispatch wants only a readability
+ *    notification — its handler does the mach_msg itself. Do NOT
+ *    touch the pset; queue one bare backlog entry (hdr = NULL) so a
+ *    single zero-message EVFILT_MACHPORT event fires the handler.
+ *    Calling _dispatch_kevent_mach_msg_drain's NULL dst_merge_msg
+ *    for this source type was the SIGSEGV.
+ *
+ *    Bare entries coalesce: if the backlog tail is already a bare
+ *    entry, don't queue another — multiple wakeups collapse to one
+ *    pending readability event (correct edge-trigger semantics).
  */
 static void
 backlog_drain_locked(struct mach_kev_reg *r)
@@ -481,12 +511,30 @@ backlog_drain_locked(struct mach_kev_reg *r)
 		n = read(r->pipe_r, drain_buf, sizeof(drain_buf));
 	} while (n > 0);
 
-	/* Pull every available message into the backlog. */
-	for (;;) {
-		int rc = backlog_recv_one_locked(r);
-		if (rc != 0)
-			break;
+	if (r->fflags & MACH_RCV_MSG) {
+		/* Message mode — pull every available message. */
+		for (;;) {
+			int rc = backlog_recv_one_locked(r);
+			if (rc != 0)
+				break;
+		}
+		return;
 	}
+
+	/* Notify mode — queue one bare readability event, coalescing. */
+	if (r->backlog_tail != NULL && r->backlog_tail->hdr == NULL)
+		return;
+	struct mach_kev_msg *bm = calloc(1, sizeof(*bm));
+	if (bm == NULL)
+		return;
+	bm->hdr = NULL;
+	bm->size = 0;
+	bm->kr = MACH_MSG_SUCCESS;
+	if (r->backlog_tail != NULL)
+		r->backlog_tail->next = bm;
+	else
+		r->backlog_head = bm;
+	r->backlog_tail = bm;
 }
 
 /*
@@ -510,21 +558,35 @@ backlog_pop_locked(struct mach_kev_reg *r, struct kevent_qos_s *synth)
 	memset(synth, 0, sizeof(*synth));
 	synth->ident = r->ident;
 	synth->filter = EVFILT_MACHPORT;
-	synth->flags = r->flags | DISPATCH_EV_MSG_NEEDS_FREE;
+	synth->flags = r->flags;
 	synth->fflags = (uint32_t)bm->kr;
 	synth->data = r->data;
 	synth->udata = r->udata;
 	synth->qos = r->qos;
 	synth->xflags = r->xflags;
 	if (bm->kr == MACH_MSG_SUCCESS && bm->hdr != NULL) {
+		/* Message mode: carry the recv'd buffer inline. ext[1]
+		 * non-zero is what makes _dispatch_kevent_drain route to
+		 * _dispatch_kevent_mach_msg_drain; NEEDS_FREE tells
+		 * libdispatch to free() it afterwards. */
 		synth->ext[0] = (uint64_t)(uintptr_t)bm->hdr;
 		synth->ext[1] = bm->size;
+		synth->flags |= DISPATCH_EV_MSG_NEEDS_FREE;
 	} else if (bm->hdr != NULL) {
-		/* Errored or empty message — buffer is unused; free it
-		 * here rather than relying on libdispatch's
-		 * DISPATCH_EV_MSG_NEEDS_FREE path. */
+		/* Errored message — buffer unused; free it now. ext[]
+		 * stays zero so this delivers as a bare event. */
 		free(bm->hdr);
-		synth->flags &= ~(uint16_t)DISPATCH_EV_MSG_NEEDS_FREE;
+	}
+	/* bm->hdr == NULL → bare readability event: ext[0]/ext[1] stay
+	 * 0, no NEEDS_FREE. _dispatch_kevent_drain sees zero msg size
+	 * and routes to the normal merge path (dst_merge_evt). */
+	if (getenv("MACH_DEBUG_WRAP") != NULL) {
+		fprintf(stderr, "[WRAP] deliver ident=0x%llx udata=0x%llx "
+		    "fflags=0x%x ext0=0x%llx ext1=%llu\n",
+		    (unsigned long long)synth->ident,
+		    (unsigned long long)synth->udata, synth->fflags,
+		    (unsigned long long)synth->ext[0],
+		    (unsigned long long)synth->ext[1]);
 	}
 	free(bm);
 	return (1);
