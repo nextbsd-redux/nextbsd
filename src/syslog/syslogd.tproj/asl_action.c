@@ -1667,9 +1667,15 @@ static int
 _asl_out_process_message(asl_out_module_t *m, asl_msg_t *msg)
 {
 	asl_out_rule_t *r;
+	int _rn = 0;
 
-	if (m == NULL) return 1;
-	if (msg == NULL) return 1;
+	/* Phase J runtime debug: breadcrumb to stderr. */
+#define _AOP(...) do { fprintf(stderr, "[%d] aop: ", getpid()); \
+	fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } while (0)
+	_AOP("enter m=%p msg=%p", (void *)m, (void *)msg);
+
+	if (m == NULL) { _AOP("m == NULL, return"); return 1; }
+	if (msg == NULL) { _AOP("msg == NULL, return"); return 1; }
 
 	/* reset flag bit used for duplicate avoidance */
 	for (r = m->ruleset; r != NULL; r = r->next)
@@ -1679,9 +1685,11 @@ _asl_out_process_message(asl_out_module_t *m, asl_msg_t *msg)
 			if (r->dst != NULL) r->dst->flags &= MODULE_FLAG_CLEAR_LOGGED;
 		}
 	}
+	_AOP("reset loop done; entering rule loop");
 
 	for (r = m->ruleset; r != NULL; r = r->next)
 	{
+		_rn++;
 		if (r->query == NULL) continue;
 
 		/* ACTION_SET_FILE, ACTION_SET_PLIST, and ACTION_SET_PROF are handled independently  */
@@ -1694,16 +1702,15 @@ _asl_out_process_message(asl_out_module_t *m, asl_msg_t *msg)
 		 */
 		if (r->action == ACTION_CLAIM)
 		{
-			if ((asl_msg_cmp(r->query, msg) != 1)) return 0;
+			if ((asl_msg_cmp(r->query, msg) != 1)) { _AOP("rule %d ACTION_CLAIM no match, return", _rn); return 0; }
 		}
 
+		_AOP("rule %d action=%d before asl_msg_cmp", _rn, r->action);
 		int _cmp = asl_msg_cmp(r->query, msg);
-		{ FILE *_d = fopen("/tmp/asl_route.log", "a");
-		  if (_d) { fprintf(_d, "[%d] rule action=%d cmp=%d\n", getpid(), r->action, _cmp); fclose(_d); } }
+		_AOP("rule %d cmp=%d", _rn, _cmp);
 		if ((_cmp == 1))
 		{
-			{ FILE *_d = fopen("/tmp/asl_route.log", "a");
-			  if (_d) { fprintf(_d, "[%d]   MATCH action=%d -> dispatch\n", getpid(), r->action); fclose(_d); } }
+			_AOP("rule %d MATCH action=%d, dispatching", _rn, r->action);
 			if (r->action == ACTION_NONE) continue;
 			else if (r->action == ACTION_IGNORE) return 1;
 			else if (r->action == ACTION_SKIP) return 0;
@@ -1718,8 +1725,11 @@ _asl_out_process_message(asl_out_module_t *m, asl_msg_t *msg)
 			else if (r->action == ACTION_SET_PARAM) _act_out_set_param(m, r->options, true);
 			else if ((r->action == ACTION_ASL_FILE) || (r->action == ACTION_ASL_DIR)) _act_store(m, r, msg);
 			else if (r->action == ACTION_FILE) _act_file(m, r, msg);
+			_AOP("rule %d dispatch done", _rn);
 		}
 	}
+	_AOP("done");
+#undef _AOP
 
 	return 0;
 }
