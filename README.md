@@ -7,7 +7,7 @@ FreeBSD as an out-of-tree kernel module + userland stack. FreeBSD ELF
 for the binary format throughout. macOS compatibility is a bonus; the
 goal is a more modern FreeBSD.
 
-**Scope:** this ISO ships the *system-services* layer only &mdash;
+**Scope:** this image ships the *system-services* layer only &mdash;
 `mach.ko` + libsystem_kernel + libdispatch + libxpc + liblaunch +
 launchd + libCoreFoundation (swift-corelibs) + the daemons built on
 top. **GNUstep is not on this ISO** &mdash; it's the framework/app
@@ -388,20 +388,20 @@ Sub-phases:
   equivalent, per the
   [launchctl-corefoundation-spike](https://pkgdemon.github.io/freebsd-launchctl-corefoundation-spike.html).
 
-`launchd` is PID 1 on the running ISO. Boot path:
-`loader -> kernel -> /init.sh (unionfs pivot) -> stock init in
-chroot -> rc multi-user -> getty`, with launchd-managed daemons
-started via plists in `/System/Library/LaunchDaemons/`. The
-runtime checkpoint for actual PID-1 work (KeepAlive, WatchPaths,
-Sockets, &hellip;) is Phase I2, gated on Phase J landing
-green &mdash; see the
+`launchd` is PID 1 on the running image. Boot path:
+`loader -> kernel -> /sbin/launchd as PID 1`, directly &mdash; no
+cd9660/uzip, no unionfs, no `init.sh` pivot, no rc.d. The kernel
+mounts `/` read-only as always; launchd remounts it read-write
+itself (fsck + `mount -uw /`) before the daemon scan, then starts
+launchd-managed daemons via plists in
+`/System/Library/LaunchDaemons/`. See the
 [launchd-842 porting plan](https://pkgdemon.github.io/freebsd-launchd-842-porting-plan.html).
 
-**Phase J (launchd-managed daemons port)** &mdash; *in progress.*
+**Phase J (launchd-managed daemons port)** &mdash; *done.*
 Once launchd was PID 1, the next bring-up was the daemons it
 manages: Apple Syslog (ASL) + libnotify, plus `notifyd` /
-`syslogd` / `aslmanager`. All build green; runtime integration
-is in flight.
+`syslogd` / `aslmanager`. All build green and run under launchd
+on the booted image.
 
 - **J0 &mdash; vendor ASL + libnotify** &mdash; *done.* Apple's
   `Libnotify-279.40.4` and `syslog-450.10` imported into
@@ -444,11 +444,45 @@ is in flight.
      `job_mig_check_in2` sees `j=NULL` and returns
      `BOOTSTRAP_NO_MEMORY`.
 
-  Currently chasing the `NOTIFYD-PROC-FAIL` marker (`pgrep -x
-  notifyd` after launchctl). When `NOTIFYD-PROC-OK` lands and
-  `SYSLOGD-PROC-OK` follows, J closes out and the runtime
-  checkpoint moves to Phase I2 (KeepAlive, WatchPaths,
-  Sockets, &hellip;).
+  Path A is green: `notifyd` and `syslogd` both run under
+  launchd (`NOTIFYD-PROC-OK`, `SYSLOGD-PROC-OK`), and the
+  end-to-end ASL round-trip passes &mdash; `SYSLOG-RUN-OK`
+  confirms a message posted via `syslog(3)` to `/var/run/log`
+  is routed to `/var/log/system.log`.
+
+- **J5 &mdash; runtime validation** &mdash; *done.* The full
+  boot test is green in CI: launchd PID 1 &rarr; daemons &rarr;
+  login, with the Mach-IPC syslog round-trip verified. The
+  livecd (cd9660 + uzip + unionfs) was replaced with a bootable
+  GPT disk image (BIOS + UEFI, read-write UFS root), and
+  launchd PID 1 now remounts `/` read-write itself before the
+  daemon scan.
+
+  *Known debt (task #41):* syslogd's clean boot currently
+  depends on skipping kevent-backed libdispatch dispatch
+  sources &mdash; `dispatch_resume()` of a VNODE/SIGNAL/READ
+  source deadlocks in `mach_msg_send()` under the `HAVE_MACH`
+  libdispatch (the dispatch manager never drains its port).
+  syslogd works around it (VNODE file-monitors off,
+  `klog_in`/`udp_in` disabled, SIGHUP source dropped); fixing
+  libdispatch is tracked separately.
+
+**Phase K (hardware registry + IOKit userland)** &mdash; *in
+progress.* FreeBSD-devd and FreeBSD-devmatch are not in the
+runtime image, so hot-plug `kldload`, device-arrival and
+link-state events have no provider. `hwregd` &mdash; a native
+hardware-registry daemon with an IOKit-shaped Mach-RPC API
+&mdash; closes that gap, and Apple's `IOKitUser` will sit on top
+as a thin facade (re-aimed at `hwregd` rather than a kernel
+IOService graph &mdash; there is no IOKit kernel here). Phase 0
+&mdash; skeleton daemon, plist, build wire-up &mdash; has
+landed; the structured registry, the Mach-RPC query/watch API,
+the launchd `HardwareMatch` key, and the IOKitUser facade
+(`ioreg`) follow. `configd` + `IPConfiguration` &mdash; Apple's
+network-config stack, the proper replacement for the interim
+`dhclient` setup &mdash; come after the hwregd/IOKit block.
+Full design: the
+[hardware registry + IOKit porting plan](https://pkgdemon.github.io/freebsd-hardware-registry-iokit-plan.html).
 
 ## CoreFoundation for system services &mdash; swift-corelibs CF
 
@@ -545,9 +579,10 @@ To build locally on FreeBSD:
 sh build.sh
 ```
 
-Produces `out/livecd.iso`.
+Produces `out/disk.img.gz` &mdash; a gzip-compressed bootable GPT
+disk image (BIOS + UEFI, read-write UFS root).
 
 ## Releases
 
-Every push to `main` that passes build + boot test is published as the
-continuous release named `FreeBSD-15.0-amd64-mach-YYYYMMDD.iso`.
+Every push to `main` that passes build + boot test is published as a
+dated continuous release &mdash; the gzip-compressed GPT disk image.
