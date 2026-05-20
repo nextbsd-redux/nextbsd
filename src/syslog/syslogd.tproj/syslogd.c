@@ -439,6 +439,14 @@ write_boot_log(int first)
 	char buf[256];
 	struct utmpx utx;
 
+	/* Phase J runtime debug: breadcrumb write_boot_log sub-steps. */
+#define _WBL(tag) do { \
+	FILE *_wf = fopen("/tmp/syslogd_main.log", "a"); \
+	if (_wf) { fprintf(_wf, "[%d] wbl: " tag "\n", getpid()); fclose(_wf); } \
+} while(0)
+
+	_WBL("enter");
+
 	if (first == 0)
 	{
 		/* syslogd restart */
@@ -468,7 +476,9 @@ write_boot_log(int first)
 		gettimeofday(&utx.ut_tv, NULL);
 	}
 
+	_WBL("before pututxline");
 	pututxline(&utx);
+	_WBL("after pututxline");
 
 	msg = asl_msg_new(ASL_TYPE_MSG);
 	if (msg == NULL) return;
@@ -492,7 +502,10 @@ write_boot_log(int first)
 	snprintf(buf, sizeof(buf), "%u%s", (unsigned int)utx.ut_tv.tv_usec, (utx.ut_tv.tv_usec == 0) ? "" : "000");
 	asl_msg_set_key_val(msg, ASL_KEY_TIME_NSEC, buf);
 
+	_WBL("before process_message");
 	process_message(msg, SOURCE_INTERNAL);
+	_WBL("after process_message");
+#undef _WBL
 }
 
 int

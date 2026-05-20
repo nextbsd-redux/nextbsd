@@ -417,6 +417,8 @@ else
     cat /tmp/launch_config.log 2>/dev/null || echo "(no launch_config.log)"
     echo "--- bsd_in recv log (/tmp/bsd_in_recv.log) ---"
     cat /tmp/bsd_in_recv.log 2>/dev/null || echo "(no bsd_in_recv.log)"
+    echo "--- process_message log (/tmp/process_msg.log) ---"
+    cat /tmp/process_msg.log 2>/dev/null || echo "(no process_msg.log)"
     echo "=== end diagnostics ==="
     echo "SYSLOG-RUN-FAIL: marker not found in /var/log/system.log"
     exit 1
