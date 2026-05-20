@@ -1,22 +1,24 @@
 /*
  * hwregd.c — freebsd-launchd-mach hardware registry daemon.
  *
- * Phase 0 / iter 2: match-and-report. Reads kernel device events
+ * Phase 0 / iter 2b: hot-plug autoload. Reads kernel device events
  * from /dev/devctl; on a `?` (nomatch) event — a device the kernel
- * probed but had no driver for — hwregd matches the device against
- * the merged /boot/kernel + /boot/modules linker.hints and logs
- * which module claims it.
+ * probed but had no driver for — hwregd matches it against the
+ * merged /boot/kernel + /boot/modules linker.hints and, for a
+ * genuine hot-plug event, kldload(2)s the module that claims it.
+ * Closes the FreeBSD-devd hot-plug-autoload gap (commit 88694f0).
  *
- * iter 2 stops at logging — it does NOT kldload. Auto-loading
- * drivers this early under PID-1 launchd hangs the boot: an
- * iter-2-with-kldload build wedged the CI boot test at the login
- * prompt (a matched module disrupting the console or doing a
- * heavyweight attach mid-boot). Logging the match first makes the
- * CI boot log show exactly which modules a real boot would load;
- * turning that into a real kldload(2) — gated so console/display
- * drivers can't disrupt the boot — is iter 2b. Closing the
- * FreeBSD-devd hot-plug-autoload gap (commit 88694f0) is iter 2b's
- * goal.
+ * Backlog vs. live: at startup the kernel hands hwregd a backlog of
+ * `?` events buffered from early boot. kldload'ing for those wedged
+ * the CI boot test — a matched driver's attach() then runs mid-boot
+ * under kernel locks (the CI VM's offender was the ICH SMBus
+ * controller -> ichsmb). So hwregd kldloads only for *live* events:
+ * for HWREGD_SETTLE_SECONDS after startup it match-and-logs every
+ * nomatch, then flips to live mode and kldloads on each subsequent
+ * nomatch. The window is time-based, not "until devctl goes quiet" —
+ * a chronically noisy devctl (e.g. a flaky drive spamming CAM error
+ * events) must not pin hwregd in backlog mode forever. Boot-time
+ * drivers are the loader's job; hot-plug is hwregd's.
  *
  * The hints-matching machinery — read_linker_hints / search_hints
  * and the pnpinfo helpers (getint, getstr, pnpval_as_int,
@@ -67,6 +69,14 @@
 #define READ_BUF_SIZE		(64 * 1024)
 #define EVENT_LINE_MAX		1024
 
+/*
+ * Boot-settle window. hwregd match-and-logs nomatch events for this
+ * many seconds after startup, then flips to live mode and kldloads.
+ * Long enough to outlast the kernel's boot-time device probe so an
+ * autoload never runs a driver attach mid-boot.
+ */
+#define HWREGD_SETTLE_SECONDS	60
+
 static volatile sig_atomic_t got_term = 0;
 
 /*
@@ -84,6 +94,13 @@ static const bool unbound_flag = false;
 /* linker.hints, loaded once at startup. NULL if unavailable. */
 static void *hints;
 static void *hints_end;
+
+/*
+ * false for the first HWREGD_SETTLE_SECONDS of uptime (the boot-
+ * settle window). hwregd kldloads only in live mode; matches during
+ * the window are logged but not loaded — see act_on_match().
+ */
+static bool live_mode = false;
 
 static void
 on_signal(int sig)
@@ -116,19 +133,33 @@ xlog(const char *fmt, ...)
 }
 
 /*
- * Report a module that linker.hints says claims a nomatched device.
- * iter 2 only logs — it does NOT kldload (see the file header: an
- * early-boot kldload wedges the boot test). "kernel" is the pseudo-
- * module for built-in drivers, nothing to load. iter 2b turns this
- * into a gated kldload(2).
+ * Act on a module that linker.hints says claims a nomatched device.
+ * "kernel" is the pseudo-module for built-in drivers — nothing to
+ * load. In live mode (hot-plug) the module is kldload(2)ed; during
+ * the boot backlog it is only logged — kldloading mid-boot wedges
+ * the boot (a driver attach runs under kernel locks; see the file
+ * header). EEXIST (already loaded) is a normal, expected outcome.
  */
 static void
-note_match(const char *mod)
+act_on_match(const char *mod)
 {
 	if (mod == NULL || mod[0] == '\0' || strcmp(mod, "kernel") == 0)
 		return;
-	xlog("match: module '%s' claims this device (kldload deferred to iter 2b)",
-	    mod);
+
+	if (!live_mode) {
+		xlog("match: module '%s' claims this device "
+		    "(boot backlog — not loaded)", mod);
+		return;
+	}
+
+	if (kldload(mod) < 0) {
+		if (errno == EEXIST)
+			xlog("kldload(%s): already loaded", mod);
+		else
+			xlog("kldload(%s) failed: %s", mod, strerror(errno));
+	} else {
+		xlog("kldload(%s): loaded", mod);
+	}
 }
 
 /* --- linker.hints reader (ported from devmatch.c) ----------------- */
@@ -473,7 +504,7 @@ search_hints(const char *bus, const char *pnpinfo)
 						cp++;
 				} while (cp && *cp);
 				if (!dump_flag && !notme) {
-					note_match(lastmod);
+					act_on_match(lastmod);
 					found++;
 				}
 			}
@@ -601,7 +632,7 @@ main(int argc, char **argv)
 	(void)argc;
 	(void)argv;
 
-	xlog("starting (Phase 0 iter 2: match-and-report)");
+	xlog("starting (Phase 0 iter 2b: hot-plug autoload)");
 
 	/* Clean shutdown on SIGTERM / SIGINT (launchd sends SIGTERM). */
 	{
@@ -619,8 +650,21 @@ main(int argc, char **argv)
 	xlog("opened %s fd=%d", DEVCTL_PATH, fd);
 
 	static char buf[READ_BUF_SIZE];
+	time_t started = time(NULL);
 
 	while (!got_term) {
+		/*
+		 * Flip to live mode once the boot-settle window has elapsed.
+		 * Checked every loop iteration (events or the 5s select
+		 * timeout), so it fires within 5s of the deadline.
+		 */
+		if (!live_mode &&
+		    time(NULL) - started >= HWREGD_SETTLE_SECONDS) {
+			live_mode = true;
+			xlog("boot-settle window (%ds) elapsed — live mode: "
+			    "hot-plug autoload enabled", HWREGD_SETTLE_SECONDS);
+		}
+
 		fd_set rfds;
 		FD_ZERO(&rfds);
 		FD_SET(fd, &rfds);
@@ -634,7 +678,7 @@ main(int argc, char **argv)
 			break;
 		}
 		if (r == 0)
-			continue;	/* idle tick */
+			continue;	/* idle tick — settle check is at loop top */
 		if (FD_ISSET(fd, &rfds)) {
 			ssize_t n = drain_devctl(fd, buf, sizeof(buf));
 			if (n < 0)
