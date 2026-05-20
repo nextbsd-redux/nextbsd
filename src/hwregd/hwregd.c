@@ -1,12 +1,19 @@
 /*
  * hwregd.c — freebsd-launchd-mach hardware registry daemon.
  *
- * Phase 0 / iter 2b: hot-plug autoload. Reads kernel device events
- * from /dev/devctl; on a `?` (nomatch) event — a device the kernel
- * probed but had no driver for — hwregd matches it against the
- * merged /boot/kernel + /boot/modules linker.hints and, for a
- * genuine hot-plug event, kldload(2)s the module that claims it.
- * Closes the FreeBSD-devd hot-plug-autoload gap (commit 88694f0).
+ * Phase 0 / iter 3a: structured event parsing. Reads kernel device
+ * events from /dev/devctl and parses each by class:
+ *   `?` nomatch -> match against the merged /boot/kernel +
+ *                  /boot/modules linker.hints; for a genuine
+ *                  hot-plug event, kldload(2) the driver that claims
+ *                  it (closes the FreeBSD-devd autoload gap, commit
+ *                  88694f0).
+ *   `+` attach  -> a device and its driver came up.
+ *   `-` detach  -> a device went away.
+ *   `!` notify  -> a subsystem state change (link up/down, ACPI
+ *                  lid, CAM errors, ...).
+ * iter 3a logs the parsed events; iter 3b publishes them over a
+ * Mach-RPC pub/sub bus for launchd HardwareMatch and other clients.
  *
  * Backlog vs. live: at startup the kernel hands hwregd a backlog of
  * `?` events buffered from early boot. kldload'ing for those wedged
@@ -569,6 +576,87 @@ handle_nomatch(char *nomatch)
 	search_hints(bus, pnpinfo);
 }
 
+/*
+ * Extract a space-delimited key=value field from a devctl event line.
+ * Matches `key` only at a token boundary (start of line or after a
+ * space) and immediately followed by '='; copies the value up to the
+ * next space. Good enough for the simple system/subsystem/type
+ * fields of a !notify line. Returns true if found.
+ */
+static bool
+event_kv(const char *line, const char *key, char *out, size_t outsz)
+{
+	size_t keylen = strlen(key);
+	const char *p = line;
+
+	out[0] = '\0';
+	while ((p = strstr(p, key)) != NULL) {
+		if ((p == line || p[-1] == ' ') && p[keylen] == '=') {
+			const char *v = p + keylen + 1;
+			size_t i = 0;
+
+			while (v[i] != '\0' && v[i] != ' ' && i < outsz - 1) {
+				out[i] = v[i];
+				i++;
+			}
+			out[i] = '\0';
+			return true;
+		}
+		p += keylen;
+	}
+	return false;
+}
+
+/*
+ * Handle a `!` (notify) devctl line:
+ * "!system=X subsystem=Y type=Z ...". Kernel subsystems post these
+ * for state changes — IFNET link up/down, ACPI lid/AC, CAM errors.
+ */
+static void
+handle_notify(const char *line)
+{
+	char system[64], subsystem[128], type[64];
+	const char *kv = line + 1;		/* skip the leading '!' */
+
+	event_kv(kv, "system", system, sizeof(system));
+	event_kv(kv, "subsystem", subsystem, sizeof(subsystem));
+	event_kv(kv, "type", type, sizeof(type));
+	xlog("notify: system=%s subsystem=%s type=%s",
+	    system[0] ? system : "?", subsystem[0] ? subsystem : "?",
+	    type[0] ? type : "?");
+}
+
+/*
+ * Handle a `+` (attach) or `-` (detach) devctl line:
+ * "+devname at <location> on <parent>". Mutates the line buffer
+ * (NUL-terminates the devname and location in place).
+ */
+static void
+handle_attach_detach(char *line, const char *kind)
+{
+	char *dev = line + 1;			/* past the +/- sign */
+	char *at = strstr(dev, " at ");
+	if (at == NULL) {
+		xlog("%s: malformed '%s'", kind, line);
+		return;
+	}
+	*at = '\0';				/* dev now NUL-terminated */
+
+	char *loc = at + 4;			/* "<location> on <parent>" */
+	const char *parent = "";
+	char *on = NULL, *scan = loc;
+	while ((scan = strstr(scan, " on ")) != NULL) {
+		on = scan;			/* last " on " wins */
+		scan += 4;
+	}
+	if (on != NULL) {
+		*on = '\0';
+		parent = on + 4;
+	}
+	xlog("%s: dev=%s parent=%s loc=[%s]", kind,
+	    dev[0] ? dev : "?", parent[0] ? parent : "?", loc);
+}
+
 /* --- devctl event loop -------------------------------------------- */
 
 static int
@@ -582,8 +670,8 @@ open_devctl(void)
 
 /*
  * Read whatever's pending on /dev/devctl, split into '\n'-terminated
- * lines, log each, and dispatch `?` (nomatch) lines to the autoload
- * path. Returns bytes read, -1 on a fatal read error, 0 on retry/EOF.
+ * lines, and dispatch each to the parser for its event class.
+ * Returns bytes read, -1 on a fatal read error, 0 on retry/EOF.
  */
 static ssize_t
 drain_devctl(int fd, char *buf, size_t bufsz)
@@ -607,16 +695,20 @@ drain_devctl(int fd, char *buf, size_t bufsz)
 		char *nl = memchr(p, '\n', (size_t)(end - p));
 		size_t linelen = nl ? (size_t)(nl - p) : (size_t)(end - p);
 		if (linelen > 0) {
-			xlog("event[%c]: %.*s", p[0], (int)linelen, p);
-			if (p[0] == '?') {
-				/* Mutable, NUL-terminated copy: the parser
-				 * writes into the line. */
-				char line[EVENT_LINE_MAX];
-				size_t cl = linelen < sizeof(line) - 1 ?
-				    linelen : sizeof(line) - 1;
-				memcpy(line, p, cl);
-				line[cl] = '\0';
-				handle_nomatch(line);
+			/* Mutable, NUL-terminated copy — the parsers write
+			 * into the line. */
+			char line[EVENT_LINE_MAX];
+			size_t cl = linelen < sizeof(line) - 1 ?
+			    linelen : sizeof(line) - 1;
+			memcpy(line, p, cl);
+			line[cl] = '\0';
+
+			switch (line[0]) {
+			case '?': handle_nomatch(line); break;
+			case '+': handle_attach_detach(line, "attach"); break;
+			case '-': handle_attach_detach(line, "detach"); break;
+			case '!': handle_notify(line); break;
+			default:  xlog("event: %s", line); break;
 			}
 		}
 		if (!nl)
@@ -632,7 +724,7 @@ main(int argc, char **argv)
 	(void)argc;
 	(void)argv;
 
-	xlog("starting (Phase 0 iter 2b: hot-plug autoload)");
+	xlog("starting (Phase 0 iter 3a: structured event parsing)");
 
 	/* Clean shutdown on SIGTERM / SIGINT (launchd sends SIGTERM). */
 	{
