@@ -440,10 +440,7 @@ write_boot_log(int first)
 	struct utmpx utx;
 
 	/* Phase J runtime debug: breadcrumb write_boot_log sub-steps. */
-#define _WBL(tag) do { \
-	FILE *_wf = fopen("/tmp/syslogd_main.log", "a"); \
-	if (_wf) { fprintf(_wf, "[%d] wbl: " tag "\n", getpid()); fclose(_wf); } \
-} while(0)
+#define _WBL(tag) fprintf(stderr, "[%d] wbl: " tag "\n", getpid())
 
 	_WBL("enter");
 
@@ -521,12 +518,11 @@ main(int argc, const char *argv[])
 	time_t now;
 	int first_syslogd_start = 1;
 
-	/* Phase J runtime debug: breadcrumb startup. Defined up-front so
-	 * the pre-init_globals path is traced too. */
-#define _PJ_BC(tag) do { \
-	FILE *_pjf = fopen("/tmp/syslogd_main.log", "a"); \
-	if (_pjf) { fprintf(_pjf, "[%d] " tag "\n", getpid()); fclose(_pjf); } \
-} while(0)
+	/* Phase J runtime debug: breadcrumb startup to stderr (captured
+	 * reliably at /var/log/syslogd.stderr; /tmp is unreliable — a
+	 * fresh fs is mounted over it mid-boot). Defined up-front so the
+	 * pre-init_globals path is traced too. */
+#define _PJ_BC(tag) fprintf(stderr, "[%d] PJ: " tag "\n", getpid())
 
 #if TARGET_OS_SIMULATOR
 	const char *sim_log_dir = getenv("SIMULATOR_LOG_ROOT");

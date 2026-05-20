@@ -478,9 +478,8 @@ db_save_message(asl_msg_t *msg)
 
 	/* Phase J runtime debug: breadcrumb db_save_message sub-steps. */
 #define _DBSM(...) do { \
-	FILE *_df = fopen("/tmp/process_msg.log", "a"); \
-	if (_df) { fprintf(_df, "[%d] dbsm: ", getpid()); \
-	    fprintf(_df, __VA_ARGS__); fprintf(_df, "\n"); fclose(_df); } \
+	fprintf(stderr, "[%d] dbsm: ", getpid()); \
+	fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); \
 } while(0)
 
 	_DBSM("enter");
