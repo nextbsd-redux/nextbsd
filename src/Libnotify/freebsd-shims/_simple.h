@@ -13,4 +13,9 @@
 
 typedef struct _SIMPLE_STRING_s *_SIMPLE_STRING;
 
+/* notify_client.c logs via _simple_asl_log() on its crash-time path.
+ * Declared here so the call site is prototyped; the implementation
+ * is a stub in notifyd_stubs.c (linked into each daemon/CLI). */
+void _simple_asl_log(int level, const char *facility, const char *message);
+
 #endif /* _FREEBSD_SHIM__SIMPLE_H_ */

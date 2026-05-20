@@ -106,6 +106,36 @@ xpc_event_publisher_set_throttling(void *publisher, uint64_t interval)
 	(void)publisher; (void)interval;
 }
 
+/* xpc_event_publisher_fire_noboost — deliver an XPC event to a
+ * publisher with no priority boost. libnotify's NOTIFY_TYPE_XPC_EVENT
+ * delivery path calls this. Stub reports success (0) so the caller
+ * doesn't enter the ENOBUFS back-pressure / simulated-crash branch. */
+int
+xpc_event_publisher_fire_noboost(void *publisher, void *token, void *payload)
+{
+	(void)publisher; (void)token; (void)payload;
+	return 0;
+}
+
+/* xpc_get_service_identifier_for_token — resolve an audit token to a
+ * registered XPC service identifier. Stub reports "not found" (0) so
+ * libnotify skips the simulate_crash() diagnostic. */
+int
+xpc_get_service_identifier_for_token(void *token, char *out)
+{
+	(void)token; (void)out;
+	return 0;
+}
+
+/* _simple_asl_log — Apple _simple-library malloc-free ASL logger.
+ * notify_client.c uses it on its crash-time logging path. Stub: drop
+ * the message (no recursive ASL dependency during a crash). */
+void
+_simple_asl_log(int level, const char *facility, const char *message)
+{
+	(void)level; (void)facility; (void)message;
+}
+
 /* OS_BUG_INTERNAL — a "soft bug" marker function from os/log. */
 void
 OS_BUG_INTERNAL(const char *fmt, ...)
