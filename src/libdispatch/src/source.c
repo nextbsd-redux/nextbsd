@@ -896,8 +896,24 @@ _dispatch_source_invoke(dispatch_source_t ds, dispatch_invoke_context_t dic,
 
 #if DISPATCH_EVENT_BACKEND_KEVENT
 	if (flags & DISPATCH_INVOKE_WORKLOOP_DRAIN) {
-		dispatch_workloop_t dwl = (dispatch_workloop_t)_dispatch_get_wlh();
-		dispatch_timer_heap_t dth = dwl->dwl_timer_heap;
+		/*
+		 * Task #39: _dispatch_get_wlh() can be DISPATCH_WLH_ANON
+		 * (~0x3ul = -4), not a real workloop. On FreeBSD
+		 * (DISPATCH_USE_KEVENT_WORKLOOP=0) a dispatch_workloop is
+		 * drained under WLH_ANON — there is no kernel-backed
+		 * workloop wlh — yet the source is still invoked with
+		 * DISPATCH_INVOKE_WORKLOOP_DRAIN set. The original code
+		 * cast the wlh straight to dispatch_workloop_t and
+		 * dereferenced dwl->dwl_timer_heap, faulting on the -4
+		 * sentinel (notifyd SIGSEGV right after startup).
+		 * _dispatch_wlh_to_workloop() returns NULL for ANON / any
+		 * non-workloop wlh; the per-workloop timer heap only
+		 * exists for a real workloop, so skipping the drain when
+		 * there isn't one is correct.
+		 */
+		dispatch_workloop_t dwl =
+				_dispatch_wlh_to_workloop(_dispatch_get_wlh());
+		dispatch_timer_heap_t dth = dwl ? dwl->dwl_timer_heap : NULL;
 		if (dth && dth[0].dth_dirty_bits) {
 			_dispatch_event_loop_drain_timers(dwl->dwl_timer_heap,
 					DISPATCH_TIMER_WLH_COUNT);
