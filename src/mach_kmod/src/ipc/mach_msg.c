@@ -341,7 +341,17 @@ mach_msg_receive(
 	ipc_space_t space = current_space();
 	vm_map_t map = current_map();
 	ipc_object_t object;
-	ipc_kmsg_t kmsg;
+	/*
+	 * Task #39: initialize to IKM_NULL. ipc_mqueue_receive leaves
+	 * *kmsg untouched on several error returns (TOO_LARGE without
+	 * MACH_RCV_LARGE, SCATTER_SMALL) — it set thread->ith_kmsg to
+	 * IKM_NULL and returned the size only. The error-recovery path
+	 * below then passed this stack-garbage pointer to
+	 * msg_receive_error, which dereferenced it and page-faulted the
+	 * kernel. A defined IKM_NULL lets the recovery path skip
+	 * msg_receive_error safely.
+	 */
+	ipc_kmsg_t kmsg = IKM_NULL;
 	mach_port_seqno_t seqno;
 	mach_msg_return_t mr;
 	mach_msg_body_t *slist;
@@ -421,8 +431,16 @@ mach_msg_receive(
 			FREE_SCATTER_LIST(slist, slist_size, slist_rt);
 			return mr;
 		}
-		if (mr == MACH_RCV_TOO_LARGE || mr == MACH_RCV_SCATTER_SMALL
-		    ) {
+		if ((mr == MACH_RCV_TOO_LARGE || mr == MACH_RCV_SCATTER_SMALL)
+		    && kmsg != IKM_NULL) {
+			/*
+			 * Task #39: only attempt the error-reply build when
+			 * ipc_mqueue_receive actually handed us a kmsg.
+			 * On TOO_LARGE without MACH_RCV_LARGE it leaves
+			 * kmsg == IKM_NULL — the caller just gets the error
+			 * code, msg is untouched (matches the userland
+			 * contract: check the return, don't read the buffer).
+			 */
 			if (msg_receive_error(kmsg, msg, option, seqno, space)
 			    == MACH_RCV_INVALID_DATA)
 				mr = MACH_RCV_INVALID_DATA;
@@ -435,7 +453,19 @@ mach_msg_receive(
 			round_msg(kmsg->ikm_header->msgh_size));
 	if (option & MACH_RCV_TRAILER_MASK) {
 		trailer->msgh_seqno = seqno;
-		trailer->msgh_context = kmsg->ikm_header->msgh_remote_port->ip_context;
+		/*
+		 * Task #39: messages sent without a reply port (fire-
+		 * and-forget) arrive with msgh_remote_port == IP_NULL.
+		 * The unconditional ->ip_context deref page-faulted
+		 * the kernel the moment any such message landed on a
+		 * watched port/pset — observed with test_movesend and
+		 * libdispatch's MACH_RECV smoke test. Guard the NULL
+		 * case; context 0 is correct when no port is present.
+		 */
+		trailer->msgh_context =
+		    (kmsg->ikm_header->msgh_remote_port != IP_NULL)
+		    ? kmsg->ikm_header->msgh_remote_port->ip_context
+		    : 0;
 		trailer->msgh_trailer_size = REQUESTED_TRAILER_SIZE(option);
 	}
 
@@ -613,8 +643,14 @@ mach_msg_receive_results_error(thread_t thread)
 					(void *) (msg_addr + offsetof(mach_msg_header_t, msgh_size)),
 					sizeof(mach_msg_size_t)))
 			mr = MACH_RCV_INVALID_DATA;
-	} else {
-
+	} else if (kmsg != IKM_NULL) {
+		/*
+		 * Task #39: same guard as mach_msg_receive — only build
+		 * the error reply when a kmsg is actually present.
+		 * thread->ith_kmsg is IKM_NULL on the size-only return
+		 * paths; dereferencing it in msg_receive_error
+		 * page-faults the kernel.
+		 */
 		if (msg_receive_error(kmsg, msg, option, seqno, space)
 			== MACH_RCV_INVALID_DATA)
 			mr = MACH_RCV_INVALID_DATA;
