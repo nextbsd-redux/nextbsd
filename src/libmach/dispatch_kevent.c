@@ -89,6 +89,24 @@ extern int __sys_kevent(int kq, const struct kevent *changelist, int nchanges,
  *   - pipe_r/pipe_w: a self-pipe; read end registered on the user's
  *     kq as EVFILT_READ, write end stored in mach.ko via op 4.
  */
+/*
+ * Per-message backlog entry. Multiple Mach messages can arrive
+ * between userland wakes (burst). The wrapper drains the pset to
+ * MACH_RCV_TIMED_OUT on each EVFILT_READ wake and queues messages
+ * here; subsequent kevent_qos calls deliver from the backlog before
+ * touching the kernel. Without this, messages 2..N of a burst sit
+ * in the pset until the (N+1)'th arrival — observable as dropped /
+ * delayed events for configd boot storms, IOKit power-state
+ * transitions, and other multi-message bursts. See task #39
+ * Path B design notes.
+ */
+struct mach_kev_msg {
+	struct mach_kev_msg	*next;
+	mach_msg_header_t	*hdr;	/* received message buffer or NULL */
+	mach_msg_size_t		 size;	/* buffer size */
+	mach_msg_return_t	 kr;	/* mach_msg return code */
+};
+
 struct mach_kev_reg {
 	struct mach_kev_reg	*next;
 	int			 kq;		/* user's kq fd */
@@ -102,6 +120,11 @@ struct mach_kev_reg {
 	uint32_t		 qos;		/* original kev->qos */
 	uint32_t		 xflags;	/* original kev->xflags */
 	int64_t			 data;		/* original kev->data */
+	/* Burst-handling backlog: messages drained from the pset but
+	 * not yet delivered to the caller because they ran out of
+	 * eventlist slots. */
+	struct mach_kev_msg	*backlog_head;
+	struct mach_kev_msg	*backlog_tail;
 };
 
 static struct mach_kev_reg	*g_reg_head;
@@ -247,6 +270,16 @@ reg_destroy(struct mach_kev_reg *r)
 {
 	if (r == NULL)
 		return;
+	/* Drain any queued backlog messages — buffers were malloc'd by
+	 * backlog_recv_one_locked and never delivered. */
+	while (r->backlog_head != NULL) {
+		struct mach_kev_msg *bm = r->backlog_head;
+		r->backlog_head = bm->next;
+		if (bm->hdr != NULL)
+			free(bm->hdr);
+		free(bm);
+	}
+	r->backlog_tail = NULL;
 	if (r->pipe_r != -1)
 		(void)close(r->pipe_r);
 	if (r->pipe_w != -1)
@@ -319,29 +352,27 @@ machport_change_translate(int kq, const struct kevent_qos_s *src,
 }
 
 /*
- * Drain the wakeup byte and mach_msg-receive on the pset, filling
- * the synthesized event's ext[0..1] and fflags.
+ * Receive one Mach message from the pset (non-blocking) and push the
+ * result onto the registration's backlog. Returns 0 if a message was
+ * queued, 1 if the pset is empty (MACH_RCV_TIMED_OUT — stop draining),
+ * or -1 on hard error (caller stops draining).
+ *
+ * Caller MUST hold g_reg_mtx. mach_msg with MACH_RCV_TIMEOUT=0 is
+ * effectively non-blocking — short syscall — so holding the mutex
+ * across it is acceptable.
  */
-static void
-machport_recv_into(struct mach_kev_reg *r, struct kevent_qos_s *synth)
+static int
+backlog_recv_one_locked(struct mach_kev_reg *r)
 {
-	char drain_buf[16];
+	struct mach_kev_msg *bm;
 	mach_msg_header_t *hdr;
 	mach_msg_return_t kr;
 	mach_msg_size_t bufsize = MACH_RCV_INITIAL_BUFSIZE;
 
-	(void)read(r->pipe_r, drain_buf, sizeof(drain_buf));
-
 	hdr = malloc(bufsize);
-	if (hdr == NULL) {
-		memset(synth, 0, sizeof(*synth));
-		synth->ident = r->ident;
-		synth->filter = EVFILT_MACHPORT;
-		synth->flags = r->flags;
-		synth->fflags = (uint32_t)MACH_RCV_BODY_ERROR;
-		synth->udata = r->udata;
-		return;
-	}
+	if (hdr == NULL)
+		return (-1);
+
 	kr = mach_msg(hdr, MACH_RCV_MSG | MACH_RCV_LARGE | MACH_RCV_TIMEOUT,
 	    0, bufsize, r->wrap_pset, 0, MACH_PORT_NULL);
 
@@ -349,27 +380,108 @@ machport_recv_into(struct mach_kev_reg *r, struct kevent_qos_s *synth)
 		mach_msg_size_t need = hdr->msgh_size;
 		free(hdr);
 		hdr = malloc(need);
-		if (hdr != NULL) {
-			bufsize = need;
-			kr = mach_msg(hdr,
-			    MACH_RCV_MSG | MACH_RCV_LARGE | MACH_RCV_TIMEOUT,
-			    0, bufsize, r->wrap_pset, 0, MACH_PORT_NULL);
-		}
+		if (hdr == NULL)
+			return (-1);
+		bufsize = need;
+		kr = mach_msg(hdr,
+		    MACH_RCV_MSG | MACH_RCV_LARGE | MACH_RCV_TIMEOUT,
+		    0, bufsize, r->wrap_pset, 0, MACH_PORT_NULL);
 	}
+
+	if (kr == MACH_RCV_TIMED_OUT) {
+		/* Pset empty — done draining. */
+		free(hdr);
+		return (1);
+	}
+
+	bm = calloc(1, sizeof(*bm));
+	if (bm == NULL) {
+		free(hdr);
+		return (-1);
+	}
+	bm->hdr = hdr;
+	bm->size = bufsize;
+	bm->kr = kr;
+
+	if (r->backlog_tail != NULL) {
+		r->backlog_tail->next = bm;
+	} else {
+		r->backlog_head = bm;
+	}
+	r->backlog_tail = bm;
+
+	/* On non-success non-timeout errors, stop draining — the kr is
+	 * recorded in this backlog entry; the next call would just hit
+	 * the same error. */
+	if (kr != MACH_MSG_SUCCESS)
+		return (1);
+
+	return (0);
+}
+
+/*
+ * Drain the pipe's wakeup bytes and pull every available message
+ * from the pset into the backlog. Caller holds g_reg_mtx.
+ */
+static void
+backlog_drain_locked(struct mach_kev_reg *r)
+{
+	char drain_buf[64];
+	ssize_t n;
+
+	/* Drain any pending wakeup bytes (multiple signals can fire
+	 * before userland reads). Non-blocking pipe — EAGAIN means done. */
+	do {
+		n = read(r->pipe_r, drain_buf, sizeof(drain_buf));
+	} while (n > 0);
+
+	/* Pull every available message into the backlog. */
+	for (;;) {
+		int rc = backlog_recv_one_locked(r);
+		if (rc != 0)
+			break;
+	}
+}
+
+/*
+ * Pop one message from the registration's backlog and synthesize an
+ * Apple-shape EVFILT_MACHPORT event into `synth`. Returns 1 if an
+ * event was synthesized, 0 if the backlog was empty. Caller holds
+ * g_reg_mtx.
+ */
+static int
+backlog_pop_locked(struct mach_kev_reg *r, struct kevent_qos_s *synth)
+{
+	struct mach_kev_msg *bm = r->backlog_head;
+
+	if (bm == NULL)
+		return (0);
+
+	r->backlog_head = bm->next;
+	if (r->backlog_head == NULL)
+		r->backlog_tail = NULL;
 
 	memset(synth, 0, sizeof(*synth));
 	synth->ident = r->ident;
 	synth->filter = EVFILT_MACHPORT;
 	synth->flags = r->flags | DISPATCH_EV_MSG_NEEDS_FREE;
-	synth->fflags = (uint32_t)kr;
+	synth->fflags = (uint32_t)bm->kr;
 	synth->data = r->data;
 	synth->udata = r->udata;
 	synth->qos = r->qos;
 	synth->xflags = r->xflags;
-	if (kr == MACH_MSG_SUCCESS && hdr != NULL) {
-		synth->ext[0] = (uint64_t)(uintptr_t)hdr;
-		synth->ext[1] = bufsize;
+	if (bm->kr == MACH_MSG_SUCCESS && bm->hdr != NULL) {
+		synth->ext[0] = (uint64_t)(uintptr_t)bm->hdr;
+		synth->ext[1] = bm->size;
+	} else if (bm->hdr != NULL) {
+		/* Errored or empty message — buffer is unused; free it
+		 * here rather than relying on libdispatch's
+		 * DISPATCH_EV_MSG_NEEDS_FREE path. */
+		free(bm->hdr);
+		synth->flags &= ~(uint16_t)DISPATCH_EV_MSG_NEEDS_FREE;
 	}
+	free(bm);
+	return (1);
 }
 
 /*
@@ -402,6 +514,34 @@ qos_to_kev(const struct kevent_qos_s *in, struct kevent *out)
 
 #define KEVENT_STACK_SLOTS 16
 
+/*
+ * Drain previously-queued backlog into the eventlist, up to `nevents`
+ * slots for this kq. Returns the number of slots filled.
+ *
+ * Called BEFORE __sys_kevent so a burst that arrived between
+ * kevent_qos calls still drains in subsequent calls without
+ * requiring a fresh pipe-bell wake.
+ */
+static int
+drain_backlog_to_eventlist(int kq, struct kevent_qos_s *eventlist,
+    int nevents)
+{
+	struct mach_kev_reg *r;
+	int filled = 0;
+
+	pthread_mutex_lock(&g_reg_mtx);
+	for (r = g_reg_head; r != NULL && filled < nevents; r = r->next) {
+		if (r->kq != kq)
+			continue;
+		while (r->backlog_head != NULL && filled < nevents) {
+			if (backlog_pop_locked(r, &eventlist[filled]))
+				filled++;
+		}
+	}
+	pthread_mutex_unlock(&g_reg_mtx);
+	return (filled);
+}
+
 int
 kevent_qos(int kq, const struct kevent_qos_s *changelist, int nchanges,
     struct kevent_qos_s *eventlist, int nevents,
@@ -414,6 +554,7 @@ kevent_qos(int kq, const struct kevent_qos_s *changelist, int nchanges,
 	struct timespec zero_ts = { 0, 0 };
 	const struct timespec *timeout = NULL;
 	int saved_errno = 0;
+	int filled = 0;
 	int i, n, rc;
 
 	(void)data_out;
@@ -446,8 +587,29 @@ kevent_qos(int kq, const struct kevent_qos_s *changelist, int nchanges,
 		}
 	}
 
-	if (nevents > KEVENT_STACK_SLOTS) {
-		scratch_ev = calloc((size_t)nevents, sizeof(*scratch_ev));
+	/*
+	 * Phase 1: drain pre-existing backlog into the caller's
+	 * eventlist. A burst may have left messages queued from a
+	 * prior call.
+	 */
+	if (nevents > 0)
+		filled = drain_backlog_to_eventlist(kq, eventlist, nevents);
+
+	/*
+	 * Phase 2: invoke the real syscall. Always required if
+	 * nchanges > 0 (must register the changes); also if we still
+	 * have eventlist budget AFTER backlog drain. If backlog
+	 * already filled the budget AND no changes, skip the syscall.
+	 */
+	if (nchanges == 0 && filled == nevents) {
+		if (saved_errno != 0)
+			errno = saved_errno;
+		return (filled);
+	}
+
+	int ev_budget = nevents - filled;
+	if (ev_budget > KEVENT_STACK_SLOTS) {
+		scratch_ev = calloc((size_t)ev_budget, sizeof(*scratch_ev));
 		if (scratch_ev == NULL) {
 			if (nchanges > KEVENT_STACK_SLOTS)
 				free(scratch_ch);
@@ -457,40 +619,57 @@ kevent_qos(int kq, const struct kevent_qos_s *changelist, int nchanges,
 	}
 
 	rc = __sys_kevent(kq, nchanges > 0 ? scratch_ch : NULL, nchanges,
-	    nevents > 0 ? scratch_ev : NULL, nevents, timeout);
+	    ev_budget > 0 ? scratch_ev : NULL, ev_budget, timeout);
 
 	if (nchanges > KEVENT_STACK_SLOTS)
 		free(scratch_ch);
 
 	if (rc < 0) {
-		if (nevents > KEVENT_STACK_SLOTS)
+		if (ev_budget > KEVENT_STACK_SLOTS)
 			free(scratch_ev);
+		if (filled > 0) {
+			/* Backlog already produced events; report those
+			 * and swallow the syscall error this round. */
+			return (filled);
+		}
 		if (saved_errno != 0)
 			errno = saved_errno;
 		return (rc);
 	}
 
+	/*
+	 * Phase 3: process returned events. For tracked pipes, drain
+	 * the pset into the backlog and pop as many as fit.
+	 */
 	n = rc;
-	for (i = 0; i < n; i++) {
+	for (i = 0; i < n && filled < nevents; i++) {
 		struct mach_kev_reg *r = NULL;
 
 		if (scratch_ev[i].filter == EVFILT_READ) {
 			pthread_mutex_lock(&g_reg_mtx);
 			r = reg_find_by_pipe_r_locked(
 			    (int)scratch_ev[i].ident);
+			if (r != NULL) {
+				backlog_drain_locked(r);
+				while (r->backlog_head != NULL &&
+				    filled < nevents) {
+					if (backlog_pop_locked(r,
+					    &eventlist[filled]))
+						filled++;
+				}
+			}
 			pthread_mutex_unlock(&g_reg_mtx);
 		}
-		if (r != NULL) {
-			machport_recv_into(r, &eventlist[i]);
-		} else {
-			kev_to_qos(&scratch_ev[i], &eventlist[i]);
+		if (r == NULL) {
+			kev_to_qos(&scratch_ev[i], &eventlist[filled]);
+			filled++;
 		}
 	}
 
-	if (nevents > KEVENT_STACK_SLOTS)
+	if (ev_budget > KEVENT_STACK_SLOTS)
 		free(scratch_ev);
 
 	if (saved_errno != 0)
 		errno = saved_errno;
-	return (rc);
+	return (filled);
 }
