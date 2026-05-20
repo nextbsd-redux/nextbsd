@@ -1122,6 +1122,18 @@ fi
 # rc.local needs to be executable
 [ -f "$WORK/rootfs/etc/rc.local" ] && chmod +x "$WORK/rootfs/etc/rc.local"
 
+# launchd is PID 1 and bypasses rc.d, so the BSD.var.dist mtree that
+# normally populates /var at boot never runs. Bake the runtime
+# hierarchy into the rootfs now: login's pam_xdg needs /var/run,
+# syslogd needs /var/run (/var/run/log) + /var/log (/var/log/asl), pid
+# files need /var/run, etc.
+echo "==> creating /var runtime hierarchy in rootfs"
+mkdir -p "$WORK/rootfs/var/run" "$WORK/rootfs/var/log" \
+         "$WORK/rootfs/var/db" "$WORK/rootfs/var/tmp" \
+         "$WORK/rootfs/var/empty" "$WORK/rootfs/var/spool"
+chmod 1777 "$WORK/rootfs/var/tmp"
+chmod 0555 "$WORK/rootfs/var/empty"
+
 #
 # 6. assemble the bootable GPT disk image (BIOS + UEFI, rw UFS root).
 #    No /etc/fstab heredoc — overlays/etc/fstab carries the real root
