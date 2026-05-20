@@ -891,7 +891,30 @@ init_launch_config(const char *name)
 {
 	kern_return_t kr;
 
-	kr = bootstrap_check_in(bootstrap_port, name, &global.server_port);
+	/*
+	 * Task #39 diag: NOTIFYD_STANDALONE lets notifyd run without a
+	 * bootstrap server (launchd). Instead of bootstrap_check_in it
+	 * allocates its own receive right. This is purely a test hook
+	 * for exercising notifyd's startup + Mach event loop on a bare
+	 * FreeBSD box (no PID-1 launchd) — same spirit as the CP1-CP10
+	 * checkpoints. Not used in the normal launchd-managed path.
+	 */
+	if (getenv("NOTIFYD_STANDALONE") != NULL)
+	{
+		kr = mach_port_allocate(mach_task_self(),
+				MACH_PORT_RIGHT_RECEIVE, &global.server_port);
+		if (kr == KERN_SUCCESS)
+			(void)mach_port_insert_right(mach_task_self(),
+					global.server_port, global.server_port,
+					MACH_MSG_TYPE_MAKE_SEND);
+		fprintf(stderr, "%d NOTIFYD_STANDALONE: self-port kr=%d "
+				"port=0x%x\n", getpid(), kr, global.server_port);
+	}
+	else
+	{
+		kr = bootstrap_check_in(bootstrap_port, name,
+				&global.server_port);
+	}
 
 	if(kr != KERN_SUCCESS)
 	{
