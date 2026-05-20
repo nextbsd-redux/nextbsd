@@ -1,25 +1,31 @@
 /*
  * hwregd.c — freebsd-launchd-mach hardware registry daemon.
  *
- * Phase 0 / iter 2: kldload-on-nomatch. Reads kernel device events
+ * Phase 0 / iter 2: match-and-report. Reads kernel device events
  * from /dev/devctl; on a `?` (nomatch) event — a device the kernel
  * probed but had no driver for — hwregd matches the device against
- * /boot/kernel/linker.hints and kldload(2)s the module that claims
- * it. This closes the gap left by FreeBSD-devd's removal (commit
- * 88694f0): without it a hot-plugged device that needs a not-yet-
- * loaded driver silently fails to attach.
+ * the merged /boot/kernel + /boot/modules linker.hints and logs
+ * which module claims it.
+ *
+ * iter 2 stops at logging — it does NOT kldload. Auto-loading
+ * drivers this early under PID-1 launchd hangs the boot: an
+ * iter-2-with-kldload build wedged the CI boot test at the login
+ * prompt (a matched module disrupting the console or doing a
+ * heavyweight attach mid-boot). Logging the match first makes the
+ * CI boot log show exactly which modules a real boot would load;
+ * turning that into a real kldload(2) — gated so console/display
+ * drivers can't disrupt the boot — is iter 2b. Closing the
+ * FreeBSD-devd hot-plug-autoload gap (commit 88694f0) is iter 2b's
+ * goal.
  *
  * The hints-matching machinery — read_linker_hints / search_hints
  * and the pnpinfo helpers (getint, getstr, pnpval_as_int,
  * pnpval_as_str, quoted_strcpy) — is ported near-verbatim from
- * FreeBSD's sbin/devmatch/devmatch.c (BSD-2-Clause, Netflix 2017).
- * Two substantive changes for daemon use:
- *   - a match triggers kldload(2) instead of being printed;
- *   - fatal err()/errx()/warnx() become log-and-return so the
- *     daemon survives a missing or corrupt hints file.
- * devmatch's libdevinfo "attached once" filter is intentionally
- * dropped — every `?` event is a live "no driver" report, so iter 2
- * simply kldloads on each one (the plan's Phase 0 contract).
+ * FreeBSD's sbin/devmatch/devmatch.c (BSD-2-Clause, Netflix 2017);
+ * fatal err()/errx()/warnx() become log-and-return so the daemon
+ * survives a missing or corrupt hints file, and a match is logged
+ * rather than printed. devmatch's libdevinfo "attached once" filter
+ * is dropped — every `?` event is a live "no driver" report.
  *
  * Eventual scope: Phase 0 also publishes +attach/-detach/!notify
  * events over a simple Mach-RPC pub/sub; Phase 1 builds the full
@@ -110,24 +116,19 @@ xlog(const char *fmt, ...)
 }
 
 /*
- * kldload a module matched against a device's pnpinfo. "kernel" is
- * the pseudo-module for built-in drivers — nothing to load.
- * EEXIST (already loaded) is a normal, expected outcome.
+ * Report a module that linker.hints says claims a nomatched device.
+ * iter 2 only logs — it does NOT kldload (see the file header: an
+ * early-boot kldload wedges the boot test). "kernel" is the pseudo-
+ * module for built-in drivers, nothing to load. iter 2b turns this
+ * into a gated kldload(2).
  */
 static void
-try_kldload(const char *mod)
+note_match(const char *mod)
 {
 	if (mod == NULL || mod[0] == '\0' || strcmp(mod, "kernel") == 0)
 		return;
-
-	if (kldload(mod) < 0) {
-		if (errno == EEXIST)
-			xlog("kldload(%s): already loaded", mod);
-		else
-			xlog("kldload(%s) failed: %s", mod, strerror(errno));
-	} else {
-		xlog("kldload(%s): loaded", mod);
-	}
+	xlog("match: module '%s' claims this device (kldload deferred to iter 2b)",
+	    mod);
 }
 
 /* --- linker.hints reader (ported from devmatch.c) ----------------- */
@@ -472,7 +473,7 @@ search_hints(const char *bus, const char *pnpinfo)
 						cp++;
 				} while (cp && *cp);
 				if (!dump_flag && !notme) {
-					try_kldload(lastmod);
+					note_match(lastmod);
 					found++;
 				}
 			}
@@ -600,7 +601,7 @@ main(int argc, char **argv)
 	(void)argc;
 	(void)argv;
 
-	xlog("starting (Phase 0 iter 2: kldload-on-nomatch)");
+	xlog("starting (Phase 0 iter 2: match-and-report)");
 
 	/* Clean shutdown on SIGTERM / SIGINT (launchd sends SIGTERM). */
 	{
