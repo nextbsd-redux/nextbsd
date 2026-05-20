@@ -910,27 +910,18 @@ _text_file_open(asl_out_rule_t *r)
 
 		if (f_data->fd < 0) return -1;
 
-		_ARL("_text_file_open: before dispatch_source_create VNODE");
-		f_data->monitor = dispatch_source_create(DISPATCH_SOURCE_TYPE_VNODE, f_data->fd, DISPATCH_VNODE_DELETE, asl_action_queue);
-		_ARL("_text_file_open: after dispatch_source_create monitor=%p", (void *)f_data->monitor);
-		if (f_data->monitor != NULL)
-		{
-			int ffd = f_data->fd;
-
-			dispatch_source_set_event_handler(f_data->monitor, ^{
-				asldebug("dispatch_source DISPATCH_VNODE_DELETE fd %d\n", ffd);
-				_act_dst_close(r, DST_CLOSE_DELETED);
-			});
-
-			dispatch_source_set_cancel_handler(f_data->monitor, ^{
-				asldebug("cancel/close file fd %d\n", ffd);
-				close(ffd);
-			});
-
-			_ARL("_text_file_open: before dispatch_resume");
-			dispatch_resume(f_data->monitor);
-			_ARL("_text_file_open: after dispatch_resume");
-		}
+		/*
+		 * FreeBSD port: skip the DISPATCH_SOURCE_TYPE_VNODE delete
+		 * monitor.  dispatch_resume() of a kevent-backed dispatch
+		 * source deadlocks here -- it blocks forever in mach_msg_send()
+		 * because libdispatch's HAVE_MACH source-registration path is
+		 * not yet working (task #41).  The monitor only reopens the
+		 * file if it is unlinked out from under syslogd; without it a
+		 * deleted system.log is picked up on the next syslogd restart.
+		 * _text_file_close already handles a NULL monitor by closing
+		 * the fd directly.
+		 */
+		f_data->monitor = NULL;
 	}
 
 	_ARL("_text_file_open: return 0");

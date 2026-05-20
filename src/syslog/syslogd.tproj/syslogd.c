@@ -80,7 +80,14 @@ struct global_s global;
 int klog_in_init(void);
 int klog_in_reset(void);
 int klog_in_close(void);
-static int activate_klog_in = 1;
+/*
+ * FreeBSD port: klog_in / udp_in ingest via a DISPATCH_SOURCE_TYPE_READ
+ * source whose dispatch_resume() deadlocks in mach_msg_send() under this
+ * port's libdispatch (task #41).  Disabled until libdispatch's HAVE_MACH
+ * source-registration path works; bsd_in (UNIX-socket input, pthread
+ * based) is unaffected and remains the live local-syslog ingest path.
+ */
+static int activate_klog_in = 0;
 
 /* bsd_in: FreeBSD-only UNIX-socket input (Phase J3). */
 int bsd_in_init(void);
@@ -93,7 +100,8 @@ static int activate_bsd_in = 1;
 int udp_in_init(void);
 int udp_in_reset(void);
 int udp_in_close(void);
-static int activate_udp_in = 1;
+/* Disabled -- see activate_klog_in note above (task #41). */
+static int activate_udp_in = 0;
 
 /* Output Modules */
 int bsd_out_init(void);
@@ -791,21 +799,13 @@ main(int argc, const char *argv[])
 		free(notify_key);
 	}
 
-	/* SIGHUP resets all modules */
-	global.sig_hup_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, (uintptr_t)SIGHUP, 0, dispatch_get_main_queue());
-	dispatch_source_set_event_handler(global.sig_hup_src, ^{
-		dispatch_async(global.work_queue, ^{
-			int i;
-
-			asldebug("SIGHUP reset\n");
-			for (i = 0; i < global.module_count; i++)
-			{
-				if (global.module[i]->enabled != 0) global.module[i]->reset();
-			}
-		});
-	});
-
-	dispatch_resume(global.sig_hup_src);
+	/*
+	 * SIGHUP would reset all modules via a DISPATCH_SOURCE_TYPE_SIGNAL
+	 * source, but dispatch_resume() of a kevent-backed source deadlocks
+	 * in mach_msg_send() under this port's libdispatch (task #41).
+	 * Leave SIGHUP as SIG_IGN (set earlier in main); config reload via
+	 * SIGHUP is unavailable until libdispatch source registration works.
+	 */
 
 	/* register for DB notification (posted by dbserver) for performance */
 	notify_register_plain(kNotifyASLDBUpdate, &asl_db_token);
