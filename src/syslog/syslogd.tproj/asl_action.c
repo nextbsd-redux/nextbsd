@@ -1737,6 +1737,9 @@ asl_out_message(asl_msg_t *msg, int64_t msize)
 	 * The asl_action_queue's purpose is to serialize file writes,
 	 * but with one inline caller per recv socket that's already the
 	 * case. (Tracked: task #41 — proper libdispatch fix.) */
+	/* Phase J runtime debug: breadcrumb to stderr. */
+#define _AOM(tag) fprintf(stderr, "[%d] aom: " tag "\n", getpid())
+	_AOM("enter");
 	{
 		int ignore = 0;
 		const char *p;
@@ -1749,6 +1752,7 @@ asl_out_message(asl_msg_t *msg, int64_t msize)
 		if (p == NULL)
 		{
 			if ((action_asl_store_count == 0) || (asl_check_option(msg, ASL_OPT_STORE) == 1)) _send_to_asl_store(msg);
+			_AOM("after _send_to_asl_store");
 
 			ignore = _asl_out_process_message(m, msg);
 			if (ignore == 0)
@@ -1771,11 +1775,18 @@ asl_out_message(asl_msg_t *msg, int64_t msize)
 			}
 		}
 
+		_AOM("after module processing");
+
 		p = asl_msg_get_val_for_key(msg, ASL_KEY_FINAL_NOTIFICATION);
 		if (p != NULL) asl_msg_set_key_val(msg, ASL_KEY_FREE_NOTE, p);
 
 #if !TARGET_OS_SIMULATOR
-		if (global.bsd_out_enabled) bsd_out_message(msg, msize);
+		if (global.bsd_out_enabled)
+		{
+			_AOM("before bsd_out_message");
+			bsd_out_message(msg, msize);
+			_AOM("after bsd_out_message");
+		}
 		else OSAtomicAdd64(-1ll * msize, &global.memory_size);
 #else
 		OSAtomicAdd64(-1ll * msize, &global.memory_size);
@@ -1783,13 +1794,17 @@ asl_out_message(asl_msg_t *msg, int64_t msize)
 
 		asl_msg_release(msg);
 		OSAtomicDecrement32(&global.asl_queue_count);
+		_AOM("after asl_msg_release");
 
 		if ((now - sweep_time) >= IDLE_CLOSE)
 		{
+			_AOM("before _asl_action_close_idle_files");
 			_asl_action_close_idle_files(IDLE_CLOSE);
 			sweep_time = now;
 		}
 	}
+	_AOM("done");
+#undef _AOM
 }
 
 static char *
