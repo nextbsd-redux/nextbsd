@@ -476,6 +476,15 @@ db_save_message(asl_msg_t *msg)
 	static dispatch_source_t timer_src;
 	static dispatch_once_t once;
 
+	/* Phase J runtime debug: breadcrumb db_save_message sub-steps. */
+#define _DBSM(...) do { \
+	FILE *_df = fopen("/tmp/process_msg.log", "a"); \
+	if (_df) { fprintf(_df, "[%d] dbsm: ", getpid()); \
+	    fprintf(_df, __VA_ARGS__); fprintf(_df, "\n"); fclose(_df); } \
+} while(0)
+
+	_DBSM("enter");
+
 	dispatch_once(&once, ^{
 		timer_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
 		dispatch_source_set_event_handler(timer_src, ^{
@@ -486,18 +495,27 @@ db_save_message(asl_msg_t *msg)
 		armed = 0;
 	});
 
+	_DBSM("after dispatch_once");
+
 	send_to_direct_watchers((asl_msg_t *)msg);
+
+	_DBSM("after send_to_direct_watchers");
 
 	dbtype = global.dbtype;
 
 	if (asl_check_option(msg, ASL_OPT_DB_FILE))   dbtype |= DB_TYPE_FILE;
 	if (asl_check_option(msg, ASL_OPT_DB_MEMORY)) dbtype |= DB_TYPE_MEMORY;
 
+	_DBSM("before db_asl_open dbtype=%u", dbtype);
 	db_asl_open(dbtype);
+	_DBSM("after db_asl_open file_db=%p memory_db=%p",
+	    (void *)global.file_db, (void *)global.memory_db);
 
 	if (dbtype & DB_TYPE_FILE)
 	{
+		_DBSM("before asl_store_save");
 		status = asl_store_save(global.file_db, msg);
+		_DBSM("after asl_store_save status=%u", status);
 		if (status != ASL_STATUS_OK)
 		{
 			/* write failed - reopen & retry */
@@ -550,12 +568,15 @@ db_save_message(asl_msg_t *msg)
 		}
 	}
 
+	_DBSM("before timer arm (armed=%d)", armed);
 	if (armed == 0)
 	{
 		armed = 1;
 		dispatch_source_set_timer(timer_src, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 2), DISPATCH_TIME_FOREVER, 0);
 		dispatch_resume(timer_src);
 	}
+	_DBSM("done");
+#undef _DBSM
 }
 
 void
