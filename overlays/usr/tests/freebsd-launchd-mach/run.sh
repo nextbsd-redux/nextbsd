@@ -411,6 +411,12 @@ else
     ls -la /var/run/log /var/run/logpriv 2>/dev/null || echo "(no /var/run/log)"
     echo "--- /var/log/asl ---"
     ls -la /var/log/asl/ 2>/dev/null || echo "(no asl store)"
+    echo "--- syslogd main checkpoints (/tmp/syslogd_main.log) ---"
+    cat /tmp/syslogd_main.log 2>/dev/null || echo "(no syslogd_main.log)"
+    echo "--- launch_config checkpoints (/tmp/launch_config.log) ---"
+    cat /tmp/launch_config.log 2>/dev/null || echo "(no launch_config.log)"
+    echo "--- bsd_in recv log (/tmp/bsd_in_recv.log) ---"
+    cat /tmp/bsd_in_recv.log 2>/dev/null || echo "(no bsd_in_recv.log)"
     echo "=== end diagnostics ==="
     echo "SYSLOG-RUN-FAIL: marker not found in /var/log/system.log"
     exit 1
