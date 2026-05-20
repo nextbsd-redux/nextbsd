@@ -331,11 +331,23 @@ asl_trigger_aslmanager(void)
 	if (connection == NULL) return -1;
 
 	xpc_object_t request = xpc_dictionary_create(NULL, NULL, 0);
-	if (request == NULL) return -1;
+	if (request == NULL)
+	{
+		xpc_release(connection);
+		return -1;
+	}
 
-	xpc_object_t reply = xpc_connection_send_message_with_reply_sync(connection, request);
+	/*
+	 * FreeBSD port: fire-and-forget. Upstream used
+	 * xpc_connection_send_message_with_reply_sync(), which blocks
+	 * forever here — nothing answers ASLMANAGER_SERVICE_NAME on this
+	 * port and our libxpc does not synthesize a dead-service reply,
+	 * so syslogd hung in db_asl_open() before binding /var/run/log.
+	 * The trigger only needs to nudge aslmanager; the reply was an
+	 * empty ack, so an async send is functionally equivalent.
+	 */
+	xpc_connection_send_message(connection, request);
 
-	if (reply != NULL) xpc_release(reply);
 	xpc_release(request);
 	xpc_release(connection);
 	return 0;
