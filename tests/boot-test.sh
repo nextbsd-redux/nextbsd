@@ -1,15 +1,14 @@
 #!/bin/sh
-# boot-test.sh — boot the live ISO in qemu, log in as root, and run the
-# Phase B smoke check (kldstat -m mach) interactively. Replaces the old
-# rc.local-emitted MACH-SMOKE marker so the test logic lives in CI
-# rather than baked into the ISO.
+# boot-test.sh — boot the disk image in qemu (UEFI), log in as root, and
+# run the on-image test suite interactively. CI boots UEFI via OVMF;
+# BIOS boot of the same dual-boot image is verified separately.
 
 set -eu
 
-ISO=${1:?usage: boot-test.sh path/to/livecd.iso}
+IMG=${1:?usage: boot-test.sh path/to/disk.img[.gz]}
 
-if [ ! -f "$ISO" ]; then
-    echo "ERROR: $ISO not found"
+if [ ! -f "$IMG" ]; then
+    echo "ERROR: $IMG not found"
     exit 1
 fi
 
@@ -17,8 +16,19 @@ mkdir -p tests
 LOG=tests/boot.log
 EXP=tests/boot.exp
 
-echo "==> boot test: $ISO"
-ls -lh "$ISO"
+# Accept the published gzip-compressed image — decompress to a raw .img
+# that qemu can boot as a disk.
+case "$IMG" in
+*.gz)
+    RAW=tests/disk.img
+    echo "==> decompressing $IMG -> $RAW"
+    gunzip -c "$IMG" > "$RAW"
+    IMG=$RAW
+    ;;
+esac
+
+echo "==> boot test: $IMG"
+ls -lh "$IMG"
 
 # Pick acceleration. KVM if available; TCG fallback.
 if [ -e /dev/kvm ]; then
@@ -55,7 +65,7 @@ set timeout 480
 log_file -a tests/boot.log
 log_user 1
 
-set iso [lindex $argv 0]
+set img [lindex $argv 0]
 set accel_flags [split $env(ACCEL_FLAGS) " "]
 
 eval spawn qemu-system-x86_64 \
@@ -63,7 +73,7 @@ eval spawn qemu-system-x86_64 \
     -machine q35 \
     -bios $env(OVMF) \
     $accel_flags \
-    -cdrom $iso -boot d \
+    -drive file=$img,format=raw,if=virtio \
     -display none -serial stdio \
     -no-reboot
 
@@ -128,8 +138,8 @@ expect "OK "
 send "boot\r"
 
 # Stage 1: wait for the getty "login:" prompt. Boot is complete:
-# loader preloaded mach.ko -> kernel up -> /init.sh as PID 1 -> unionfs
-# pivot -> stock init in chroot -> rc multi-user sequence -> getty.
+# loader preloaded mach.ko -> kernel mounts the freebsd-ufs root rw ->
+# /sbin/launchd as PID 1 -> getty plist -> login.
 expect {
     timeout {
         puts "\nFAIL: 'login:' prompt not seen within 8 minutes"
@@ -373,5 +383,5 @@ wait
 exit 0
 EOF
 
-expect "$EXP" "$ISO"
+expect "$EXP" "$IMG"
 echo "==> boot-test PASSED"

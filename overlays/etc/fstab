@@ -1,0 +1,7 @@
+# freebsd-launchd-mach — read-write UFS root on a GPT disk image.
+#
+# The kernel mounts root directly via loader.conf's vfs.root.mountfrom
+# (ufs:/dev/ufs/ROOTFS, options=rw). This entry exists for mount(8) /
+# df(1) correctness; launchd is PID 1 and bypasses rc.d, so nothing
+# runs `mount -a` over the rest of this file.
+/dev/ufs/ROOTFS  /  ufs  rw,noatime  1  1
