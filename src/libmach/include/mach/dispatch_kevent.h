@@ -162,6 +162,13 @@ int kevent_qos(int kq, const struct kevent_qos_s *changelist, int nchanges,
  */
 int mach_event_bell_register(mach_port_name_t pset_name, int pipe_w);
 
+/*
+ * mach_event_bell_unregister — trap-mux op 5. Drop the bell op 4
+ * armed so the kernel stops writing wakeup bytes to the pipe.
+ * Returns 0 on success, errno on failure.
+ */
+int mach_event_bell_unregister(mach_port_name_t pset_name);
+
 #ifdef __cplusplus
 }
 #endif

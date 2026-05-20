@@ -171,23 +171,60 @@ reg_remove_locked(struct mach_kev_reg *target)
 	}
 }
 
-int
-mach_event_bell_register(mach_port_name_t pset_name, int pipe_w)
+/*
+ * Resolve the mach_trap_mux FreeBSD syscall number (lazy, cached).
+ * Returns the syscall number or -1 if mach.ko isn't loaded.
+ */
+static int
+mach_trap_mux_syscall(void)
 {
-	static int mux_syscall = -1;
-	long ret;
+	static int mux = -2;	/* -2 = unresolved, -1 = unavailable */
 
-	if (mux_syscall == -1) {
+	if (mux == -2) {
 		int tmp;
 		size_t len = sizeof(tmp);
 		if (sysctlbyname("mach.syscall.mach_trap_mux", &tmp, &len,
 		    NULL, 0) != 0)
-			return (ENOSYS);
-		mux_syscall = tmp;
+			mux = -1;
+		else
+			mux = tmp;
 	}
-	ret = syscall(mux_syscall, MACH_TRAP_OP_REGISTER_EVENT_BELL,
+	return (mux);
+}
+
+int
+mach_event_bell_register(mach_port_name_t pset_name, int pipe_w)
+{
+	int mux = mach_trap_mux_syscall();
+	long ret;
+
+	if (mux < 0)
+		return (ENOSYS);
+	ret = syscall(mux, MACH_TRAP_OP_REGISTER_EVENT_BELL,
 	    (uint64_t)pset_name, (uint64_t)(unsigned)pipe_w,
 	    (uint64_t)0, (uint64_t)0, (uint64_t)0);
+	if (ret != 0)
+		return ((int)ret);
+	return (0);
+}
+
+/*
+ * mach_event_bell_unregister — trap-mux op 5. Tears down the bell
+ * registered by mach_event_bell_register so the kernel stops writing
+ * wakeup bytes to a pipe whose read-end the wrapper is about to
+ * close. Returns 0 on success, errno on failure.
+ */
+int
+mach_event_bell_unregister(mach_port_name_t pset_name)
+{
+	int mux = mach_trap_mux_syscall();
+	long ret;
+
+	if (mux < 0)
+		return (ENOSYS);
+	ret = syscall(mux, MACH_TRAP_OP_UNREGISTER_EVENT_BELL,
+	    (uint64_t)pset_name, (uint64_t)0, (uint64_t)0,
+	    (uint64_t)0, (uint64_t)0);
 	if (ret != 0)
 		return ((int)ret);
 	return (0);
@@ -280,6 +317,15 @@ reg_destroy(struct mach_kev_reg *r)
 		free(bm);
 	}
 	r->backlog_tail = NULL;
+	/*
+	 * Unregister the kernel bell BEFORE closing the pipe. The
+	 * kernel holds a struct file * ref on pipe_w; if we close
+	 * pipe_r first, a message arriving before the bell is torn
+	 * down fires fo_write into a reader-less pipe (EPIPE) and the
+	 * wakeup is lost. op 5 drops the kernel-side registration.
+	 */
+	if (r->wrap_pset != MACH_PORT_NULL)
+		(void)mach_event_bell_unregister(r->wrap_pset);
 	if (r->pipe_r != -1)
 		(void)close(r->pipe_r);
 	if (r->pipe_w != -1)

@@ -177,6 +177,36 @@ mach_event_bridge_register(struct thread *td, mach_port_name_t pset_name,
 }
 
 /*
+ * Unregister a bell by pset name. Trap-mux op 5 handler. Userland
+ * (the libmach EVFILT_MACHPORT wrapper) calls this from reg_destroy
+ * when a dispatch source is torn down, BEFORE closing the wakeup
+ * pipe. Without it the kernel bell outlives the pipe — the next
+ * message fires the bell, fo_write hits a closed pipe (EPIPE), and
+ * the wakeup is silently lost. The bell is otherwise only cleaned
+ * up on pset destroy, which a re-registering libdispatch source
+ * (EV_DELETE then EV_ADD) doesn't trigger.
+ *
+ * Returns 0 on success, errno on failure.
+ */
+int
+mach_event_bridge_unregister(struct thread *td, mach_port_name_t pset_name)
+{
+	ipc_space_t	space = current_task()->itk_space;
+	ipc_pset_t	pset = IPS_NULL;
+	kern_return_t	kr;
+
+	(void)td;
+	kr = ipc_object_translate(space, pset_name, MACH_PORT_RIGHT_PORT_SET,
+	    (ipc_object_t *)&pset);
+	if (kr != KERN_SUCCESS)
+		return (kr == KERN_INVALID_NAME ? ENOENT : EINVAL);
+	ips_unlock(pset);
+
+	mach_event_bridge_unregister_pset(pset);
+	return (0);
+}
+
+/*
  * Unregister a bell for the given pset. Called from the pset destroy
  * path; safe to call when no bell exists.
  */

@@ -25,6 +25,10 @@ void mach_event_bridge_destroy(void);
 int  mach_event_bridge_register(struct thread *td,
     mach_port_name_t pset_name, int write_fd);
 
+/* Trap-mux op 5 handler: unregister a bell by pset name. */
+int  mach_event_bridge_unregister(struct thread *td,
+    mach_port_name_t pset_name);
+
 /* Called from pset destroy path. */
 void mach_event_bridge_unregister_pset(struct ipc_pset *pset);
 

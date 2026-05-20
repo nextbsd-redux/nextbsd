@@ -49,6 +49,14 @@ extern "C" {
  *       waking libdispatch's main kqueue thread (which is registered
  *       for EVFILT_READ on the pipe's read-end). See
  *       src/mach_kmod/src/mach_event_bridge.c.
+ *   5 — mach_event_unregister_bell(pset_name)
+ *       Task #39 Path B: tears down the bell op 4 registered. The
+ *       libmach EVFILT_MACHPORT wrapper calls this when a dispatch
+ *       source is torn down (EV_DELETE), BEFORE closing the wakeup
+ *       pipe — otherwise the kernel bell outlives the pipe and the
+ *       next message's fo_write hits a closed pipe (EPIPE), losing
+ *       the wakeup. The bell is otherwise only freed on pset
+ *       destroy, which a re-registering source does not trigger.
  *
  * task_set_special_port migrated into the multiplexer to free its
  * previous dedicated FreeBSD syscall slot for the multiplexer
@@ -68,8 +76,9 @@ extern "C" {
 #define MACH_TRAP_OP_TASK_SET_SPECIAL_PORT	2
 #define MACH_TRAP_OP_PORT_MOVE_MEMBER		3
 #define MACH_TRAP_OP_REGISTER_EVENT_BELL	4
+#define MACH_TRAP_OP_UNREGISTER_EVENT_BELL	5
 
-#define MACH_TRAP_OP_MAX			4
+#define MACH_TRAP_OP_MAX			5
 
 #ifdef __cplusplus
 }

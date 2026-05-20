@@ -407,6 +407,10 @@ sys_mach_trap_mux_trap(struct thread *td,
 		    (mach_port_name_t)uap->a1,
 		    (int)uap->a2);
 		return (0);
+	case 5:		/* MACH_TRAP_OP_UNREGISTER_EVENT_BELL */
+		td->td_retval[0] = mach_event_bridge_unregister(td,
+		    (mach_port_name_t)uap->a1);
+		return (0);
 	default:
 		td->td_retval[0] = KERN_INVALID_ARGUMENT;
 		return (0);
