@@ -62,6 +62,17 @@ typedef mach_port_type_t *mach_port_type_array_t;
 #define MACH_PORT_TYPE_PORT_SET		MACH_PORT_TYPE(MACH_PORT_RIGHT_PORT_SET)
 #define MACH_PORT_TYPE_DEAD_NAME	MACH_PORT_TYPE(MACH_PORT_RIGHT_DEAD_NAME)
 
+/*
+ * mach_port_type — return the rights bitmask for the named port.
+ * libdispatch (event_kevent.c:289) uses it as a coarse name-validity
+ * probe. Declared here (not in <mach/mach_traps.h>) because
+ * mach_port_type_t lives in this file; declaring it in mach_traps.h
+ * would need a circular #include guard that mach_traps.h's prior
+ * recursion through port.h breaks.
+ */
+kern_return_t mach_port_type(mach_port_name_t task, mach_port_name_t name,
+    mach_port_type_t *type);
+
 typedef natural_t mach_port_urefs_t;
 #ifndef _MACH_PORT_DELTA_T_
 #define _MACH_PORT_DELTA_T_

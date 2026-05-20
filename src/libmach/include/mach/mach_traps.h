@@ -169,13 +169,11 @@ kern_return_t semaphore_wait(semaphore_t sem);
 kern_return_t semaphore_timedwait(semaphore_t sem, mach_timespec_t wait_time);
 
 /*
- * mach_port_type — return the rights bitmask for the named port.
- * libdispatch (event_kevent.c:289) uses it as a coarse name-validity
- * probe. mach_port_type_t lives in <mach/port.h>.
+ * mach_port_type lives in <mach/port.h> alongside the
+ * mach_port_type_t typedef it uses — putting the decl here would
+ * require an #include of port.h that hits a circular guard
+ * (port.h includes mach_traps.h first).
  */
-#include <mach/port.h>		/* mach_port_type_t */
-kern_return_t mach_port_type(mach_port_name_t task, mach_port_name_t name,
-    mach_port_type_t *type);
 
 #ifdef __cplusplus
 }
