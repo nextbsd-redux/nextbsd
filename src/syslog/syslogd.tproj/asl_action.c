@@ -879,14 +879,21 @@ _text_file_close(asl_out_rule_t *r)
 	f_data->fd = -1;
 }
 
+/* Phase J runtime debug: append a breadcrumb to /tmp/asl_route.log. */
+#define _ARL(...) do { FILE *_d = fopen("/tmp/asl_route.log", "a"); \
+	if (_d) { fprintf(_d, "[%d] ", getpid()); fprintf(_d, __VA_ARGS__); \
+	fprintf(_d, "\n"); fclose(_d); } } while (0)
+
 static int
 _text_file_open(asl_out_rule_t *r)
 {
 	asl_action_file_data_t *f_data = (asl_action_file_data_t *)r->dst->private;
 
+	_ARL("_text_file_open: enter fd=%d", f_data->fd);
 	if (f_data->fd < 0)
 	{
 		f_data->fd = _act_file_create_open(r->dst);
+		_ARL("_text_file_open: create_open -> fd=%d", f_data->fd);
 		if (f_data->fd < 0)
 		{
 			/*
@@ -898,11 +905,14 @@ _text_file_open(asl_out_rule_t *r)
 			if (status != 0) return -1;
 
 			f_data->fd = _act_file_create_open(r->dst);
+			_ARL("_text_file_open: retry create_open -> fd=%d", f_data->fd);
 		}
 
 		if (f_data->fd < 0) return -1;
 
+		_ARL("_text_file_open: before dispatch_source_create VNODE");
 		f_data->monitor = dispatch_source_create(DISPATCH_SOURCE_TYPE_VNODE, f_data->fd, DISPATCH_VNODE_DELETE, asl_action_queue);
+		_ARL("_text_file_open: after dispatch_source_create monitor=%p", (void *)f_data->monitor);
 		if (f_data->monitor != NULL)
 		{
 			int ffd = f_data->fd;
@@ -917,10 +927,13 @@ _text_file_open(asl_out_rule_t *r)
 				close(ffd);
 			});
 
+			_ARL("_text_file_open: before dispatch_resume");
 			dispatch_resume(f_data->monitor);
+			_ARL("_text_file_open: after dispatch_resume");
 		}
 	}
 
+	_ARL("_text_file_open: return 0");
 	return 0;
 }
 
@@ -1485,14 +1498,17 @@ _act_file_final(asl_out_module_t *m, asl_out_rule_t *r, asl_msg_t *msg)
 	is_dup = 0;
 
 	str = asl_format_message(msg, r->dst->fmt, r->dst->tfmt, ASL_ENCODE_SAFE, &len);
+	_ARL("_act_file_final: formatted len=%u str=%p coalesce=%d", len, (void *)str, (r->dst->flags & MODULE_FLAG_COALESCE) ? 1 : 0);
 
 	if (r->dst->flags & MODULE_FLAG_COALESCE)
 	{
 		if (f_data->dup_timer == NULL)
 		{
 			/* create a timer to flush dups on this file */
+			_ARL("_act_file_final: before dup_timer dispatch_source_create");
 			f_data->dup_timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, asl_action_queue);
 			dispatch_source_set_event_handler(f_data->dup_timer, ^{ _send_repeat_msg(r); });
+			_ARL("_act_file_final: dup_timer created %p", (void *)f_data->dup_timer);
 		}
 
 		if ((global.bsd_max_dup_time > 0) && (str != NULL) && (f_data->last_msg != NULL))
@@ -1518,14 +1534,17 @@ _act_file_final(asl_out_module_t *m, asl_out_rule_t *r, asl_msg_t *msg)
 	}
 	else
 	{
+		_ARL("_act_file_final: before _act_dst_open");
 		if (_act_dst_open(r, NULL, 0) != 0)
 		{
+			_ARL("_act_file_final: _act_dst_open FAILED");
 			_asl_action_save_failed("_act_file", m, r, ASL_STATUS_FAILED);
 			free(str);
 			return;
 		}
 		else
 		{
+			_ARL("_act_file_final: _act_dst_open ok");
 			r->dst->fails = 0;
 		}
 
@@ -1554,13 +1573,18 @@ _act_file_final(asl_out_module_t *m, asl_out_rule_t *r, asl_msg_t *msg)
 		if ((str != NULL) && (len > 1))
 		{
 			/* write line to file and update dst size */
+			_ARL("_act_file_final: before write fd=%d len=%u", f_data->fd, len);
 			size_t bytes = write(f_data->fd, str, len - 1);
+			_ARL("_act_file_final: wrote %zd bytes", bytes);
 			if (bytes > 0) r->dst->size += bytes;
 
+			_ARL("_act_file_final: before _act_checkpoint");
 			if (_act_checkpoint(r, CHECKPOINT_TEST) == 1) asl_trigger_aslmanager();
+			_ARL("_act_file_final: after _act_checkpoint");
 		}
 	}
 
+	_ARL("_act_file_final: done");
 	free(str);
 }
 

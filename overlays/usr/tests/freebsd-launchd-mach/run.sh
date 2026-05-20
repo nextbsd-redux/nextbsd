@@ -427,6 +427,12 @@ else
     cat /tmp/bsd_in_recv.log 2>/dev/null || echo "(no bsd_in_recv.log)"
     echo "--- process_message log (/tmp/process_msg.log) ---"
     cat /tmp/process_msg.log 2>/dev/null || echo "(no process_msg.log)"
+    echo "--- asl route log (/tmp/asl_route.log) ---"
+    cat /tmp/asl_route.log 2>/dev/null || echo "(no asl_route.log)"
+    echo "--- syslogd.stderr (final state) ---"
+    cat /var/log/syslogd.stderr 2>/dev/null || echo "(no syslogd.stderr)"
+    echo "--- syslogd kernel stacks (procstat -kk) ---"
+    procstat -kk "$(pgrep -x syslogd)" 2>/dev/null || echo "(procstat unavailable)"
     echo "=== end diagnostics ==="
     echo "SYSLOG-RUN-FAIL: marker not found in /var/log/system.log"
     exit 1
