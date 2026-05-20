@@ -6724,14 +6724,18 @@ _dispatch_runloop_queue_class_poke(dispatch_lane_t dq)
 	}
 
 	_dispatch_trace_runtime_event(worker_request, dq, 1);
-#if HAVE_MACH
+#if TARGET_OS_MAC
 	/*
-	 * Task #39 Path B: explicit narrow. dispatch_runloop_handle_t on
-	 * FreeBSD is uint64_t (packed pipe-fd pair); on macOS it's a
-	 * mach_port_t. The HAVE_MACH branch only runs on the Mach
-	 * runloop wakeup path (not yet wired on FreeBSD) — the cast
-	 * silences -Wshorten-64-to-32 without altering the pipe-pair
-	 * layout the FreeBSD __unix__ branch depends on.
+	 * Task #39 Path B: this site MUST match the gating of the
+	 * runloop handle's creation (_dispatch_runloop_queue_handle_init)
+	 * and dispose — both `#if TARGET_OS_MAC`. On macOS the handle is
+	 * a mach_port_t and the runloop thread is woken with a Mach
+	 * message. On FreeBSD (HAVE_MACH but not TARGET_OS_MAC) the
+	 * handle is a packed pipe-fd pair — it must fall through to the
+	 * __unix__ branch and be woken by a pipe write. The gate was
+	 * previously `#if HAVE_MACH`, which made FreeBSD alone take the
+	 * Mach branch and send a wakeup message to a pipe fd:
+	 * MACH_SEND_INVALID_DEST, runloop never woken.
 	 */
 	mach_port_t mp = (mach_port_t)handle;
 	kern_return_t kr = _dispatch_send_wakeup_runloop_thread(mp, 0);

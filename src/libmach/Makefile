@@ -26,6 +26,10 @@ CFLAGS+=	-I${.CURDIR}/include
 NO_MAN=		yes
 WARNS?=		6
 
+# backtrace()/backtrace_symbols_fd() for the task #39 Bug-B
+# MACH_DEBUG_BADSEND diagnostic in mach_traps.c.
+LIBADD+=	execinfo
+
 # Task #39 update: <mach/mach.h> + <mach/clock.h> are now installed
 # alongside the rest of the libmach headers. libdispatch's HAVE_MACH
 # path (build.sh:380, -DHAVE_MACH:BOOL=ON) wants both: internal.h

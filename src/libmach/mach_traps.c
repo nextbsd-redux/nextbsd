@@ -12,6 +12,7 @@
 #include <sys/types.h>
 #include <sys/sysctl.h>
 #include <errno.h>
+#include <execinfo.h>
 #include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -176,6 +177,24 @@ mach_msg(mach_msg_header_t *msg, mach_msg_option_t option,
 		num = resolve_syscall("mach_msg_trap");
 		if (num == NO_SYSCALL)
 			return (MACH_RCV_TIMED_OUT);
+	}
+	/*
+	 * Task #39 Bug-B trace: when MACH_DEBUG_BADSEND is set, dump a
+	 * backtrace for any SEND whose destination port name is a
+	 * suspiciously small integer (< 32 — likely a stray fd, not a
+	 * real Mach port name). Pinpoints which caller is confusing an
+	 * fd for a port name. Compiled-in but inert unless the env var
+	 * is present.
+	 */
+	if ((option & 0x1 /* MACH_SEND_MSG */) && msg != NULL &&
+	    msg->msgh_remote_port != 0 && msg->msgh_remote_port < 32 &&
+	    getenv("MACH_DEBUG_BADSEND") != NULL) {
+		void *bt[24];
+		int n = backtrace(bt, 24);
+		fprintf(stderr, "[BADSEND] mach_msg SEND to remote_port=0x%x "
+		    "id=0x%x — backtrace:\n",
+		    msg->msgh_remote_port, msg->msgh_id);
+		backtrace_symbols_fd(bt, n, 2);
 	}
 	return ((mach_msg_return_t)syscall(num, msg, option,
 	    send_size, rcv_size, rcv_name, timeout));
