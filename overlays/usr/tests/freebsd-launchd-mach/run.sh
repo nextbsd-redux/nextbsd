@@ -374,6 +374,31 @@ else
     exit 1
 fi
 
-echo "SYSLOG-RUN-SKIP: deferred to follow-up; task #41 move_member done"
+# SYSLOG-RUN — real round-trip: post a uniquely tagged message via
+# syslog(3) (logger(1)) and confirm syslogd ingested it on /var/run/log
+# and routed it to /var/log/system.log per asl.conf.
+syslog_mark="SYSLOG-RUN-MARK-$$-$(date +%s)"
+logger -p user.notice -t syslogrun "$syslog_mark"
+
+syslog_found=0
+i=0
+while [ "$i" -lt 10 ]; do
+    if grep -q "$syslog_mark" /var/log/system.log 2>/dev/null; then
+        syslog_found=1
+        break
+    fi
+    sleep 1
+    i=$((i + 1))
+done
+
+if [ "$syslog_found" -eq 1 ]; then
+    echo "SYSLOG-RUN-OK: round-trip message reached /var/log/system.log"
+else
+    echo "SYSLOG-RUN-FAIL: marker not found in /var/log/system.log"
+    echo "=== /var/log/system.log ==="
+    cat /var/log/system.log 2>/dev/null || echo "(no system.log)"
+    ls -la /var/run/log 2>/dev/null || echo "(no /var/run/log socket)"
+    exit 1
+fi
 
 exit 0
