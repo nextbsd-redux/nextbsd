@@ -671,15 +671,22 @@ bsd_out_message(asl_msg_t *msg, int64_t msize)
 	OSAtomicIncrement32(&global.bsd_queue_count);
 	asl_msg_retain((asl_msg_t *)msg);
 
-	dispatch_async(bsd_out_queue, ^{
-		_bsd_match_and_send(msg);
-		asl_msg_release((asl_msg_t *)msg);
+	/*
+	 * FreeBSD port: inline the work instead of dispatch_async onto
+	 * bsd_out_queue. Same rationale as the asl_action / process_message
+	 * inlining — our libdispatch's dispatch_async doesn't drain
+	 * reliably. It also hangs outright when called before bsd_out_init
+	 * has created bsd_out_queue: write_boot_log() runs asl_out_message
+	 * -> bsd_out_message before init_modules(), so bsd_out_queue is
+	 * still NULL. Run synchronously on the calling thread.
+	 */
+	_bsd_match_and_send(msg);
+	asl_msg_release((asl_msg_t *)msg);
 
-		/* end of the output module chain (after asl) - decrement global memory stats */
-		OSAtomicAdd64(-1ll * msize, &global.memory_size);
+	/* end of the output module chain (after asl) - decrement global memory stats */
+	OSAtomicAdd64(-1ll * msize, &global.memory_size);
 
-		OSAtomicDecrement32(&global.bsd_queue_count);
-	});
+	OSAtomicDecrement32(&global.bsd_queue_count);
 }
 
 static void
