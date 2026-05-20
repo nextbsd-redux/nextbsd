@@ -150,13 +150,12 @@ kern_return_t host_request_notification(mach_port_name_t host,
 typedef mach_port_name_t semaphore_t;
 
 /*
- * mach_timespec_t — Apple's tv_sec/tv_nsec pair. Naming differs from
- * POSIX struct timespec (Apple uses unsigned for both fields).
+ * mach_timespec_t comes from <mach/clock_types.h> (typedef of
+ * struct tvalspec — unsigned tv_sec, clock_res_t tv_nsec, where
+ * clock_res_t is int). Pull it in here so semaphore_timedwait's
+ * signature has the type.
  */
-typedef struct {
-	unsigned int	tv_sec;
-	int		tv_nsec;
-} mach_timespec_t;
+#include <mach/clock_types.h>
 
 #ifndef SYNC_POLICY_FIFO
 #define SYNC_POLICY_FIFO	0
@@ -168,6 +167,15 @@ kern_return_t semaphore_destroy(mach_port_name_t task, semaphore_t sem);
 kern_return_t semaphore_signal(semaphore_t sem);
 kern_return_t semaphore_wait(semaphore_t sem);
 kern_return_t semaphore_timedwait(semaphore_t sem, mach_timespec_t wait_time);
+
+/*
+ * mach_port_type — return the rights bitmask for the named port.
+ * libdispatch (event_kevent.c:289) uses it as a coarse name-validity
+ * probe. mach_port_type_t lives in <mach/port.h>.
+ */
+#include <mach/port.h>		/* mach_port_type_t */
+kern_return_t mach_port_type(mach_port_name_t task, mach_port_name_t name,
+    mach_port_type_t *type);
 
 #ifdef __cplusplus
 }

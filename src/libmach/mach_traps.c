@@ -826,6 +826,68 @@ host_request_notification(mach_port_name_t host, int notify_type,
 }
 
 /*
+ * Mach VM APIs — used by libdispatch's data.c (line 139
+ * mach_vm_deallocate for the dispatch_data large-buffer path). Apple
+ * implements these as full kernel RPC; we route to mmap/munmap. The
+ * VM_PROT_* and VM_FLAGS_* options are accepted but ignored — every
+ * allocation is RW anon-private, every deallocation is munmap.
+ */
+#include <sys/mman.h>
+
+kern_return_t
+mach_vm_allocate(mach_port_name_t target, mach_vm_address_t *address,
+    mach_vm_size_t size, int flags)
+{
+	void *p;
+
+	(void)target;
+	(void)flags;
+	if (address == NULL || size == 0)
+		return (KERN_INVALID_ARGUMENT);
+
+	p = mmap(NULL, (size_t)size, PROT_READ | PROT_WRITE,
+	    MAP_ANON | MAP_PRIVATE, -1, 0);
+	if (p == MAP_FAILED)
+		return (KERN_NO_SPACE);
+	*address = (mach_vm_address_t)(uintptr_t)p;
+	return (KERN_SUCCESS);
+}
+
+kern_return_t
+mach_vm_deallocate(mach_port_name_t target, mach_vm_address_t address,
+    mach_vm_size_t size)
+{
+	(void)target;
+	if (size == 0)
+		return (KERN_SUCCESS);
+	if (munmap((void *)(uintptr_t)address, (size_t)size) != 0)
+		return (KERN_FAILURE);
+	return (KERN_SUCCESS);
+}
+
+/*
+ * mach_port_type — return the rights mask for a port name in the
+ * caller's task. Apple uses it for port-validity probes. Without
+ * kernel introspection wired up, we report RECEIVE if the name
+ * isn't NULL/DEAD; consumers (event_kevent.c:289) use it for
+ * coarse validation.
+ */
+kern_return_t
+mach_port_type(mach_port_name_t task, mach_port_name_t name,
+    mach_port_type_t *type)
+{
+	(void)task;
+	if (type == NULL)
+		return (KERN_INVALID_ARGUMENT);
+	if (name == MACH_PORT_NULL || name == MACH_PORT_DEAD) {
+		*type = 0;
+		return (KERN_INVALID_NAME);
+	}
+	*type = MACH_PORT_TYPE_RECEIVE;
+	return (KERN_SUCCESS);
+}
+
+/*
  * Mach semaphores — backed by POSIX sem_t under a small registry
  * keyed by Apple-shape mach_port_name_t identifiers. libdispatch's
  * USE_MACH_SEM path uses these as the underlying _dispatch_sema4

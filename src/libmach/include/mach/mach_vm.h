@@ -16,17 +16,23 @@
 #ifndef _MACH_MACH_VM_H_
 #define _MACH_MACH_VM_H_
 
-#include <mach/mach_types.h>	/* vm_map_t */
+#include <mach/mach_types.h>
+#include <mach/mach_traps.h>	/* mach_port_name_t */
 #include <mach/kern_return.h>	/* kern_return_t */
 #include <stdint.h>
 
+/*
+ * Task #39 Path B: was vm_map_t (which libmach removed because it
+ * collided with FreeBSD <vm/vm.h>). Use mach_port_name_t directly —
+ * the task port is the address-space handle.
+ */
 typedef uint64_t mach_vm_address_t;
 typedef uint64_t mach_vm_offset_t;
 typedef uint64_t mach_vm_size_t;
 
-extern kern_return_t mach_vm_allocate(vm_map_t target,
+extern kern_return_t mach_vm_allocate(mach_port_name_t target,
     mach_vm_address_t *address, mach_vm_size_t size, int flags);
-extern kern_return_t mach_vm_deallocate(vm_map_t target,
+extern kern_return_t mach_vm_deallocate(mach_port_name_t target,
     mach_vm_address_t address, mach_vm_size_t size);
 
 #endif /* !_MACH_MACH_VM_H_ */
