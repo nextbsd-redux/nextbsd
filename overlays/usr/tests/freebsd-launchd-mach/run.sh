@@ -375,10 +375,18 @@ else
 fi
 
 # SYSLOG-RUN — real round-trip: post a uniquely tagged message via
-# syslog(3) (logger(1)) and confirm syslogd ingested it on /var/run/log
-# and routed it to /var/log/system.log per asl.conf.
+# syslog(3) and confirm syslogd ingested it on /var/run/log and routed
+# it to /var/log/system.log per asl.conf. Uses test_bsd_logger (libc
+# syslog(3), RFC 3164) — installed alongside this script — rather than
+# logger(1), which is not in the rootfs and emits RFC 5424.
 syslog_mark="SYSLOG-RUN-MARK-$$-$(date +%s)"
-logger -p user.notice -t syslogrun "$syslog_mark"
+test_logger=/usr/tests/freebsd-launchd-mach/test_bsd_logger
+
+if [ ! -x "$test_logger" ]; then
+    echo "SYSLOG-RUN-FAIL: $test_logger missing"
+    exit 1
+fi
+"$test_logger" syslogrun "$syslog_mark"
 
 syslog_found=0
 i=0
@@ -394,10 +402,17 @@ done
 if [ "$syslog_found" -eq 1 ]; then
     echo "SYSLOG-RUN-OK: round-trip message reached /var/log/system.log"
 else
-    echo "SYSLOG-RUN-FAIL: marker not found in /var/log/system.log"
-    echo "=== /var/log/system.log ==="
+    # Diagnostics first — the expect harness kills the VM on the
+    # SYSLOG-RUN-FAIL token, so emit that marker last.
+    echo "=== SYSLOG-RUN diagnostics ==="
+    echo "--- /var/log/system.log ---"
     cat /var/log/system.log 2>/dev/null || echo "(no system.log)"
-    ls -la /var/run/log 2>/dev/null || echo "(no /var/run/log socket)"
+    echo "--- /var/run/log socket ---"
+    ls -la /var/run/log /var/run/logpriv 2>/dev/null || echo "(no /var/run/log)"
+    echo "--- /var/log/asl ---"
+    ls -la /var/log/asl/ 2>/dev/null || echo "(no asl store)"
+    echo "=== end diagnostics ==="
+    echo "SYSLOG-RUN-FAIL: marker not found in /var/log/system.log"
     exit 1
 fi
 
