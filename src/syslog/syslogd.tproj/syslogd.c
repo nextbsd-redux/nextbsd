@@ -521,6 +521,13 @@ main(int argc, const char *argv[])
 	time_t now;
 	int first_syslogd_start = 1;
 
+	/* Phase J runtime debug: breadcrumb startup. Defined up-front so
+	 * the pre-init_globals path is traced too. */
+#define _PJ_BC(tag) do { \
+	FILE *_pjf = fopen("/tmp/syslogd_main.log", "a"); \
+	if (_pjf) { fprintf(_pjf, "[%d] " tag "\n", getpid()); fclose(_pjf); } \
+} while(0)
+
 #if TARGET_OS_SIMULATOR
 	const char *sim_log_dir = getenv("SIMULATOR_LOG_ROOT");
 	const char *sim_resource_dir = getenv("SIMULATOR_SHARED_RESOURCES_DIRECTORY");
@@ -548,6 +555,8 @@ main(int argc, const char *argv[])
 	}
 #endif
 
+	_PJ_BC("main entry");
+
 	/* Set I/O policy */
 	setiopolicy_np(IOPOL_TYPE_DISK, IOPOL_SCOPE_PROCESS, IOPOL_PASSIVE);
 
@@ -560,6 +569,8 @@ main(int argc, const char *argv[])
 	qtn_proc_free(qp);
 #endif
 
+	_PJ_BC("after qtn_proc setup");
+
 	memset(&global, 0, sizeof(struct global_s));
 
 	global.db_lock = (pthread_mutex_t *)calloc(1, sizeof(pthread_mutex_t));
@@ -568,10 +579,14 @@ main(int argc, const char *argv[])
 	/*
 	 * Create work queue, but suspend until output modules are initialized.
 	 */
+	_PJ_BC("before dispatch_queue_create work_queue");
 	global.work_queue = dispatch_queue_create("Work Queue", NULL);
+	_PJ_BC("after dispatch_queue_create");
 	dispatch_suspend(global.work_queue);
+	_PJ_BC("after dispatch_suspend; before init_globals");
 
 	init_globals();
+	_PJ_BC("after init_globals; before argv parse");
 
 #if (TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR)
 	remote_enabled = 1;
@@ -705,12 +720,6 @@ main(int argc, const char *argv[])
 		extern void _phasej_exit(void);
 		atexit(_phasej_exit);
 	}
-
-	/* Phase J runtime debug: breadcrumb the post-init_globals path. */
-#define _PJ_BC(tag) do { \
-	FILE *_pjf = fopen("/tmp/syslogd_main.log", "a"); \
-	if (_pjf) { fprintf(_pjf, "[%d] " tag "\n", getpid()); fclose(_pjf); } \
-} while(0)
 
 	_PJ_BC("after init_globals + argv parse");
 	memset(tstr, 0, sizeof(tstr));
