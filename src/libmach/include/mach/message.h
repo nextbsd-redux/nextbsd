@@ -663,6 +663,20 @@ typedef mach_port_options_t *mach_port_options_ptr_t;
 #define MPO_IMMOVABLE_RECEIVE		0x0080
 #define MPO_FILTER_MSG			0x0100
 
+/*
+ * mach_port_construct — Apple's port creation with options (guards,
+ * qlimit, etc.). libdispatch's _dispatch_mach_notify_port_init path
+ * passes MPO_CONTEXT_AS_GUARD | MPO_STRICT plus a per-port guard
+ * cookie. Declared here (not in <mach/mach_traps.h>) because the
+ * struct lives here and forward-declaring a typedef alias to an
+ * anonymous struct doesn't work — circular include guards prevent
+ * the full struct from being visible at the decl point in
+ * mach_traps.h.
+ */
+kern_return_t mach_port_construct(mach_port_name_t task,
+    mach_port_options_t *opts, mach_port_context_t guard,
+    mach_port_name_t *name);
+
 /* MACH_NOTIFY_* — Mach notification message IDs (delivered to a
  * watcher port when the watched port reaches certain states).
  * Numeric values match XNU. */

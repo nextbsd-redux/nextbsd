@@ -790,7 +790,7 @@ mach_port_destruct(mach_port_name_t task, mach_port_name_t name,
  * discard the options.
  */
 kern_return_t
-mach_port_construct(mach_port_name_t task, struct mach_port_options_t *opts,
+mach_port_construct(mach_port_name_t task, mach_port_options_t *opts,
     mach_port_context_t guard, mach_port_name_t *name)
 {
 	(void)opts;

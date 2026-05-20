@@ -105,19 +105,13 @@ kern_return_t mach_port_destruct(mach_port_name_t task,
     mach_port_context_t guard);
 
 /*
- * mach_port_construct — Apple's port creation with options (guards,
- * qlimit, etc.). libdispatch's notify-port-init path passes
- * MPO_CONTEXT_AS_GUARD | MPO_STRICT plus a per-port guard cookie.
- * The struct mach_port_options_t typedef lives in <mach/message.h>;
- * we forward-declare it here as `struct mach_port_options_t` (tag
- * matches the libmach definition) so callers that pull only this
- * header still get a usable signature, and callers that pull
- * <mach/message.h> first get the same struct.
+ * mach_port_construct lives in <mach/message.h> alongside the
+ * mach_port_options_t struct it takes. Same circular-include reason
+ * as mach_port_type — forward-declaring the struct here gave it the
+ * wrong tag (message.h's struct is anonymous; only the typedef is
+ * named), tripping -Wincompatible-pointer-types at libdispatch's
+ * call site.
  */
-struct mach_port_options_t;
-kern_return_t mach_port_construct(mach_port_name_t task,
-    struct mach_port_options_t *opts, mach_port_context_t guard,
-    mach_port_name_t *name);
 
 /*
  * host_get_host_port — return the unprivileged host port. Apple's
