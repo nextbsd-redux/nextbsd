@@ -79,6 +79,21 @@
 
 #define MACH_RCV_INITIAL_BUFSIZE 8192
 
+/*
+ * Flags that may appear on a *delivered* EVFILT_MACHPORT event. The
+ * registration flags libdispatch passes (EV_ADD|EV_ENABLE|EV_DISPATCH|
+ * EV_UDATA_SPECIFIC|EV_VANISHED = 0x385) include lifecycle/action
+ * bits that must NOT be echoed on delivery — most critically
+ * EV_VANISHED, which _dispatch_kevent_merge_ev_flags treats as
+ * "the port died" and uses to mark the source DU_STATE_NEEDS_DELETE,
+ * leaving it in limbo so the handler never runs. A real kqueue
+ * echoes only the persistent attribute bits on delivery. We keep
+ * EV_DISPATCH (so libdispatch clears DU_STATE_ARMED and re-arms),
+ * EV_CLEAR, and EV_UDATA_SPECIFIC; everything else is dropped.
+ */
+#define MACH_KEV_DELIVERY_FLAGS_MASK \
+	((uint16_t)(EV_DISPATCH | EV_CLEAR | EV_UDATA_SPECIFIC))
+
 extern int __sys_kevent(int kq, const struct kevent *changelist, int nchanges,
     struct kevent *eventlist, int nevents, const struct timespec *timeout);
 
@@ -558,7 +573,7 @@ backlog_pop_locked(struct mach_kev_reg *r, struct kevent_qos_s *synth)
 	memset(synth, 0, sizeof(*synth));
 	synth->ident = r->ident;
 	synth->filter = EVFILT_MACHPORT;
-	synth->flags = r->flags;
+	synth->flags = r->flags & MACH_KEV_DELIVERY_FLAGS_MASK;
 	synth->fflags = (uint32_t)bm->kr;
 	synth->data = r->data;
 	synth->udata = r->udata;
