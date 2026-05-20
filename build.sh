@@ -1122,23 +1122,13 @@ fi
 # rc.local needs to be executable
 [ -f "$WORK/rootfs/etc/rc.local" ] && chmod +x "$WORK/rootfs/etc/rc.local"
 
-# launchd is PID 1 and bypasses rc.d, so the BSD.var.dist mtree that
-# normally populates /var at boot never runs. Bake the runtime
-# hierarchy into the rootfs now: login's pam_xdg needs /var/run,
-# syslogd needs /var/run (/var/run/log) + /var/log (/var/log/asl), pid
-# files need /var/run, etc.
-echo "==> creating /var runtime hierarchy in rootfs"
-mkdir -p "$WORK/rootfs/var/run" "$WORK/rootfs/var/log" \
-         "$WORK/rootfs/var/db" "$WORK/rootfs/var/tmp" \
-         "$WORK/rootfs/var/spool"
-chmod 1777 "$WORK/rootfs/var/tmp"
-
 #
 # 6. assemble the bootable GPT disk image (BIOS + UEFI, rw UFS root).
 #    No /etc/fstab heredoc — overlays/etc/fstab carries the real root
 #    entry, and overlays/boot/loader.conf.d/ carries the loader
-#    settings. The kernel mounts the freebsd-ufs partition read-write
-#    directly: no cd9660, no uzip, no unionfs, no ramdisk pivot.
+#    settings. The kernel mounts the freebsd-ufs partition read-only;
+#    launchd PID 1 remounts it read-write before starting any daemon.
+#    No cd9660, no uzip, no unionfs, no ramdisk pivot.
 #
 CONTENT_BYTES=$(du -sk "$WORK/rootfs" | awk '{print $1*1024}')
 echo "==> rootfs content = $CONTENT_BYTES bytes ($((CONTENT_BYTES / 1024 / 1024)) MiB)"

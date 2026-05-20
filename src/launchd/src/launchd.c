@@ -102,6 +102,7 @@ static void handle_pid1_crashes_separately(void);
 static void do_pid1_crash_diagnosis_mode(const char *msg);
 static int basic_fork(void);
 static bool do_pid1_crash_diagnosis_mode2(const char *msg);
+static void launchd_root_make_writable(void);
 
 static void *update_thread(void *nothing);
 
@@ -303,6 +304,12 @@ main(int argc, char *const *argv)
 	 * Matches Apple launchd's actual boot pattern.
 	 */
 	if (pid1_magic) {
+		/*
+		 * The kernel mounts / read-only; make it read-write before
+		 * any LaunchDaemon is dispatched (Apple does this in
+		 * launchctl's do_potential_fsck() ahead of the scan).
+		 */
+		launchd_root_make_writable();
 		launchd_scan_launchdaemons();
 		launchd_syslog(LOG_NOTICE | LOG_CONSOLE,
 		    "post-scan: entering launchd_runtime() event loop");
@@ -310,6 +317,77 @@ main(int argc, char *const *argv)
 
 	launchd_runtime_init2();
 	launchd_runtime();
+}
+
+/*
+ * Make the root filesystem read-write before any LaunchDaemon starts.
+ *
+ * The FreeBSD kernel always mounts / read-only — vfs_mountroot.c forces
+ * the 'ro' option and deliberately discards vfs.root.mountfrom.options=rw.
+ * Apple's launchd performs the read-write transition itself, in
+ * launchctl's do_potential_fsck(), run before the LaunchDaemons scan;
+ * this port dropped that bootstrapper. Restore the step here so / is
+ * writable before getty / syslogd / etc. are dispatched — no rc.d.
+ *
+ * Filesystem-agnostic: statfs() reports the mounted type and fsck(8) /
+ * mount(8) dispatch on it. Works for UFS today; a future root on any
+ * filesystem supporting the standard MNT_UPDATE read-only -> read-write
+ * remount needs no change here.
+ */
+static int
+launchd_run_tool(const char *const argv[])
+{
+	pid_t pid;
+	int status;
+
+	pid = fork();
+	if (pid == -1) {
+		return -1;
+	}
+	if (pid == 0) {
+		execv(argv[0], (char *const *)argv);
+		_exit(127);
+	}
+	while (waitpid(pid, &status, 0) == -1) {
+		if (errno != EINTR) {
+			return -1;
+		}
+	}
+	return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+
+static void
+launchd_root_make_writable(void)
+{
+	const char *fsck_argv[]  = { "/sbin/fsck",  "-p",  "/", NULL };
+	const char *mount_argv[] = { "/sbin/mount", "-uw", "/", NULL };
+	struct statfs sfs;
+	int rc;
+
+	if (statfs("/", &sfs) != 0) {
+		launchd_syslog(LOG_ERR | LOG_CONSOLE,
+		    "root-rw: statfs(/) failed: %s", strerror(errno));
+		return;
+	}
+	if (!(sfs.f_flags & MNT_RDONLY)) {
+		return;		/* already read-write — nothing to do */
+	}
+
+	/* / is mounted read-only, so running fsck(8) on it is safe. */
+	rc = launchd_run_tool(fsck_argv);
+	if (rc != 0) {
+		launchd_syslog(LOG_WARNING | LOG_CONSOLE,
+		    "root-rw: fsck -p / exited %d", rc);
+	}
+
+	rc = launchd_run_tool(mount_argv);
+	if (rc != 0) {
+		launchd_syslog(LOG_ERR | LOG_CONSOLE,
+		    "root-rw: mount -uw / exited %d -- / left read-only", rc);
+	} else {
+		launchd_syslog(LOG_NOTICE | LOG_CONSOLE,
+		    "root-rw: / remounted read-write");
+	}
 }
 
 void
