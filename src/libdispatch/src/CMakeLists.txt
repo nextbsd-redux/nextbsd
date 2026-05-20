@@ -192,8 +192,19 @@ if(HAVE_MACH AND NOT APPLE)
   # Task #39 Path B: on FreeBSD HAVE_MACH builds, libsystem_kernel
   # supplies mach_msg, kevent_qos, struct kevent_qos_s, mach_task_self,
   # the trap-mux op-4 bell, and the EVFILT_MACHPORT bridge wrapper
-  # (src/libmach/dispatch_kevent.c).
-  target_link_libraries(dispatch PRIVATE system_kernel)
+  # (src/libmach/dispatch_kevent.c). The library lives in
+  # /usr/lib/system/ (Apple-canonical naming, not on the default
+  # ld search path) — find_library resolves the absolute path so
+  # the link works without ldconfig hints.
+  find_library(LIBSYSTEM_KERNEL system_kernel
+    PATHS /usr/lib/system
+    NO_DEFAULT_PATH)
+  if(NOT LIBSYSTEM_KERNEL)
+    message(FATAL_ERROR "libsystem_kernel not found in /usr/lib/system; "
+            "build libmach (src/libmach) and install before configuring "
+            "libdispatch with HAVE_MACH=ON.")
+  endif()
+  target_link_libraries(dispatch PRIVATE ${LIBSYSTEM_KERNEL})
 endif()
 target_link_libraries(dispatch PUBLIC
   BlocksRuntime::BlocksRuntime)
