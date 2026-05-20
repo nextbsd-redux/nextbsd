@@ -1130,9 +1130,8 @@ fi
 echo "==> creating /var runtime hierarchy in rootfs"
 mkdir -p "$WORK/rootfs/var/run" "$WORK/rootfs/var/log" \
          "$WORK/rootfs/var/db" "$WORK/rootfs/var/tmp" \
-         "$WORK/rootfs/var/empty" "$WORK/rootfs/var/spool"
+         "$WORK/rootfs/var/spool"
 chmod 1777 "$WORK/rootfs/var/tmp"
-chmod 0555 "$WORK/rootfs/var/empty"
 
 #
 # 6. assemble the bootable GPT disk image (BIOS + UEFI, rw UFS root).
