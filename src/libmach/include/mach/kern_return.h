@@ -50,4 +50,13 @@ typedef int kern_return_t;
 #define KERN_FAILURE 5
 #endif
 
+/*
+ * KERN_ABORTED — Mach semaphore wait returns this when interrupted
+ * before the timeout. libdispatch's shims/lock.c (165, 180) treats it
+ * as a retry cue. Apple's value is 14.
+ */
+#ifndef KERN_ABORTED
+#define KERN_ABORTED 14
+#endif
+
 #endif /* !_MACH_KERN_RETURN_H_ */

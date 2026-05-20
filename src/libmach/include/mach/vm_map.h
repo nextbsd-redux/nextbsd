@@ -37,20 +37,32 @@ typedef uint64_t	mach_vm_size_t;
 typedef uint64_t	mach_vm_offset_t;
 #endif
 
-typedef mach_port_name_t vm_map_t;
+/*
+ * vm_map_t REMOVED. FreeBSD's <vm/vm.h> (line 107) unconditionally
+ * declares `typedef struct vm_map *vm_map_t;` and any libdispatch TU
+ * that includes <sys/user.h> (workqueue.c does, for kinfo_proc) pulls
+ * it in, conflicting with our `typedef mach_port_name_t vm_map_t`.
+ * No userland consumer in this tree uses the Apple name outside the
+ * libmach stubs themselves (grep src/libdispatch src/libxpc src/launchd
+ * src/syslog — empty). Use mach_port_name_t directly in the API.
+ *
+ * Future callers that need Apple's vm_map_t source-shape can locally
+ * `typedef mach_port_name_t vm_map_t;` in a TU that doesn't pull in
+ * <vm/vm.h>.
+ */
 
 /*
  * vm_deallocate — release a region of a task's VM. liblaunch calls
  * this to free the out-of-line memory MIG hands back from a reply.
  * mach.ko does not implement the VM RPC subsystem yet; the libmach
- * userland stub returns KERN_NOT_SUPPORTED so callers fail-soft
+ * userland stub returns KERN_SUCCESS (no-op) so callers fail-soft
  * rather than link-fail. Promote to a real trap when OOL message
  * memory actually needs reclaiming.
  */
-kern_return_t vm_deallocate(vm_map_t target, vm_address_t address,
+kern_return_t vm_deallocate(mach_port_name_t target, vm_address_t address,
     vm_size_t size);
 
-kern_return_t vm_allocate(vm_map_t target, vm_address_t *address,
+kern_return_t vm_allocate(mach_port_name_t target, vm_address_t *address,
     vm_size_t size, int flags);
 
 #ifdef __cplusplus

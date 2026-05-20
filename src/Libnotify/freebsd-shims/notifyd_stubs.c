@@ -177,7 +177,7 @@ configuration_profile_create_notification_key(const char *path)
  * doesn't have mach_vm_*; fall through to mmap/munmap. */
 #include <sys/mman.h>
 kern_return_t
-vm_allocate(vm_map_t target_task, vm_address_t *address,
+vm_allocate(mach_port_name_t target_task, vm_address_t *address,
             vm_size_t size, int flags)
 {
 	(void)target_task; (void)flags;
@@ -189,7 +189,7 @@ vm_allocate(vm_map_t target_task, vm_address_t *address,
 }
 
 kern_return_t
-vm_deallocate(vm_map_t target_task, vm_address_t address, vm_size_t size)
+vm_deallocate(mach_port_name_t target_task, vm_address_t address, vm_size_t size)
 {
 	(void)target_task;
 	if (munmap((void *)address, size) != 0) return KERN_FAILURE;

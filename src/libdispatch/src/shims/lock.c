@@ -142,6 +142,9 @@ _dispatch_sema4_dispose_slow(_dispatch_sema4_t *sema, int policy)
 	if (policy == _DSEMA4_POLICY_FIFO) {
 		return os_put_cached_semaphore((os_semaphore_t)sema_port);
 	}
+#else
+	(void)policy;	/* unused when OS_SEMAPHORE_CACHE off — quiets
+			 * -Werror,-Wunused-parameter on FreeBSD builds */
 #endif
 	kern_return_t kr = semaphore_destroy(mach_task_self(), sema_port);
 	DISPATCH_SEMAPHORE_VERIFY_KR(kr);

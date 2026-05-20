@@ -108,13 +108,15 @@ kern_return_t mach_port_destruct(mach_port_name_t task,
  * mach_port_construct — Apple's port creation with options (guards,
  * qlimit, etc.). libdispatch's notify-port-init path passes
  * MPO_CONTEXT_AS_GUARD | MPO_STRICT plus a per-port guard cookie.
- * Forward-decl `struct mach_port_options` here so we don't have to
- * pull in <mach/message.h>; the actual struct is defined there.
+ * The struct mach_port_options_t typedef lives in <mach/message.h>;
+ * we forward-declare it here as `struct mach_port_options_t` (tag
+ * matches the libmach definition) so callers that pull only this
+ * header still get a usable signature, and callers that pull
+ * <mach/message.h> first get the same struct.
  */
-struct mach_port_options;
-typedef struct mach_port_options *mach_port_options_ptr_t_decl;
+struct mach_port_options_t;
 kern_return_t mach_port_construct(mach_port_name_t task,
-    struct mach_port_options *opts, mach_port_context_t guard,
+    struct mach_port_options_t *opts, mach_port_context_t guard,
     mach_port_name_t *name);
 
 /*
@@ -137,6 +139,35 @@ kern_return_t host_get_host_port(mach_port_name_t host_priv,
  */
 kern_return_t host_request_notification(mach_port_name_t host,
     int notify_type, mach_port_name_t notify_port);
+
+/*
+ * Mach semaphores — libdispatch's HAVE_MACH (USE_MACH_SEM) path uses
+ * Mach semaphore traps for its underlying _dispatch_sema4 primitive
+ * (shims/lock.c:127-185). Apple wires these as real kernel traps; on
+ * FreeBSD we back them with POSIX sem_t under a name-to-pointer
+ * registry. semaphore_t is conventionally a mach_port_name_t alias.
+ */
+typedef mach_port_name_t semaphore_t;
+
+/*
+ * mach_timespec_t — Apple's tv_sec/tv_nsec pair. Naming differs from
+ * POSIX struct timespec (Apple uses unsigned for both fields).
+ */
+typedef struct {
+	unsigned int	tv_sec;
+	int		tv_nsec;
+} mach_timespec_t;
+
+#ifndef SYNC_POLICY_FIFO
+#define SYNC_POLICY_FIFO	0
+#endif
+
+kern_return_t semaphore_create(mach_port_name_t task, semaphore_t *sem,
+    int policy, int value);
+kern_return_t semaphore_destroy(mach_port_name_t task, semaphore_t sem);
+kern_return_t semaphore_signal(semaphore_t sem);
+kern_return_t semaphore_wait(semaphore_t sem);
+kern_return_t semaphore_timedwait(semaphore_t sem, mach_timespec_t wait_time);
 
 #ifdef __cplusplus
 }

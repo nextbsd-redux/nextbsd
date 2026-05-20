@@ -11,6 +11,7 @@
 
 #include <sys/types.h>
 #include <sys/sysctl.h>
+#include <errno.h>
 #include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -788,7 +789,7 @@ mach_port_destruct(mach_port_name_t task, mach_port_name_t name,
  * discard the options.
  */
 kern_return_t
-mach_port_construct(mach_port_name_t task, struct mach_port_options *opts,
+mach_port_construct(mach_port_name_t task, struct mach_port_options_t *opts,
     mach_port_context_t guard, mach_port_name_t *name)
 {
 	(void)opts;
@@ -822,6 +823,166 @@ host_request_notification(mach_port_name_t host, int notify_type,
 	(void)notify_type;
 	(void)notify_port;
 	return KERN_SUCCESS;
+}
+
+/*
+ * Mach semaphores — backed by POSIX sem_t under a small registry
+ * keyed by Apple-shape mach_port_name_t identifiers. libdispatch's
+ * USE_MACH_SEM path uses these as the underlying _dispatch_sema4
+ * primitive. The implementation is intentionally minimal: linear
+ * scan over a 256-entry table, locked by a single mutex. Real
+ * workloads (dispatch_semaphore_wait, _dispatch_sema4_* on contended
+ * paths) only allocate a handful of these per process.
+ */
+#include <pthread.h>
+#include <semaphore.h>
+#include <time.h>
+
+#define MACH_SEM_TABLE_SIZE 256
+
+struct mach_sem_entry {
+	mach_port_name_t	name;
+	sem_t			sem;
+	int			in_use;
+};
+
+static struct mach_sem_entry	mach_sem_table[MACH_SEM_TABLE_SIZE];
+static pthread_mutex_t		mach_sem_table_mtx = PTHREAD_MUTEX_INITIALIZER;
+static mach_port_name_t		mach_sem_next_name = 0x10000;
+
+static struct mach_sem_entry *
+mach_sem_find_locked(mach_port_name_t name)
+{
+	for (int i = 0; i < MACH_SEM_TABLE_SIZE; i++) {
+		if (mach_sem_table[i].in_use &&
+		    mach_sem_table[i].name == name) {
+			return (&mach_sem_table[i]);
+		}
+	}
+	return (NULL);
+}
+
+kern_return_t
+semaphore_create(mach_port_name_t task, semaphore_t *sem, int policy,
+    int value)
+{
+	(void)task;
+	(void)policy;
+
+	if (sem == NULL || value < 0)
+		return (KERN_INVALID_ARGUMENT);
+
+	pthread_mutex_lock(&mach_sem_table_mtx);
+	for (int i = 0; i < MACH_SEM_TABLE_SIZE; i++) {
+		if (!mach_sem_table[i].in_use) {
+			if (sem_init(&mach_sem_table[i].sem, 0,
+			    (unsigned int)value) != 0) {
+				pthread_mutex_unlock(&mach_sem_table_mtx);
+				return (KERN_RESOURCE_SHORTAGE);
+			}
+			mach_sem_table[i].name = mach_sem_next_name++;
+			mach_sem_table[i].in_use = 1;
+			*sem = mach_sem_table[i].name;
+			pthread_mutex_unlock(&mach_sem_table_mtx);
+			return (KERN_SUCCESS);
+		}
+	}
+	pthread_mutex_unlock(&mach_sem_table_mtx);
+	return (KERN_RESOURCE_SHORTAGE);
+}
+
+kern_return_t
+semaphore_destroy(mach_port_name_t task, semaphore_t sem)
+{
+	struct mach_sem_entry *e;
+
+	(void)task;
+	pthread_mutex_lock(&mach_sem_table_mtx);
+	e = mach_sem_find_locked(sem);
+	if (e == NULL) {
+		pthread_mutex_unlock(&mach_sem_table_mtx);
+		return (KERN_INVALID_ARGUMENT);
+	}
+	(void)sem_destroy(&e->sem);
+	e->in_use = 0;
+	pthread_mutex_unlock(&mach_sem_table_mtx);
+	return (KERN_SUCCESS);
+}
+
+kern_return_t
+semaphore_signal(semaphore_t sem)
+{
+	struct mach_sem_entry *e;
+	sem_t *p = NULL;
+
+	pthread_mutex_lock(&mach_sem_table_mtx);
+	e = mach_sem_find_locked(sem);
+	if (e != NULL)
+		p = &e->sem;
+	pthread_mutex_unlock(&mach_sem_table_mtx);
+	if (p == NULL)
+		return (KERN_INVALID_ARGUMENT);
+	if (sem_post(p) != 0)
+		return (KERN_FAILURE);
+	return (KERN_SUCCESS);
+}
+
+kern_return_t
+semaphore_wait(semaphore_t sem)
+{
+	struct mach_sem_entry *e;
+	sem_t *p = NULL;
+
+	pthread_mutex_lock(&mach_sem_table_mtx);
+	e = mach_sem_find_locked(sem);
+	if (e != NULL)
+		p = &e->sem;
+	pthread_mutex_unlock(&mach_sem_table_mtx);
+	if (p == NULL)
+		return (KERN_INVALID_ARGUMENT);
+	while (sem_wait(p) != 0) {
+		if (errno == EINTR)
+			return (KERN_ABORTED);
+		return (KERN_FAILURE);
+	}
+	return (KERN_SUCCESS);
+}
+
+kern_return_t
+semaphore_timedwait(semaphore_t sem, mach_timespec_t wait_time)
+{
+	struct mach_sem_entry *e;
+	struct timespec abs_ts;
+	sem_t *p = NULL;
+
+	pthread_mutex_lock(&mach_sem_table_mtx);
+	e = mach_sem_find_locked(sem);
+	if (e != NULL)
+		p = &e->sem;
+	pthread_mutex_unlock(&mach_sem_table_mtx);
+	if (p == NULL)
+		return (KERN_INVALID_ARGUMENT);
+
+	/* sem_timedwait takes an absolute CLOCK_REALTIME deadline; Apple's
+	 * semaphore_timedwait takes a relative delta. Convert by adding to
+	 * now. */
+	if (clock_gettime(CLOCK_REALTIME, &abs_ts) != 0)
+		return (KERN_FAILURE);
+	abs_ts.tv_sec += (time_t)wait_time.tv_sec;
+	abs_ts.tv_nsec += wait_time.tv_nsec;
+	if (abs_ts.tv_nsec >= 1000000000L) {
+		abs_ts.tv_sec += 1;
+		abs_ts.tv_nsec -= 1000000000L;
+	}
+
+	if (sem_timedwait(p, &abs_ts) != 0) {
+		if (errno == ETIMEDOUT)
+			return (KERN_OPERATION_TIMED_OUT);
+		if (errno == EINTR)
+			return (KERN_ABORTED);
+		return (KERN_FAILURE);
+	}
+	return (KERN_SUCCESS);
 }
 
 /*
