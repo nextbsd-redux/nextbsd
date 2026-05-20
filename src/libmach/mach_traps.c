@@ -620,17 +620,35 @@ mig_strncpy(char *dst, const char *src, int len)
 	return n;
 }
 
-/* vm_deallocate stub — Mach VM API. Map to munmap() roughly. */
+/* vm_allocate / vm_deallocate — Mach VM API surface. vm_allocate uses
+ * mmap so callers can rely on getting a real anonymous mapping;
+ * vm_deallocate is a no-op because the same name is sometimes called
+ * on malloc'd buffers (from mig_allocate), where munmap would crash.
+ * Bounded leak — MIG out-of-line messages are KB-sized at most. */
+kern_return_t
+vm_allocate(mach_port_name_t target, vm_address_t *address,
+    vm_size_t size, int flags)
+{
+	void *p;
+	(void)target;
+	(void)flags;
+	if (address == NULL || size == 0)
+		return (KERN_INVALID_ARGUMENT);
+	p = mmap(NULL, (size_t)size, PROT_READ | PROT_WRITE,
+	    MAP_ANON | MAP_PRIVATE, -1, 0);
+	if (p == MAP_FAILED)
+		return (KERN_NO_SPACE);
+	*address = (vm_address_t)(uintptr_t)p;
+	return (KERN_SUCCESS);
+}
+
 kern_return_t
 vm_deallocate(mach_port_name_t task, vm_address_t addr, vm_size_t size)
 {
 	(void)task;
 	(void)addr;
 	(void)size;
-	/* The vm_address_t may be a malloc result (from mig_allocate),
-	 * not a real mmap region — safest is no-op. The leaked bytes
-	 * are bounded by the few KB of MIG out-of-line messages. */
-	return KERN_SUCCESS;
+	return (KERN_SUCCESS);
 }
 
 /* Additional mach_port stubs. */

@@ -85,25 +85,13 @@ current_task(void)
 	return mach_task_self();
 }
 
-/* mach_port_construct / mach_port_destruct — Apple's extended
- * port-creation API (with mach_port_options_t). For our runtime,
- * fall back to plain mach_port_allocate. */
-struct mach_port_options;
-kern_return_t
-mach_port_construct(mach_port_t task, struct mach_port_options *opts,
-                    mach_port_context_t context, mach_port_name_t *name)
-{
-	(void)opts; (void)context;
-	return mach_port_allocate(task, MACH_PORT_RIGHT_RECEIVE, name);
-}
-
-kern_return_t
-mach_port_destruct(mach_port_t task, mach_port_name_t name,
-                   mach_port_delta_t srdelta, mach_port_context_t context)
-{
-	(void)srdelta; (void)context;
-	return mach_port_deallocate(task, name);
-}
+/*
+ * mach_port_construct / mach_port_destruct are now provided by
+ * libmach (src/libmach/mach_traps.c, declared in <mach/message.h>
+ * and <mach/mach_traps.h>). Removed the local shim copies; the
+ * Round-7 / Round-1 libmach stubs cover the same fallback (route to
+ * mach_port_allocate / mach_port_deallocate).
+ */
 
 /* XPC event publisher stubs. */
 void
@@ -173,28 +161,13 @@ configuration_profile_create_notification_key(const char *path)
 	return NULL;
 }
 
-/* vm_allocate / vm_deallocate — Apple's Mach VM wrappers. Our libmach
- * doesn't have mach_vm_*; fall through to mmap/munmap. */
-#include <sys/mman.h>
-kern_return_t
-vm_allocate(mach_port_name_t target_task, vm_address_t *address,
-            vm_size_t size, int flags)
-{
-	(void)target_task; (void)flags;
-	void *p = mmap(NULL, size, PROT_READ|PROT_WRITE,
-	    MAP_ANON|MAP_PRIVATE, -1, 0);
-	if (p == MAP_FAILED) return KERN_NO_SPACE;
-	*address = (vm_address_t)p;
-	return KERN_SUCCESS;
-}
-
-kern_return_t
-vm_deallocate(mach_port_name_t target_task, vm_address_t address, vm_size_t size)
-{
-	(void)target_task;
-	if (munmap((void *)address, size) != 0) return KERN_FAILURE;
-	return KERN_SUCCESS;
-}
+/*
+ * vm_allocate / vm_deallocate are now in libmach (src/libmach/
+ * mach_traps.c). Local copies removed to avoid -Werror,-Wredundant-
+ * decls / link-time duplicate-symbol issues. The libmach versions:
+ * vm_allocate uses mmap, vm_deallocate is a no-op (safe across
+ * malloc-vs-mmap caller patterns at the cost of a bounded leak).
+ */
 
 /* copyfile — aslmanager uses this to move a single ASL log file
  * into the Archive/ directory. We don't implement the full Darwin
