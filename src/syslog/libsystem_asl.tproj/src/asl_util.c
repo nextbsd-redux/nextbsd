@@ -312,43 +312,20 @@ asl_syslog_faciliy_num_to_name(int n)
 	return NULL;
 }
 
-static xpc_connection_t
-_create_aslmanager_connection(void)
-{
-	xpc_connection_t connection;
-
-	connection = xpc_connection_create_mach_service(ASLMANAGER_SERVICE_NAME, NULL, XPC_CONNECTION_MACH_SERVICE_PRIVILEGED);
-	xpc_connection_set_event_handler(connection, ^(xpc_object_t xobj) { if (xobj != NULL) {}; });
-	xpc_connection_resume(connection);
-
-	return connection;
-}
-
 int
 asl_trigger_aslmanager(void)
 {
-	xpc_connection_t connection = _create_aslmanager_connection();
-	if (connection == NULL) return -1;
-
-	xpc_object_t request = xpc_dictionary_create(NULL, NULL, 0);
-	if (request == NULL)
-	{
-		xpc_release(connection);
-		return -1;
-	}
-
 	/*
-	 * FreeBSD port: fire-and-forget. Upstream used
-	 * xpc_connection_send_message_with_reply_sync(), which blocks
-	 * forever here — nothing answers ASLMANAGER_SERVICE_NAME on this
-	 * port and our libxpc does not synthesize a dead-service reply,
-	 * so syslogd hung in db_asl_open() before binding /var/run/log.
-	 * The trigger only needs to nudge aslmanager; the reply was an
-	 * empty ack, so an async send is functionally equivalent.
+	 * FreeBSD port: no-op. Upstream pokes the aslmanager XPC service
+	 * (ASLMANAGER_SERVICE_NAME) to run on-demand /var/log/asl
+	 * rotation. Nothing answers that service on this port, and our
+	 * libxpc handles neither send form against a dead service: the
+	 * blocking xpc_connection_send_message_with_reply_sync() hangs
+	 * syslogd in db_asl_open() before it binds /var/run/log, and the
+	 * async xpc_connection_send_message() crashes it. The trigger is
+	 * advisory — skipping it only defers log rotation — so return
+	 * success without the XPC round-trip. Restore the real call once
+	 * libxpc delivers cleanly to an absent mach service.
 	 */
-	xpc_connection_send_message(connection, request);
-
-	xpc_release(request);
-	xpc_release(connection);
 	return 0;
 }

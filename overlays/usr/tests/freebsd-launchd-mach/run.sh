@@ -368,9 +368,17 @@ fi
 if pgrep -x syslogd >/dev/null 2>&1; then
     echo "SYSLOGD-PROC-OK: syslogd running as pid $(pgrep -x syslogd)"
 else
-    echo "SYSLOGD-PROC-FAIL: syslogd not running"
+    # Diagnostics first — the expect harness kills the VM on the
+    # SYSLOGD-PROC-FAIL token, so emit that marker last.
+    echo "=== SYSLOGD-PROC diagnostics ==="
     ps auxww | grep -E 'syslogd|notifyd' || true
     ls -la /System/Library/LaunchDaemons/ 2>&1 || true
+    echo "--- syslogd main checkpoints (/tmp/syslogd_main.log) ---"
+    cat /tmp/syslogd_main.log 2>/dev/null || echo "(no syslogd_main.log)"
+    echo "--- process_message log (/tmp/process_msg.log) ---"
+    cat /tmp/process_msg.log 2>/dev/null || echo "(no process_msg.log)"
+    echo "=== end diagnostics ==="
+    echo "SYSLOGD-PROC-FAIL: syslogd not running"
     exit 1
 fi
 
