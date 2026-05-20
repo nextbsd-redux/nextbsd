@@ -1124,6 +1124,152 @@ asl_syslog_input_convert(const char *in, int len, char *rhost, uint32_t source)
 
 	snprintf(prival, sizeof(prival), "%d", pri);
 
+	/*
+	 * RFC 5424 syslog: <PRI>VERSION SP TIMESTAMP SP HOSTNAME SP
+	 * APP-NAME SP PROCID SP MSGID SP STRUCTURED-DATA SP MSG.
+	 * FreeBSD's syslog(3) emits this form. The RFC 3164 parser below
+	 * splits on the first ':', which on a 5424 line falls inside the
+	 * timestamp (e.g. "T22:31:20") and mangles every field — so detect
+	 * and parse the 5424 frame explicitly. VERSION is "1"; a NILVALUE
+	 * field is a lone '-'.
+	 */
+	if ((p[0] == '1') && (p[1] == ' '))
+	{
+		char *q, *sp;
+		char *fld[5];
+		int i, ok;
+
+		for (i = 0; i < 5; i++) fld[i] = NULL;
+
+		q = p + 2;
+		while (*q == ' ') q++;
+
+		/* TIMESTAMP HOSTNAME APP-NAME PROCID MSGID */
+		ok = 1;
+		for (i = 0; i < 5; i++)
+		{
+			sp = strchr(q, ' ');
+			if (sp == NULL) { ok = 0; break; }
+			n = sp - q;
+			fld[i] = malloc(n + 1);
+			if (fld[i] == NULL) { ok = 0; break; }
+			memcpy(fld[i], q, n);
+			fld[i][n] = '\0';
+			for (q = sp; *q == ' '; q++) ;
+		}
+
+		/* STRUCTURED-DATA: NILVALUE '-' or one-or-more [SD-ELEMENT] */
+		if (ok)
+		{
+			if (*q == '-')
+			{
+				q++;
+			}
+			else if (*q == '[')
+			{
+				while (*q == '[')
+				{
+					for (q++; (*q != '\0') && (*q != ']'); q++)
+					{
+						if ((*q == '\\') && (q[1] != '\0')) q++;
+					}
+					if (*q == ']') q++;
+				}
+			}
+			else
+			{
+				ok = 0;
+			}
+		}
+
+		if (ok)
+		{
+			while (*q == ' ') q++;
+
+			/*
+			 * TIMESTAMP (RFC 3339) -> tval. asl_core_parse_time()
+			 * can't handle the fractional seconds + numeric offset
+			 * a 5424 timestamp carries, so parse it here and emit
+			 * the "YYYY.MM.DD HH:MM:SS UTC" dotted form that the
+			 * store-time re-parse does accept. On a parse failure
+			 * leave tval NULL so the receive time is used.
+			 */
+			if ((fld[0] != NULL) && (strcmp(fld[0], "-") != 0))
+			{
+				struct tm tm5424;
+				char *rest;
+
+				memset(&tm5424, 0, sizeof(tm5424));
+				rest = strptime(fld[0], "%Y-%m-%dT%H:%M:%S", &tm5424);
+				if (rest != NULL)
+				{
+					tick = timegm(&tm5424);
+
+					/* skip optional ".frac" */
+					if (*rest == '.')
+					{
+						for (rest++; (*rest >= '0') && (*rest <= '9'); rest++) ;
+					}
+
+					/* apply optional "+hh:mm" / "-hh:mm" offset */
+					if ((*rest == '+') || (*rest == '-'))
+					{
+						int osign, oh, om;
+
+						osign = (*rest == '-') ? -1 : 1;
+						oh = om = 0;
+						sscanf(rest + 1, "%2d:%2d", &oh, &om);
+						tick -= osign * (oh * 3600 + om * 60);
+					}
+
+					gmtime_r(&tick, &time);
+					asprintf(&tval, "%d.%02d.%02d %02d:%02d:%02d UTC", time.tm_year + 1900, time.tm_mon + 1, time.tm_mday, time.tm_hour, time.tm_min, time.tm_sec);
+				}
+			}
+
+			/* HOSTNAME -> hval */
+			if ((fld[1] != NULL) && (strcmp(fld[1], "-") != 0))
+			{
+				hval = fld[1];
+				fld[1] = NULL;
+			}
+
+			/* APP-NAME -> Sender */
+			if ((fld[2] != NULL) && (strcmp(fld[2], "-") != 0))
+			{
+				sval = fld[2];
+				fld[2] = NULL;
+			}
+
+			/* PROCID -> PID */
+			if ((fld[3] != NULL) && (strcmp(fld[3], "-") != 0))
+			{
+				pval = fld[3];
+				fld[3] = NULL;
+			}
+
+			/* MSGID (fld[4]) has no ASL key — dropped. */
+
+			/* MSG — everything after STRUCTURED-DATA */
+			n = strlen(q);
+			if (n > 0)
+			{
+				mval = malloc(n + 1);
+				if (mval != NULL)
+				{
+					memcpy(mval, q, n);
+					mval[n] = '\0';
+				}
+			}
+
+			for (i = 0; i < 5; i++) free(fld[i]);
+			goto build_msg;
+		}
+
+		/* not a 5424 frame — fall through to RFC 3164 parsing */
+		for (i = 0; i < 5; i++) free(fld[i]);
+	}
+
 	/* check if a timestamp is included */
 	if (((len - index) > 15) && (p[9] == ':') && (p[12] == ':') && (p[15] == ' '))
 	{
@@ -1233,6 +1379,7 @@ asl_syslog_input_convert(const char *in, int len, char *rhost, uint32_t source)
 		mval[n] = '\0';
 	}
 
+build_msg:
 	if (fval == NULL) fval = asl_syslog_faciliy_num_to_name(LOG_USER);
 
 	msg = asl_msg_new(ASL_TYPE_MSG);
