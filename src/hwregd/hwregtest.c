@@ -29,7 +29,16 @@ main(void)
 	kern_return_t kr;
 	mach_msg_return_t mr;
 	mach_msg_header_t req;
-	struct hwreg_event_msg ev;
+	/*
+	 * Receive buffer for the ack EVENT. A Mach receive needs room for
+	 * the message *and* the trailer the kernel appends after it; a
+	 * buffer sized at exactly sizeof(struct hwreg_event_msg) gets
+	 * MACH_RCV_TOO_LARGE (0x10004004). Pad with a max trailer.
+	 */
+	struct {
+		struct hwreg_event_msg	ev;
+		mach_msg_max_trailer_t	trailer;
+	} rcv;
 
 	kr = bootstrap_look_up(bootstrap_port, "org.freebsd.hwregd", &svc);
 	if (kr != KERN_SUCCESS) {
@@ -74,20 +83,20 @@ main(void)
 	}
 
 	/* Receive the subscription-ack EVENT hwregd sends back. */
-	memset(&ev, 0, sizeof(ev));
-	mr = mach_msg(&ev.hdr, MACH_RCV_MSG | MACH_RCV_TIMEOUT, 0,
-	    sizeof(ev), notify, 5000, MACH_PORT_NULL);
+	memset(&rcv, 0, sizeof(rcv));
+	mr = mach_msg(&rcv.ev.hdr, MACH_RCV_MSG | MACH_RCV_TIMEOUT, 0,
+	    sizeof(rcv), notify, 5000, MACH_PORT_NULL);
 	if (mr != MACH_MSG_SUCCESS) {
 		printf("HWREG-PUBSUB-FAIL: ack receive: 0x%x\n", (unsigned)mr);
 		return 1;
 	}
-	if (ev.hdr.msgh_id != HWREG_MSG_EVENT) {
+	if (rcv.ev.hdr.msgh_id != HWREG_MSG_EVENT) {
 		printf("HWREG-PUBSUB-FAIL: unexpected msg id=%d\n",
-		    ev.hdr.msgh_id);
+		    rcv.ev.hdr.msgh_id);
 		return 1;
 	}
-	ev.text[sizeof(ev.text) - 1] = '\0';
+	rcv.ev.text[sizeof(rcv.ev.text) - 1] = '\0';
 	printf("HWREG-PUBSUB-OK: event kind=%c text=[%s]\n",
-	    ev.kind ? ev.kind : '?', ev.text);
+	    rcv.ev.kind ? rcv.ev.kind : '?', rcv.ev.text);
 	return 0;
 }
