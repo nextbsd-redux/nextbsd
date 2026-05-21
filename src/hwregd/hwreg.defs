@@ -122,3 +122,33 @@ routine hwreg_unwatch(
 	server		: mach_port_t;
 	watcher_id	: uint64_t
 );
+
+/*
+ * hwreg_load_driver — kldload the driver for node `id` (plan §3.5).
+ * A node that already has a driver is a no-op (loaded_module = the
+ * existing driver). Otherwise the device's pnpinfo is matched against
+ * linker.hints and the claiming module loaded; error_code carries an
+ * errno (0 = ok, ENOENT = nothing in linker.hints claims the device).
+ * KERN_INVALID_ARGUMENT for an unknown id.
+ */
+routine hwreg_load_driver(
+	server		: mach_port_t;
+	id		: uint64_t;
+	out loaded_module : hwreg_name_t;
+	out error_code	: int
+);
+
+/*
+ * hwreg_retain / hwreg_release — adjust node `id`'s reference count.
+ * A detached node lingers in the registry until its count reaches
+ * zero. KERN_INVALID_ARGUMENT for an unknown id.
+ */
+routine hwreg_retain(
+	server		: mach_port_t;
+	id		: uint64_t
+);
+
+routine hwreg_release(
+	server		: mach_port_t;
+	id		: uint64_t
+);
