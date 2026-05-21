@@ -175,9 +175,11 @@ xlog(const char *fmt, ...)
 /*
  * Send one event message to a subscriber's port. MACH_SEND_TIMEOUT so
  * a dead or backed-up subscriber can't block hwregd. The registry
- * holds send rights, so the disposition is COPY_SEND.
+ * holds send rights, so the disposition is COPY_SEND. Returns the
+ * mach_msg result so the caller can prune a subscriber that has gone
+ * away (MACH_SEND_INVALID_DEST).
  */
-static void
+static mach_msg_return_t
 send_event_to(mach_port_t dst, char kind, const char *text)
 {
 	struct hwreg_event_msg m;
@@ -197,12 +199,49 @@ send_event_to(mach_port_t dst, char kind, const char *text)
 	if (mr != MACH_MSG_SUCCESS)
 		xlog("Mach: send to subscriber 0x%x failed: 0x%x",
 		    (unsigned)dst, (unsigned)mr);
+	return mr;
+}
+
+/*
+ * Drop a subscriber whose notify port has died. Called when a send
+ * fails MACH_SEND_INVALID_DEST — the client exited and its port is now
+ * a dead name. Without this every later publish keeps re-sending (and
+ * re-failing) to it and the 32-slot table never frees the entry.
+ *
+ * The port is matched by value, not index: publish_event() snapshots
+ * the registry and sends outside the lock, so the live array may have
+ * shifted by the time we get here. The dead name is then deallocated
+ * so it doesn't leak hwregd's IPC space. A live-but-slow subscriber
+ * fails MACH_SEND_TIMED_OUT (not INVALID_DEST) and is never dropped.
+ */
+static void
+drop_subscriber(mach_port_t dead)
+{
+	int i, total = -1;
+
+	pthread_mutex_lock(&subscribers_lock);
+	for (i = 0; i < n_subscribers; i++) {
+		if (subscribers[i] == dead) {
+			/* Compact: move the last entry into the gap. */
+			subscribers[i] = subscribers[--n_subscribers];
+			total = n_subscribers;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&subscribers_lock);
+
+	if (total >= 0) {
+		xlog("Mach: dropped dead subscriber 0x%x (total=%d)",
+		    (unsigned)dead, total);
+		(void)mach_port_deallocate(mach_task_self(), dead);
+	}
 }
 
 /*
  * Publish a parsed device event to every subscriber. The registry is
  * snapshotted under the lock and the sends happen outside it, so a
- * slow send never blocks a new subscriber from being registered.
+ * slow send never blocks a new subscriber from being registered. A
+ * subscriber whose port has died is pruned via drop_subscriber().
  */
 static void
 publish_event(char kind, const char *text)
@@ -215,8 +254,11 @@ publish_event(char kind, const char *text)
 	memcpy(snap, subscribers, (size_t)n * sizeof(snap[0]));
 	pthread_mutex_unlock(&subscribers_lock);
 
-	for (i = 0; i < n; i++)
-		send_event_to(snap[i], kind, text);
+	for (i = 0; i < n; i++) {
+		if (send_event_to(snap[i], kind, text) ==
+		    MACH_SEND_INVALID_DEST)
+			drop_subscriber(snap[i]);
+	}
 }
 
 /*
@@ -882,8 +924,13 @@ mach_service_thread(void *arg)
 			} else {
 				xlog("Mach: subscriber 0x%x added (total=%d)",
 				    (unsigned)client, total);
-				/* Ack so the client confirms the round-trip. */
-				send_event_to(client, 'A',
+				/*
+				 * Ack so the client confirms the round-trip.
+				 * If the client already vanished the next
+				 * publish_event() prunes it — no need to act
+				 * on the result here.
+				 */
+				(void)send_event_to(client, 'A',
 				    "subscribed to " HWREGD_SERVICE_NAME);
 			}
 		} else {
