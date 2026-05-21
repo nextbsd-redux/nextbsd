@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.apple.configd.plist
+
+  Boot-time launchd plist for configd, the SCDynamicStore
+  configuration daemon (freebsd-launchd-mach port). configd hosts the
+  system dynamic store over the MIG `config` Mach subsystem.
+
+  iter 1 is the daemon skeleton: configd checks the
+  com.apple.SystemConfiguration.configd Mach service in and runs the
+  config.defs receive loop with stub routine handlers. RunAtLoad so
+  it starts at PID-1 launchd boot; KeepAlive so a crash is respawned.
+  StandardErrorPath/StandardOutPath route its log to
+  /var/log/configd.stderr — the path the CI boot test dumps.
+
+  Plan: see the configd-port plan (Mach-IPC track).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.apple.configd</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/sbin/configd</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>MachServices</key>
+    <dict>
+        <key>com.apple.SystemConfiguration.configd</key>
+        <true/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/var/log/configd.stderr</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/configd.stderr</string>
+</dict>
+</plist>

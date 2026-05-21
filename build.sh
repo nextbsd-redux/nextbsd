@@ -949,6 +949,40 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hwregquery" \
     || { echo "FAIL: hwregquery not built"; exit 1; }
 
 #
+# 3r2. build configd (src/configd/) — configd iter 1.
+#      configd hosts the SCDynamicStore over the MIG `config` Mach
+#      subsystem (config.defs, base id 20000). iter 1 is the daemon
+#      skeleton: checks com.apple.SystemConfiguration.configd in and
+#      runs the config.defs receive loop with stub routine handlers.
+#      Generate the config.defs MIG stubs (config_server() demux),
+#      then build + install /usr/sbin/configd. Same mig.sh + migcom
+#      path as the launchd / hwregd MIG steps above.
+#      configd port plan: Mach-IPC track (not the sockets/DO plan).
+#
+echo "==> building configd (src/configd)"
+CONFIGD_MIG="$WORK/configd-mig"
+mkdir -p "$CONFIGD_MIG"
+( cd "$CONFIGD_MIG" && \
+  MIGCC=/usr/bin/cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
+  /bin/sh "$ROOT/src/bootstrap_cmds/migcom.tproj/mig.sh" \
+    -I"$ROOT/src/libmach/include" \
+    -header config.h -user configUser.c \
+    -server configServer.c -sheader configServer.h \
+    "$ROOT/src/configd/config.defs" ) \
+  || { echo "FAIL: mig could not process config.defs"; exit 1; }
+test -s "$CONFIGD_MIG/configServer.c" \
+    || { echo "FAIL: mig produced no configServer.c"; exit 1; }
+make -C "$ROOT/src/configd" \
+    DESTDIR="$WORK/rootfs" \
+    SYSROOT="$WORK/rootfs" \
+    MIGOUT="$CONFIGD_MIG" \
+    all install
+ls -lh "$WORK/rootfs/usr/sbin/configd"
+test -x "$WORK/rootfs/usr/sbin/configd" \
+    || { echo "FAIL: /usr/sbin/configd not installed or not executable"; exit 1; }
+echo "==> CONFIGD-BUILD-OK"
+
+#
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at
 #     Phase J0 (commit 455a727). This step:
