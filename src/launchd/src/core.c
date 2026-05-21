@@ -257,6 +257,38 @@ static void calendarinterval_setalarm(job_t j, struct calendarinterval *ci);
 static void calendarinterval_callback(void);
 static void calendarinterval_sanity_check(void);
 
+/*
+ * HardwareMatch — fire a job on a hwregd device event (Phase K, see
+ * the hardware-registry/IOKit plan §4). Each <dict> in a job's
+ * HardwareMatch <array> becomes one struct hwmatch criterion: a
+ * device matches the criterion when every field that is present
+ * equals the device's corresponding field; a NULL field means
+ * "any". This mirrors hwregd's watch filter (hwreg.defs hwreg_watch
+ * matches name / class / driver). iter 1 only parses and stores the
+ * criteria; iter 2 registers them against hwregd's watch RPC and
+ * dispatches matching jobs on a HWREG_EVT_ARRIVED event.
+ */
+struct hwmatch {
+	SLIST_ENTRY(hwmatch) sle;
+	char *name;	// device (BSD) name, e.g. "em0"; NULL == any
+	char *cls;	// newbus device class; NULL == any
+	char *driver;	// attached driver name; NULL == any
+};
+
+/* HardwareMatchAction — what launchd does when a criterion matches a
+ * device event. StartOnArrival is deliberately the zero value: a
+ * calloc(3)'d job that sets HardwareMatch without an explicit
+ * HardwareMatchAction then defaults to it.
+ */
+enum {
+	HWMATCH_ACTION_START_ON_ARRIVAL = 0,
+	HWMATCH_ACTION_KEEPALIVE,
+	HWMATCH_ACTION_ONESHOT,
+};
+
+static bool hwmatch_new_from_obj(job_t j, launch_data_t obj);
+static void hwmatch_delete(job_t j, struct hwmatch *hm);
+
 struct envitem {
 	SLIST_ENTRY(envitem) sle;
 	char *value;
@@ -506,6 +538,7 @@ struct job_s {
 	SLIST_HEAD(, limititem) limits;
 	SLIST_HEAD(, machservice) machservices;
 	SLIST_HEAD(, semaphoreitem) semaphores;
+	SLIST_HEAD(, hwmatch) hwmatches;
 	SLIST_HEAD(, waiting_for_removal) removal_watchers;
 	struct waiting4attach *w4a;
 	job_t original;
@@ -565,7 +598,9 @@ struct job_s {
 	mach_port_t asport;
 	au_asid_t asid;
 	uuid_t expected_audit_uuid;
-	bool 	
+	// man launchd.plist --> HardwareMatchAction (HWMATCH_ACTION_*)
+	uint8_t hwmatch_action;
+	bool
 		// man launchd.plist --> Debug
 		debug:1,
 		// man launchd.plist --> KeepAlive == false
@@ -1370,6 +1405,7 @@ job_remove(job_t j)
 	struct machservice *ms;
 	struct limititem *li;
 	struct envitem *ei;
+	struct hwmatch *hm;
 
 	if (j->alias) {
 		/* HACK: Egregious code duplication. But as with machservice_delete(),
@@ -1472,6 +1508,9 @@ job_remove(job_t j)
 	}
 	while ((si = SLIST_FIRST(&j->semaphores))) {
 		semaphoreitem_delete(j, si);
+	}
+	while ((hm = SLIST_FIRST(&j->hwmatches))) {
+		hwmatch_delete(j, hm);
 	}
 	while ((w4r = SLIST_FIRST(&j->removal_watchers))) {
 		waiting4removal_delete(j, w4r);
@@ -2724,6 +2763,21 @@ job_import_string(job_t j, const char *key, const char *value)
 			return;
 		}
 		break;
+	case 'h':
+	case 'H':
+		if (strcasecmp(key, LAUNCH_JOBKEY_HARDWAREMATCHACTION) == 0) {
+			if (strcasecmp(value, LAUNCH_HWMATCHACTION_STARTONARRIVAL) == 0) {
+				j->hwmatch_action = HWMATCH_ACTION_START_ON_ARRIVAL;
+			} else if (strcasecmp(value, LAUNCH_HWMATCHACTION_KEEPALIVE) == 0) {
+				j->hwmatch_action = HWMATCH_ACTION_KEEPALIVE;
+			} else if (strcasecmp(value, LAUNCH_HWMATCHACTION_ONESHOT) == 0) {
+				j->hwmatch_action = HWMATCH_ACTION_ONESHOT;
+			} else {
+				job_log(j, LOG_ERR, "Unknown value for key %s: %s", key, value);
+			}
+			return;
+		}
+		break;
 	default:
 		job_log(j, LOG_WARNING, "Unknown key for string: %s", key);
 		break;
@@ -3036,6 +3090,14 @@ job_import_array(job_t j, const char *key, launch_data_t value)
 		if (strcasecmp(key, LAUNCH_JOBKEY_STARTCALENDARINTERVAL) == 0) {
 			for (i = 0; i < value_cnt; i++) {
 				calendarinterval_new_from_obj(j, launch_data_array_get_index(value, i));
+			}
+		}
+		break;
+	case 'h':
+	case 'H':
+		if (strcasecmp(key, LAUNCH_JOBKEY_HARDWAREMATCH) == 0) {
+			for (i = 0; i < value_cnt; i++) {
+				hwmatch_new_from_obj(j, launch_data_array_get_index(value, i));
 			}
 		}
 		break;
@@ -5856,6 +5918,105 @@ calendarinterval_callback(void)
 		j->start_pending = true;
 		job_dispatch(j, false);
 	}
+}
+
+/*
+ * HardwareMatch criterion parsing. Each <dict> in a job's
+ * HardwareMatch <array> is walked into a fresh struct hwmatch. Only
+ * the fields hwregd's watch RPC can actually filter on are honoured
+ * — name, class, driver (see hwreg.defs hwreg_watch) — so an
+ * unsupported key is reported and skipped rather than silently
+ * widening the match to "any".
+ */
+struct hwmatch_dict_walk {
+	job_t j;
+	struct hwmatch *hm;
+};
+
+static void
+hwmatch_new_from_obj_dict_walk(launch_data_t obj, const char *key, void *context)
+{
+	struct hwmatch_dict_walk *hdw = context;
+	job_t j = hdw->j;
+	char **where2put = NULL;
+
+	if (unlikely(LAUNCH_DATA_STRING != launch_data_get_type(obj))) {
+		job_log(j, LOG_WARNING, "Non-string value for HardwareMatch "
+		    "criterion \"%s\" ignored.", key);
+		return;
+	}
+
+	if (strcasecmp(key, LAUNCH_JOBKEY_HWMATCH_NAME) == 0) {
+		where2put = &hdw->hm->name;
+	} else if (strcasecmp(key, LAUNCH_JOBKEY_HWMATCH_CLASS) == 0) {
+		where2put = &hdw->hm->cls;
+	} else if (strcasecmp(key, LAUNCH_JOBKEY_HWMATCH_DRIVER) == 0) {
+		where2put = &hdw->hm->driver;
+	} else {
+		job_log(j, LOG_WARNING, "Unsupported HardwareMatch criterion "
+		    "\"%s\" ignored (hwregd matches name/class/driver).", key);
+		return;
+	}
+
+	if (!(*where2put = strdup(launch_data_get_string(obj)))) {
+		(void)job_assumes_zero(j, errno);
+	}
+}
+
+bool
+hwmatch_new_from_obj(job_t j, launch_data_t obj)
+{
+	struct hwmatch_dict_walk hdw;
+	struct hwmatch *hm;
+
+	if (!job_assumes(j, obj != NULL)) {
+		return false;
+	}
+
+	if (unlikely(LAUNCH_DATA_DICTIONARY != launch_data_get_type(obj))) {
+		job_log(j, LOG_WARNING, "Each HardwareMatch array element must "
+		    "be a dictionary of criteria.");
+		return false;
+	}
+
+	hm = calloc(1, sizeof(struct hwmatch));
+	if (!job_assumes(j, hm != NULL)) {
+		return false;
+	}
+
+	hdw.j = j;
+	hdw.hm = hm;
+	launch_data_dict_iterate(obj, hwmatch_new_from_obj_dict_walk, &hdw);
+
+	if (hm->name == NULL && hm->cls == NULL && hm->driver == NULL) {
+		job_log(j, LOG_WARNING, "Ignoring a HardwareMatch dictionary "
+		    "with no usable criteria.");
+		free(hm);
+		return false;
+	}
+
+	SLIST_INSERT_HEAD(&j->hwmatches, hm, sle);
+
+	/* The action is a separate plist key; dictionary iteration order
+	 * is unspecified, so it may not be parsed yet — log only the
+	 * criterion here. iter 2 logs the effective action at watch
+	 * registration, once the whole plist has been imported. */
+	job_log(j, LOG_NOTICE, "HardwareMatch criterion: name=%s class=%s "
+	    "driver=%s", hm->name ? hm->name : "*", hm->cls ? hm->cls : "*",
+	    hm->driver ? hm->driver : "*");
+
+	return true;
+}
+
+void
+hwmatch_delete(job_t j, struct hwmatch *hm)
+{
+	SLIST_REMOVE(&j->hwmatches, hm, hwmatch, sle);
+
+	free(hm->name);
+	free(hm->cls);
+	free(hm->driver);
+	free(hm);
 }
 
 bool

@@ -134,6 +134,24 @@ __BEGIN_DECLS
 
 #define LAUNCH_JOBKEY_LAUNCHEVENTS "LaunchEvents"
 
+/* HardwareMatch — fire a job on a hwregd device event (Phase K; see
+ * the FreeBSD hardware-registry/IOKit plan §4). HardwareMatch is an
+ * <array> of criteria <dict>s; HardwareMatchAction is a string
+ * selecting what launchd does when a device matches. */
+#define LAUNCH_JOBKEY_HARDWAREMATCH "HardwareMatch"
+#define LAUNCH_JOBKEY_HARDWAREMATCHACTION "HardwareMatchAction"
+
+/* Keys inside a HardwareMatch criteria dictionary — they mirror the
+ * fields hwregd's watch RPC filters on (hwreg.defs hwreg_watch). */
+#define LAUNCH_JOBKEY_HWMATCH_NAME "name"
+#define LAUNCH_JOBKEY_HWMATCH_CLASS "class"
+#define LAUNCH_JOBKEY_HWMATCH_DRIVER "driver"
+
+/* HardwareMatchAction values. StartOnArrival is the default. */
+#define LAUNCH_HWMATCHACTION_STARTONARRIVAL "StartOnArrival"
+#define LAUNCH_HWMATCHACTION_KEEPALIVE "KeepAlive"
+#define LAUNCH_HWMATCHACTION_ONESHOT "OneShot"
+
 #define LAUNCH_JOBKEY_CAL_MINUTE "Minute"
 #define LAUNCH_JOBKEY_CAL_HOUR "Hour"
 #define LAUNCH_JOBKEY_CAL_DAY "Day"
