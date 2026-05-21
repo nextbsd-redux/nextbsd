@@ -92,6 +92,9 @@ int		hwreg_children(uint64_t parent_id, uint64_t *ids, int max);
  */
 int		hwreg_copy(uint64_t id, struct hw_node *dst);
 
+/* Like hwreg_copy(), but keyed on the newbus name. */
+int		hwreg_copy_by_name(const char *name, struct hw_node *dst);
+
 /* Human-readable name for a node state. */
 const char     *hw_state_name(enum hw_node_state s);
 

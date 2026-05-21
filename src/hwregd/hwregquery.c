@@ -4,10 +4,11 @@
  * Looks up the org.freebsd.hwregd Mach service, then exercises the MIG
  * hwreg.defs routines: walks the registry tree (hwreg_get_root /
  * hwreg_get_children / hwreg_get_node), unpacks a node's property bag
- * (hwreg_get_properties), and runs a criteria lookup (hwreg_lookup).
- * Prints HWREG-RPC-OK on success — the CI boot test (run.sh /
- * boot-test.sh) matches that marker. Built against the MIG user stub
- * hwregUser.c.
+ * (hwreg_get_properties), runs a criteria lookup (hwreg_lookup), and
+ * registers + cancels a device-event watch (hwreg_watch /
+ * hwreg_unwatch). Prints HWREG-RPC-OK on success — the CI boot test
+ * (run.sh / boot-test.sh) matches that marker. Built against the MIG
+ * user stub hwregUser.c.
  */
 #include <mach/mach.h>
 #include <servers/bootstrap.h>
@@ -143,7 +144,49 @@ main(void)
 		printf("  lookup class=CPU: %u match(es)\n", (unsigned)nids);
 	}
 
-	printf("HWREG-RPC-OK: walked %d nodes, props + lookup OK "
+	/* hwreg_watch / hwreg_unwatch — register a criteria watch, cancel it. */
+	{
+		mach_port_t notify = MACH_PORT_NULL;
+		nvlist_t *crit = nvlist_create_dictionary(0);
+		void *packed;
+		size_t psz = 0;
+		hwreg_blob_t critblob;
+		uint64_t wid = 0;
+
+		kr = mach_port_allocate(mach_task_self(),
+		    MACH_PORT_RIGHT_RECEIVE, &notify);
+		if (kr != KERN_SUCCESS) {
+			printf("HWREG-RPC-FAIL: mach_port_allocate: 0x%x\n",
+			    (unsigned)kr);
+			return 1;
+		}
+		nvlist_add_string(crit, "class", "CPU");
+		packed = nvlist_pack(crit, &psz);
+		nvlist_destroy(crit);
+		if (packed == NULL || psz > sizeof(critblob)) {
+			printf("HWREG-RPC-FAIL: watch criteria pack failed\n");
+			return 1;
+		}
+		memcpy(critblob, packed, psz);
+		free(packed);
+		kr = hwreg_watch(svc, critblob, (mach_msg_type_number_t)psz,
+		    HWREG_EVT_ARRIVED | HWREG_EVT_DEPARTED, notify, &wid);
+		if (kr != KERN_SUCCESS || wid == 0) {
+			printf("HWREG-RPC-FAIL: hwreg_watch: 0x%x wid=%llu\n",
+			    (unsigned)kr, (unsigned long long)wid);
+			return 1;
+		}
+		printf("  watch class=CPU registered: watcher_id=%llu\n",
+		    (unsigned long long)wid);
+		kr = hwreg_unwatch(svc, wid);
+		if (kr != KERN_SUCCESS) {
+			printf("HWREG-RPC-FAIL: hwreg_unwatch: 0x%x\n",
+			    (unsigned)kr);
+			return 1;
+		}
+	}
+
+	printf("HWREG-RPC-OK: walked %d nodes; props, lookup, watch OK "
 	    "(root id=%llu)\n", walked, (unsigned long long)root);
 	return 0;
 }

@@ -446,3 +446,18 @@ hwreg_copy(uint64_t id, struct hw_node *dst)
 	pthread_mutex_unlock(&reg_lock);
 	return found;
 }
+
+int
+hwreg_copy_by_name(const char *name, struct hw_node *dst)
+{
+	struct hw_node *n;
+	int found;
+
+	pthread_mutex_lock(&reg_lock);
+	n = find_by_name(name);
+	if (n != NULL)
+		*dst = *n;
+	found = (n != NULL);
+	pthread_mutex_unlock(&reg_lock);
+	return found;
+}

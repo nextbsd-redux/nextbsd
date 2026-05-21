@@ -19,4 +19,9 @@ typedef char		hwreg_name_t[32];	/* c_string[32]  */
 typedef char		hwreg_path_t[256];	/* c_string[256] */
 typedef uint8_t		hwreg_blob_t[2048];	/* array[*:2048] of hwreg_byte_t */
 
+/* hwreg_watch event_mask bits (iter 3). */
+#define HWREG_EVT_ARRIVED	0x1u	/* a matching device attached */
+#define HWREG_EVT_DEPARTED	0x2u	/* a matching device detached */
+#define HWREG_EVT_CHANGED	0x4u	/* a matching device's state changed */
+
 #endif /* HWREG_MIG_TYPES_H */
