@@ -982,6 +982,20 @@ test -x "$WORK/rootfs/usr/sbin/configd" \
     || { echo "FAIL: /usr/sbin/configd not installed or not executable"; exit 1; }
 echo "==> CONFIGD-BUILD-OK"
 
+# configtest — configd iter 3 store round-trip test client. Speaks
+# config.defs directly via the MIG user stub configUser.c (generated
+# above). run.sh runs it and checks for the CONFIGD-STORE-OK marker.
+echo "==> building configtest"
+cc -I"$CONFIGD_MIG" -I"$ROOT/src/configd" \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/configtest" \
+   "$ROOT/src/configd/configtest.c" "$CONFIGD_MIG/configUser.c" \
+   -llaunch -lsystem_kernel
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/configtest" \
+    || { echo "FAIL: configtest not built"; exit 1; }
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at

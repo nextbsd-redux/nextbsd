@@ -393,6 +393,18 @@ expect {
     "HWREG-RPC-OK" { puts "\nOK: hwregd Mach-RPC registry query works" }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: CONFIGD-STORE marker not seen"
+        exit 1
+    }
+    "CONFIGD-STORE-FAIL" {
+        puts "\nFAIL: configd SCDynamicStore round-trip failed"
+        exit 1
+    }
+    "CONFIGD-STORE-OK" { puts "\nOK: configd SCDynamicStore round-trip works" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"
