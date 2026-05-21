@@ -100,3 +100,25 @@ routine hwreg_lookup(
 	criteria	: hwreg_blob_t;
 	out matches	: hwreg_id_array_t
 );
+
+/*
+ * hwreg_watch — register a criteria-filtered device-event watch
+ * (iter 3). The client passes a send right to its notify port;
+ * hwregd pushes an EVENT message to it whenever a device whose fields
+ * match `criteria` (name / class / driver, packed nvlist — empty =
+ * match any) generates an event in `event_mask` (the HWREG_EVT_*
+ * bits in hwreg_mig_types.h). Returns a watcher_id for hwreg_unwatch.
+ */
+routine hwreg_watch(
+	server		: mach_port_t;
+	criteria	: hwreg_blob_t;
+	event_mask	: uint32_t;
+	notify_port	: mach_port_make_send_t;
+	out watcher_id	: uint64_t
+);
+
+/* hwreg_unwatch — cancel the watch `watcher_id`. */
+routine hwreg_unwatch(
+	server		: mach_port_t;
+	watcher_id	: uint64_t
+);

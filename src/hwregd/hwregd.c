@@ -123,6 +123,7 @@ struct hwreg_event_msg {
 };
 
 #define HWREGD_MAX_SUBSCRIBERS	32
+#define HWREGD_MAX_WATCHERS	32
 
 static volatile sig_atomic_t got_term = 0;
 
@@ -133,6 +134,25 @@ static volatile sig_atomic_t got_term = 0;
 static mach_port_t	subscribers[HWREGD_MAX_SUBSCRIBERS];
 static int		n_subscribers;
 static pthread_mutex_t	subscribers_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/*
+ * Watcher registry (iter 3). Like the subscriber registry, but each
+ * entry carries a criteria filter + an event mask: the Mach thread
+ * adds/removes on hwreg_watch/_unwatch, the devctl thread reads it in
+ * notify_watchers(). An empty criterion string means "match any".
+ */
+struct hwreg_watcher {
+	uint64_t	id;		/* watcher id; 0 = free slot */
+	mach_port_t	port;		/* client notify port (send right) */
+	uint32_t	mask;		/* HWREG_EVT_* bits */
+	char		want_name[32];
+	char		want_class[32];
+	char		want_driver[32];
+};
+static struct hwreg_watcher watchers[HWREGD_MAX_WATCHERS];
+static int		n_watchers;
+static uint64_t		next_watcher_id = 1;
+static pthread_mutex_t	watchers_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /*
  * devmatch carried these as command-line flags. hwregd only runs
@@ -273,6 +293,75 @@ publish_event(char kind, const char *text)
 		if (send_event_to(snap[i], kind, text) ==
 		    MACH_SEND_INVALID_DEST)
 			drop_subscriber(snap[i]);
+	}
+}
+
+/*
+ * Drop the watcher holding `port` — called when an event push fails
+ * MACH_SEND_INVALID_DEST (the client exited). Mirrors drop_subscriber.
+ */
+static void
+watcher_drop(mach_port_t port)
+{
+	int i, found = 0;
+
+	pthread_mutex_lock(&watchers_lock);
+	for (i = 0; i < n_watchers; i++) {
+		if (watchers[i].port == port) {
+			xlog("Mach: dropped dead watcher %ju (port 0x%x)",
+			    (uintmax_t)watchers[i].id, (unsigned)port);
+			watchers[i] = watchers[--n_watchers];
+			found = 1;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&watchers_lock);
+	if (found)
+		(void)mach_port_deallocate(mach_task_self(), port);
+}
+
+/*
+ * Fan a device arrival/departure out to the watchers whose criteria
+ * and event mask match it. Called from the devctl thread after the
+ * registry has absorbed the event, so the node's class and driver
+ * are available to match against. An empty criterion matches any.
+ */
+static void
+notify_watchers(char kind, const char *devname)
+{
+	uint32_t evt = (kind == '+') ? HWREG_EVT_ARRIVED : HWREG_EVT_DEPARTED;
+	struct hwreg_watcher snap[HWREGD_MAX_WATCHERS];
+	struct hw_node n;
+	char text[EVENT_LINE_MAX];
+	int i, ns;
+
+	if (!hwreg_copy_by_name(devname, &n))
+		return;			/* not in the registry — nothing to match */
+
+	pthread_mutex_lock(&watchers_lock);
+	ns = n_watchers;
+	memcpy(snap, watchers, (size_t)ns * sizeof(snap[0]));
+	pthread_mutex_unlock(&watchers_lock);
+
+	(void)snprintf(text, sizeof(text), "%s id=%ju name=%s class=%s",
+	    (kind == '+') ? "arrived" : "departed",
+	    (uintmax_t)n.id, n.name, n.classname);
+
+	for (i = 0; i < ns; i++) {
+		if ((snap[i].mask & evt) == 0)
+			continue;
+		if (snap[i].want_name[0] != '\0' &&
+		    strcmp(snap[i].want_name, n.name) != 0)
+			continue;
+		if (snap[i].want_class[0] != '\0' &&
+		    strcmp(snap[i].want_class, n.classname) != 0)
+			continue;
+		if (snap[i].want_driver[0] != '\0' &&
+		    strcmp(snap[i].want_driver, n.driver) != 0)
+			continue;
+		if (send_event_to(snap[i].port, kind, text) ==
+		    MACH_SEND_INVALID_DEST)
+			watcher_drop(snap[i].port);
 	}
 }
 
@@ -820,6 +909,9 @@ handle_attach_detach(char *line, const char *kind)
 		hwreg_note_attach(dev, parent, loc);
 	else
 		hwreg_note_detach(dev);
+
+	/* Fan it out to the matching iter-3 watchers. */
+	notify_watchers(line[0], dev);
 }
 
 /* --- devctl event loop -------------------------------------------- */
@@ -1040,6 +1132,86 @@ hwreg_lookup(mach_port_t server, hwreg_blob_t criteria,
 	nvlist_destroy(nv);
 	*matchesCnt = (mach_msg_type_number_t)
 	    (ctx.count > ctx.max ? ctx.max : ctx.count);
+	return KERN_SUCCESS;
+}
+
+/*
+ * hwreg_watch — register a criteria-filtered device-event watch. The
+ * notify_port arrives as a send right hwregd keeps until hwreg_unwatch
+ * (or until a push to it fails and watcher_drop() prunes it).
+ */
+kern_return_t
+hwreg_watch(mach_port_t server, hwreg_blob_t criteria,
+    mach_msg_type_number_t criteriaCnt, uint32_t event_mask,
+    mach_port_t notify_port, uint64_t *watcher_id)
+{
+	struct hwreg_watcher w;
+	nvlist_t *nv;
+	int total;
+
+	(void)server;
+	memset(&w, 0, sizeof(w));
+	w.port = notify_port;
+	w.mask = event_mask;
+
+	/* Criteria is optional — a zero-length blob matches any device. */
+	if (criteriaCnt > 0) {
+		nv = nvlist_unpack(criteria, criteriaCnt);
+		if (nv == NULL) {
+			(void)mach_port_deallocate(mach_task_self(),
+			    notify_port);
+			return KERN_INVALID_ARGUMENT;	/* malformed criteria */
+		}
+		if (nvlist_exists_string(nv, "name"))
+			strlcpy(w.want_name, nvlist_get_string(nv, "name"),
+			    sizeof(w.want_name));
+		if (nvlist_exists_string(nv, "class"))
+			strlcpy(w.want_class, nvlist_get_string(nv, "class"),
+			    sizeof(w.want_class));
+		if (nvlist_exists_string(nv, "driver"))
+			strlcpy(w.want_driver, nvlist_get_string(nv, "driver"),
+			    sizeof(w.want_driver));
+		nvlist_destroy(nv);
+	}
+
+	pthread_mutex_lock(&watchers_lock);
+	if (n_watchers >= HWREGD_MAX_WATCHERS) {
+		pthread_mutex_unlock(&watchers_lock);
+		(void)mach_port_deallocate(mach_task_self(), notify_port);
+		return KERN_RESOURCE_SHORTAGE;
+	}
+	w.id = next_watcher_id++;
+	watchers[n_watchers++] = w;
+	total = n_watchers;
+	*watcher_id = w.id;
+	pthread_mutex_unlock(&watchers_lock);
+
+	xlog("Mach: watcher %ju registered (mask=0x%x, total=%d)",
+	    (uintmax_t)w.id, (unsigned)event_mask, total);
+	return KERN_SUCCESS;
+}
+
+/* hwreg_unwatch — cancel the watch `watcher_id`. */
+kern_return_t
+hwreg_unwatch(mach_port_t server, uint64_t watcher_id)
+{
+	mach_port_t port = MACH_PORT_NULL;
+	int i;
+
+	(void)server;
+	pthread_mutex_lock(&watchers_lock);
+	for (i = 0; i < n_watchers; i++) {
+		if (watchers[i].id == watcher_id) {
+			port = watchers[i].port;
+			watchers[i] = watchers[--n_watchers];
+			break;
+		}
+	}
+	pthread_mutex_unlock(&watchers_lock);
+	if (port == MACH_PORT_NULL)
+		return KERN_INVALID_ARGUMENT;	/* unknown watcher_id */
+	(void)mach_port_deallocate(mach_task_self(), port);
+	xlog("Mach: watcher %ju cancelled", (uintmax_t)watcher_id);
 	return KERN_SUCCESS;
 }
 
