@@ -27,7 +27,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/proc_info.h>	/* rusage_info_t + the proc_* struct vocabulary */
+#include <sys/sysctl.h>		/* sysctl(KERN_PROC_PID) — proc_pidinfo backing */
+#include <sys/user.h>		/* struct kinfo_proc */
 
 /* proc_track_dirty() flags — Apple's <sys/proc_info.h> values. */
 #define PROC_DIRTY_TRACK		0x1
@@ -108,12 +111,73 @@ proc_listpgrppids(pid_t pgrpid, void *buffer, int buffersize)
 	return 0;
 }
 
+/*
+ * proc_pidinfo() — native FreeBSD port via sysctl(KERN_PROC_PID).
+ *
+ * Previously a stub returning 0. That made launchd's job_new_anonymous()
+ * treat every anonymous caller as "process gone" and return j=NULL, so
+ * every bootstrap_look_up() from a non-launchd process failed with
+ * BOOTSTRAP_NO_MEMORY. Backed by sysctl now (the two flavors launchd
+ * actually uses: PROC_PIDT_SHORTBSDINFO in core.c, and
+ * PROC_PIDUNIQIDENTIFIERINFO in runtime.c). Returns the bytes written
+ * (Apple's contract), or 0 on failure with errno set by sysctl.
+ */
 static __inline int
 proc_pidinfo(int pid, int flavor, uint64_t arg, void *buffer, int buffersize)
 {
-	(void)pid; (void)flavor; (void)arg; (void)buffer; (void)buffersize;
-	_LIBPROC_SHIM_WARN("proc_pidinfo");
-	return 0;
+	struct kinfo_proc kp;
+	size_t kplen = sizeof(kp);
+	int mib[4];
+
+	(void)arg;
+	if (buffer == NULL || pid <= 0)
+		return 0;
+
+	mib[0] = CTL_KERN;
+	mib[1] = KERN_PROC;
+	mib[2] = KERN_PROC_PID;
+	mib[3] = pid;
+
+	switch (flavor) {
+	case PROC_PIDT_SHORTBSDINFO: {
+		struct proc_bsdshortinfo si;
+
+		if (buffersize < (int)sizeof(si))
+			return 0;
+		if (sysctl(mib, 4, &kp, &kplen, NULL, 0) != 0 || kplen == 0)
+			return 0;	/* sysctl sets errno (ESRCH if pid gone) */
+		memset(&si, 0, sizeof(si));
+		si.pbsi_pid    = (uint32_t)kp.ki_pid;
+		si.pbsi_ppid   = (uint32_t)kp.ki_ppid;
+		si.pbsi_pgid   = (uint32_t)kp.ki_pgid;
+		si.pbsi_status = (uint32_t)kp.ki_stat;
+		strlcpy(si.pbsi_comm, kp.ki_comm, sizeof(si.pbsi_comm));
+		si.pbsi_uid    = kp.ki_uid;
+		si.pbsi_gid    = kp.ki_groups[0];
+		si.pbsi_ruid   = kp.ki_ruid;
+		si.pbsi_rgid   = kp.ki_rgid;
+		si.pbsi_svuid  = kp.ki_svuid;
+		si.pbsi_svgid  = kp.ki_svgid;
+		memcpy(buffer, &si, sizeof(si));
+		return (int)sizeof(si);
+	}
+	case PROC_PIDUNIQIDENTIFIERINFO: {
+		struct proc_uniqidentifierinfo ui;
+
+		if (buffersize < (int)sizeof(ui))
+			return 0;
+		if (sysctl(mib, 4, &kp, &kplen, NULL, 0) != 0 || kplen == 0)
+			return 0;
+		memset(&ui, 0, sizeof(ui));
+		ui.p_uniqueid  = (uint64_t)kp.ki_pid;
+		ui.p_puniqueid = (uint64_t)kp.ki_ppid;
+		memcpy(buffer, &ui, sizeof(ui));
+		return (int)sizeof(ui);
+	}
+	default:
+		_LIBPROC_SHIM_WARN("proc_pidinfo");
+		return 0;
+	}
 }
 
 static __inline int
