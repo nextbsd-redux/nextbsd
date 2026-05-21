@@ -27,6 +27,7 @@
 #include <sys/types.h>
 
 #include <mach/mach.h>
+#include <mach/mig_errors.h>	/* mig_allocate — OOL reply-buffer hook */
 #include <servers/bootstrap.h>
 
 #include <signal.h>
@@ -179,13 +180,16 @@ _configget(mach_port_t server, xmlData_t key, mach_msg_type_number_t keyCnt,
 	} else {
 		vm_address_t buf = 0;
 
-		if (vm_allocate(mach_task_self(), &buf, vlen,
-		    VM_FLAGS_ANYWHERE) != KERN_SUCCESS) {
+		/*
+		 * mig_allocate is the out-of-line buffer hook the
+		 * generated MIG stubs use; config.defs marks `data`
+		 * `dealloc`, so MIG releases it with the matching
+		 * mig_deallocate once the reply is sent.
+		 */
+		if (mig_allocate(&buf, vlen) != KERN_SUCCESS) {
 			*status = kSCStatusFailed;
 		} else {
 			memcpy((void *)buf, val, vlen);
-			/* MIG ships *data out of line and (`dealloc`)
-			 * vm_deallocate()s it once the reply is sent. */
 			*data = (xmlDataOut_t)buf;
 			*dataCnt = (mach_msg_type_number_t)vlen;
 			*status = kSCStatusOK;
