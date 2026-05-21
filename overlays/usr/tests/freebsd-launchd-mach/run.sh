@@ -445,6 +445,6 @@ if [ ! -x "$hwregtest" ]; then
     echo "HWREG-PUBSUB-FAIL: $hwregtest missing"
     exit 1
 fi
-"$hwregtest" || true	# round-trip not yet working — non-fatal, see boot-test.sh
+"$hwregtest" || true	# marker (HWREG-PUBSUB-OK/FAIL) gates in boot-test.sh
 
 exit 0
