@@ -801,12 +801,17 @@ static void
 ipc_entry_sysinit(void *arg __unused)
 {
 
-	#if 0 /*PhaseB-bisect*/
+	/*
+	 * Re-enabled (were #if 0 /PhaseB-bisect/, 2026-05-20): without
+	 * these, every process that touched Mach IPC leaked its entire
+	 * IPC space on exit/exec — leaked ports and stale send rights to
+	 * launchd's bootstrap port accumulated until client RPC degraded
+	 * (MACH_SEND_INVALID_DEST / hangs). The page-fault that caused
+	 * the original Phase B bisect is guarded inside
+	 * ipc_entry_list_close (the p_machdata == NULL early return).
+	 */
 	EVENTHANDLER_REGISTER(process_exit, ipc_entry_list_close, NULL, EVENTHANDLER_PRI_ANY);
-#endif
-	#if 0 /*PhaseB-bisect*/
 	EVENTHANDLER_REGISTER(process_exec, ipc_entry_list_close, NULL, EVENTHANDLER_PRI_ANY);
-#endif
 }
 
 SYSINIT(ipc_entry, SI_SUB_KLD, SI_ORDER_ANY, ipc_entry_sysinit, NULL);
