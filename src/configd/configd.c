@@ -1,29 +1,33 @@
 /*
  * configd.c — SCDynamicStore configuration daemon (freebsd-launchd-mach
- * port), iteration 1: the daemon skeleton.
+ * port).
  *
  * Apple's configd hosts the SCDynamicStore — a system-wide key->plist
  * store with change notifications — over the MIG `config` subsystem
  * (config.defs, base id 20000). This port keeps that real Mach IPC
  * design (see the configd-port memory / plan).
  *
- * iter 1 brings up the daemon shell only: check the bootstrap service
- * in with launchd and run a raw mach_msg receive loop that hands each
- * message to the MIG-generated config_server() demux. The routine
- * handlers (_configopen ... _snapshot) are stubs here — they return a
- * "not implemented" status with all out-parameters zeroed. iter 2
- * replaces them with the real store engine (session.c + _SCD.c).
+ * The daemon checks the bootstrap service in with launchd and runs a
+ * raw mach_msg receive loop that hands each message to the
+ * MIG-generated config_server() demux. Apple's configd.tproj drives
+ * IPC through libdispatch's dispatch_mach channel API; that API is
+ * unfinished in this port, so configd uses a raw mach_msg loop
+ * instead — the same proven pattern hwregd and launchd use here.
+ * configd is a single-purpose server, so its main thread is the
+ * receive loop (no worker thread needed).
  *
- * Apple's configd.tproj drives IPC through libdispatch's dispatch_mach
- * channel API; that API is unfinished in this port, so configd uses a
- * raw mach_msg loop instead — the same proven pattern hwregd and
- * launchd use here. configd is a single-purpose server, so its main
- * thread is the receive loop (no worker thread needed).
+ * iter 1 was the daemon skeleton (all routine handlers stubbed).
+ * iter 2 implements the store core — configopen / configget /
+ * configset / configremove against config_store.c. configlist, the
+ * add / multi variants, the notify* routines, and snapshot are still
+ * stubs; they land in later iterations (notifications need iter 4's
+ * per-session ports).
  */
 
 #include <sys/types.h>
 
 #include <mach/mach.h>
+#include <mach/mig_errors.h>	/* mig_allocate — OOL reply-buffer hook */
 #include <servers/bootstrap.h>
 
 #include <signal.h>
@@ -35,13 +39,18 @@
 #include <unistd.h>
 
 #include "config_types.h"
+#include "config_store.h"
 #include "configServer.h"	/* MIG: config_server() demux + _config* protos */
 
 /*
- * SCDynamicStore status returned by the iter-1 stub handlers. 1001 is
- * Apple's kSCStatusFailed; iter 2 pulls in the real SC status codes.
+ * SCDynamicStore status codes — a subset of Apple's SCError.h. configd
+ * and the SystemConfiguration client must agree on these values: they
+ * cross the wire as the `status` reply field.
  */
-#define SCD_STATUS_NOTYET	1001
+#define kSCStatusOK			0
+#define kSCStatusFailed			1001
+#define kSCStatusInvalidArgument	1002
+#define kSCStatusNoKey			1004
 
 /* Inline message buffer. config.defs payloads (xmlData) travel as
  * out-of-line descriptors, so the inline message is small — header,
@@ -78,11 +87,25 @@ clog(const char *fmt, ...)
 }
 
 /*
- * MIG routine handlers — config_server() dispatches to these. iter 1
- * stubs: every out-parameter is given a safe zero value (so the
- * MIG-generated reply marshalling never sends an uninitialised port
- * or out-of-line pointer) and the SCDynamicStore status reports
- * "not implemented". Real implementations land in iter 2.
+ * Release a received out-of-line argument. config.defs marks the
+ * xmlData in-args without `dealloc`, so MIG does not free them — the
+ * handler owns them once unpacked (cf. Apple's _SCUnserialize).
+ */
+static void
+release_ool(const void *p, mach_msg_type_number_t len)
+{
+	if (len != 0)
+		(void)vm_deallocate(mach_task_self(), (vm_address_t)p, len);
+}
+
+/*
+ * MIG routine handlers — config_server() dispatches to these. iter 2
+ * implements the store core — configopen / configget / configset /
+ * configremove against config_store.c. The remaining routines (list,
+ * the add / multi-get / multi-set variants, and every notify*) are
+ * still stubs returning kSCStatusFailed; they land in later iters.
+ * Every out-parameter is given a safe value first so the MIG reply
+ * marshalling never sends an uninitialised port or OOL pointer.
  */
 
 kern_return_t
@@ -90,10 +113,24 @@ _configopen(mach_port_t server, xmlData_t name, mach_msg_type_number_t nameCnt,
     xmlData_t options, mach_msg_type_number_t optionsCnt,
     mach_port_t *session, int *status)
 {
-	(void)server; (void)name; (void)nameCnt;
-	(void)options; (void)optionsCnt;
-	*session = MACH_PORT_NULL;
-	*status = SCD_STATUS_NOTYET;
+	/*
+	 * iter 2 has no per-session ports yet (iter 4 adds them, where
+	 * change notifications need a per-client delivery port). Hand
+	 * the client a send right to this same service port: insert a
+	 * MAKE_SEND right onto the receive-right name and let MIG's
+	 * mach_port_move_send_t move it out in the reply.
+	 */
+	release_ool(name, nameCnt);
+	release_ool(options, optionsCnt);
+
+	if (mach_port_insert_right(mach_task_self(), server, server,
+	    MACH_MSG_TYPE_MAKE_SEND) != KERN_SUCCESS) {
+		*session = MACH_PORT_NULL;
+		*status = kSCStatusFailed;
+		return KERN_SUCCESS;
+	}
+	*session = server;
+	*status = kSCStatusOK;
 	return KERN_SUCCESS;
 }
 
@@ -105,7 +142,7 @@ _configlist(mach_port_t server, xmlData_t key, mach_msg_type_number_t keyCnt,
 	(void)server; (void)key; (void)keyCnt; (void)isRegex;
 	*list = NULL;
 	*listCnt = 0;
-	*status = SCD_STATUS_NOTYET;
+	*status = kSCStatusFailed;
 	return KERN_SUCCESS;
 }
 
@@ -116,7 +153,7 @@ _configadd(mach_port_t server, xmlData_t key, mach_msg_type_number_t keyCnt,
 {
 	(void)server; (void)key; (void)keyCnt; (void)data; (void)dataCnt;
 	*newInstance = 0;
-	*status = SCD_STATUS_NOTYET;
+	*status = kSCStatusFailed;
 	return KERN_SUCCESS;
 }
 
@@ -125,11 +162,41 @@ _configget(mach_port_t server, xmlData_t key, mach_msg_type_number_t keyCnt,
     xmlDataOut_t *data, mach_msg_type_number_t *dataCnt, int *newInstance,
     int *status)
 {
-	(void)server; (void)key; (void)keyCnt;
+	const void	*val;
+	size_t		vlen;
+
+	(void)server;
 	*data = NULL;
 	*dataCnt = 0;
 	*newInstance = 0;
-	*status = SCD_STATUS_NOTYET;
+
+	if (keyCnt == 0) {
+		*status = kSCStatusInvalidArgument;
+	} else if (store_get(key, keyCnt, &val, &vlen) != 0) {
+		*status = kSCStatusNoKey;
+	} else if (vlen == 0) {
+		/* A stored empty value — nothing to ship out of line. */
+		*status = kSCStatusOK;
+	} else {
+		vm_address_t buf = 0;
+
+		/*
+		 * mig_allocate is the out-of-line buffer hook the
+		 * generated MIG stubs use; config.defs marks `data`
+		 * `dealloc`, so MIG releases it with the matching
+		 * mig_deallocate once the reply is sent.
+		 */
+		if (mig_allocate(&buf, vlen) != KERN_SUCCESS) {
+			*status = kSCStatusFailed;
+		} else {
+			memcpy((void *)buf, val, vlen);
+			*data = (xmlDataOut_t)buf;
+			*dataCnt = (mach_msg_type_number_t)vlen;
+			*status = kSCStatusOK;
+		}
+	}
+
+	release_ool(key, keyCnt);
 	return KERN_SUCCESS;
 }
 
@@ -138,10 +205,19 @@ _configset(mach_port_t server, xmlData_t key, mach_msg_type_number_t keyCnt,
     xmlData_t data, mach_msg_type_number_t dataCnt, int instance,
     int *newInstance, int *status)
 {
-	(void)server; (void)key; (void)keyCnt; (void)data; (void)dataCnt;
-	(void)instance;
+	(void)server;
+	(void)instance;		/* the "instance" generation count is unused */
 	*newInstance = 0;
-	*status = SCD_STATUS_NOTYET;
+
+	if (keyCnt == 0)
+		*status = kSCStatusInvalidArgument;
+	else if (store_set(key, keyCnt, data, dataCnt) != 0)
+		*status = kSCStatusFailed;
+	else
+		*status = kSCStatusOK;
+
+	release_ool(key, keyCnt);
+	release_ool(data, dataCnt);
 	return KERN_SUCCESS;
 }
 
@@ -149,8 +225,16 @@ kern_return_t
 _configremove(mach_port_t server, xmlData_t key, mach_msg_type_number_t keyCnt,
     int *status)
 {
-	(void)server; (void)key; (void)keyCnt;
-	*status = SCD_STATUS_NOTYET;
+	(void)server;
+
+	if (keyCnt == 0)
+		*status = kSCStatusInvalidArgument;
+	else if (store_remove(key, keyCnt) != 0)
+		*status = kSCStatusNoKey;
+	else
+		*status = kSCStatusOK;
+
+	release_ool(key, keyCnt);
 	return KERN_SUCCESS;
 }
 
@@ -161,7 +245,7 @@ _configadd_s(mach_port_t server, xmlData_t key, mach_msg_type_number_t keyCnt,
 {
 	(void)server; (void)key; (void)keyCnt; (void)data; (void)dataCnt;
 	*newInstance = 0;
-	*status = SCD_STATUS_NOTYET;
+	*status = kSCStatusFailed;
 	return KERN_SUCCESS;
 }
 
@@ -170,7 +254,7 @@ _confignotify(mach_port_t server, xmlData_t key, mach_msg_type_number_t keyCnt,
     int *status)
 {
 	(void)server; (void)key; (void)keyCnt;
-	*status = SCD_STATUS_NOTYET;
+	*status = kSCStatusFailed;
 	return KERN_SUCCESS;
 }
 
@@ -183,7 +267,7 @@ _configget_m(mach_port_t server, xmlData_t keys, mach_msg_type_number_t keysCnt,
 	(void)patterns; (void)patternsCnt;
 	*data = NULL;
 	*dataCnt = 0;
-	*status = SCD_STATUS_NOTYET;
+	*status = kSCStatusFailed;
 	return KERN_SUCCESS;
 }
 
@@ -194,7 +278,7 @@ _configset_m(mach_port_t server, xmlData_t data, mach_msg_type_number_t dataCnt,
 {
 	(void)server; (void)data; (void)dataCnt;
 	(void)removeData; (void)removeCnt; (void)notify; (void)notifyCnt;
-	*status = SCD_STATUS_NOTYET;
+	*status = kSCStatusFailed;
 	return KERN_SUCCESS;
 }
 
@@ -203,7 +287,7 @@ _notifyadd(mach_port_t server, xmlData_t key, mach_msg_type_number_t keyCnt,
     int isRegex, int *status)
 {
 	(void)server; (void)key; (void)keyCnt; (void)isRegex;
-	*status = SCD_STATUS_NOTYET;
+	*status = kSCStatusFailed;
 	return KERN_SUCCESS;
 }
 
@@ -212,7 +296,7 @@ _notifyremove(mach_port_t server, xmlData_t key, mach_msg_type_number_t keyCnt,
     int isRegex, int *status)
 {
 	(void)server; (void)key; (void)keyCnt; (void)isRegex;
-	*status = SCD_STATUS_NOTYET;
+	*status = kSCStatusFailed;
 	return KERN_SUCCESS;
 }
 
@@ -223,7 +307,7 @@ _notifychanges(mach_port_t server, xmlDataOut_t *list,
 	(void)server;
 	*list = NULL;
 	*listCnt = 0;
-	*status = SCD_STATUS_NOTYET;
+	*status = kSCStatusFailed;
 	return KERN_SUCCESS;
 }
 
@@ -232,7 +316,7 @@ _notifyviaport(mach_port_t server, mach_port_t port, mach_msg_id_t msgid,
     int *status)
 {
 	(void)server; (void)port; (void)msgid;
-	*status = SCD_STATUS_NOTYET;
+	*status = kSCStatusFailed;
 	return KERN_SUCCESS;
 }
 
@@ -240,7 +324,7 @@ kern_return_t
 _notifycancel(mach_port_t server, int *status)
 {
 	(void)server;
-	*status = SCD_STATUS_NOTYET;
+	*status = kSCStatusFailed;
 	return KERN_SUCCESS;
 }
 
@@ -250,7 +334,7 @@ _notifyset(mach_port_t server, xmlData_t keys, mach_msg_type_number_t keysCnt,
 {
 	(void)server; (void)keys; (void)keysCnt;
 	(void)patterns; (void)patternsCnt;
-	*status = SCD_STATUS_NOTYET;
+	*status = kSCStatusFailed;
 	return KERN_SUCCESS;
 }
 
@@ -259,7 +343,7 @@ _notifyviafd(mach_port_t server, mach_port_t fileport, int identifier,
     int *status)
 {
 	(void)server; (void)fileport; (void)identifier;
-	*status = SCD_STATUS_NOTYET;
+	*status = kSCStatusFailed;
 	return KERN_SUCCESS;
 }
 
@@ -267,7 +351,7 @@ kern_return_t
 _snapshot(mach_port_t server, int *status)
 {
 	(void)server;
-	*status = SCD_STATUS_NOTYET;
+	*status = kSCStatusFailed;
 	return KERN_SUCCESS;
 }
 

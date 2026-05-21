@@ -1,11 +1,12 @@
 # configd — SCDynamicStore configuration daemon (freebsd-launchd-mach).
 #
-# configd iter 1: the daemon skeleton. Builds to /usr/sbin/configd,
-# runs as a launchd-managed daemon under PID-1 launchd (plist at
-# /System/Library/LaunchDaemons/com.apple.configd.plist). It checks
-# the com.apple.SystemConfiguration.configd Mach service in and runs
-# a raw mach_msg loop over the MIG config.defs demux (config_server());
-# the routine handlers are stubs until iter 2's store engine.
+# configd builds to /usr/sbin/configd and runs as a launchd-managed
+# daemon under PID-1 launchd (plist at /System/Library/LaunchDaemons/
+# com.apple.configd.plist). It checks the
+# com.apple.SystemConfiguration.configd Mach service in and runs a raw
+# mach_msg loop over the MIG config.defs demux (config_server()).
+# iter 2 adds config_store.c — the SCDynamicStore key/value store
+# backing configopen / configget / configset / configremove.
 #
 # Build:   cd src/configd && make SYSROOT=/path/to/rootfs MIGOUT=...
 # Install: make DESTDIR=/path/to/rootfs install
@@ -13,7 +14,7 @@
 PROG=		configd
 MAN=
 
-SRCS=		configd.c
+SRCS=		configd.c config_store.c
 
 # configServer.c — MIG-generated server demux + routine stubs for
 # config.defs. build.sh runs mig and passes MIGOUT=; a bare standalone
