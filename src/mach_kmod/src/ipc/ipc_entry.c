@@ -800,18 +800,21 @@ ipc_entry_list_close(void *arg __unused, struct proc *p)
 static void
 ipc_entry_sysinit(void *arg __unused)
 {
-
 	/*
-	 * Re-enabled (were #if 0 /PhaseB-bisect/, 2026-05-20): without
-	 * these, every process that touched Mach IPC leaked its entire
-	 * IPC space on exit/exec — leaked ports and stale send rights to
-	 * launchd's bootstrap port accumulated until client RPC degraded
-	 * (MACH_SEND_INVALID_DEST / hangs). The page-fault that caused
-	 * the original Phase B bisect is guarded inside
-	 * ipc_entry_list_close (the p_machdata == NULL early return).
+	 * Left DISABLED. Re-enabling these (commit 51e4f9e, now reverted)
+	 * re-introduced a kernel panic: on process exit, ipc_entry_list_close
+	 * -> mach_port_close -> ipc_port_destroy -> ipc_kmsg_destroy
+	 * page-faults when the exiting process owns a receive right that
+	 * still has messages queued on it (observed at ~21 min uptime on
+	 * bsd01, 2026-05-20). The original Phase B bisect disabled them for
+	 * exactly this reason — it is NOT only the p_machdata==NULL fault.
+	 * Re-enabling needs the ipc_kmsg_destroy / port-destroy path fixed
+	 * first; until then the per-process IPC-space leak (task #41) stands.
 	 */
+#if 0
 	EVENTHANDLER_REGISTER(process_exit, ipc_entry_list_close, NULL, EVENTHANDLER_PRI_ANY);
 	EVENTHANDLER_REGISTER(process_exec, ipc_entry_list_close, NULL, EVENTHANDLER_PRI_ANY);
+#endif
 }
 
 SYSINIT(ipc_entry, SI_SUB_KLD, SI_ORDER_ANY, ipc_entry_sysinit, NULL);
