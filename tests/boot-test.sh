@@ -369,6 +369,18 @@ expect {
     "SYSLOG-RUN-OK" { puts "\nOK: syslog round-trip works" }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: HWREG-PUBSUB marker not seen"
+        exit 1
+    }
+    "HWREG-PUBSUB-FAIL" {
+        puts "\nFAIL: hwregd Mach pub/sub round-trip failed"
+        exit 1
+    }
+    "HWREG-PUBSUB-OK" { puts "\nOK: hwregd Mach pub/sub works" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"

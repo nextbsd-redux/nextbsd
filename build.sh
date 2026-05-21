@@ -904,6 +904,19 @@ test -x "$WORK/rootfs/usr/sbin/hwregd" \
     || { echo "FAIL: /usr/sbin/hwregd not installed or not executable"; exit 1; }
 echo "==> HWREGD-BUILD-OK"
 
+# hwregtest — iter 3b-ii test client for hwregd's Mach pub/sub bus.
+# run.sh subscribes with it and checks for the HWREG-PUBSUB-OK marker.
+echo "==> building hwregtest"
+mkdir -p "$WORK/rootfs/usr/tests/freebsd-launchd-mach"
+cc -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hwregtest" \
+   "$ROOT/src/hwregd/hwregtest.c" \
+   -llaunch -lsystem_kernel
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hwregtest" \
+    || { echo "FAIL: hwregtest not built"; exit 1; }
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at

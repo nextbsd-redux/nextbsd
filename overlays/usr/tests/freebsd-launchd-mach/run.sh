@@ -438,4 +438,13 @@ else
     exit 1
 fi
 
+# HWREG-PUBSUB — hwregd Mach pub/sub round-trip: subscribe to the
+# org.freebsd.hwregd service and confirm the subscription ack event.
+hwregtest=/usr/tests/freebsd-launchd-mach/hwregtest
+if [ ! -x "$hwregtest" ]; then
+    echo "HWREG-PUBSUB-FAIL: $hwregtest missing"
+    exit 1
+fi
+"$hwregtest" || exit 1
+
 exit 0

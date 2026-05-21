@@ -1,7 +1,7 @@
 /*
  * hwregd.c — freebsd-launchd-mach hardware registry daemon.
  *
- * Phase 0 / iter 3a: structured event parsing. Reads kernel device
+ * Phase 0 / iter 3b-ii: Mach pub/sub bus. Reads kernel device
  * events from /dev/devctl and parses each by class:
  *   `?` nomatch -> match against the merged /boot/kernel +
  *                  /boot/modules linker.hints; for a genuine
@@ -12,8 +12,9 @@
  *   `-` detach  -> a device went away.
  *   `!` notify  -> a subsystem state change (link up/down, ACPI
  *                  lid, CAM errors, ...).
- * iter 3a logs the parsed events; iter 3b publishes them over a
- * Mach-RPC pub/sub bus for launchd HardwareMatch and other clients.
+ * Parsed events are logged and published over a Mach-RPC pub/sub
+ * bus: clients look up "org.freebsd.hwregd", send a SUBSCRIBE, and
+ * receive EVENT messages. launchd HardwareMatch will be one client.
  *
  * Backlog vs. live: at startup the kernel hands hwregd a backlog of
  * `?` events buffered from early boot. kldload'ing for those wedged
@@ -91,7 +92,32 @@
 /* Mach service name hwregd checks in with launchd for its pub/sub bus. */
 #define HWREGD_SERVICE_NAME	"org.freebsd.hwregd"
 
+/*
+ * Mach pub/sub wire protocol (iter 3b-ii). A client looks the service
+ * up, sends a bare-header SUBSCRIBE (its own notify port travels as
+ * the message's remote port), and then receives EVENT messages.
+ */
+#define HWREG_MSG_SUBSCRIBE	0x48575201	/* client  -> hwregd */
+#define HWREG_MSG_EVENT		0x48575202	/* hwregd   -> subscriber */
+
+/* The event message hwregd pushes to each subscriber. */
+struct hwreg_event_msg {
+	mach_msg_header_t	hdr;
+	char			kind;	/* '+' '-' '!' '?' or 'A' (sub ack) */
+	char			text[479];	/* formatted event, NUL-term */
+};
+
+#define HWREGD_MAX_SUBSCRIBERS	32
+
 static volatile sig_atomic_t got_term = 0;
+
+/*
+ * Subscriber registry. The Mach thread appends on SUBSCRIBE; the
+ * devctl (main) thread reads it to publish. Guarded by the mutex.
+ */
+static mach_port_t	subscribers[HWREGD_MAX_SUBSCRIBERS];
+static int		n_subscribers;
+static pthread_mutex_t	subscribers_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /*
  * devmatch carried these as command-line flags. hwregd only runs
@@ -144,6 +170,53 @@ xlog(const char *fmt, ...)
 	}
 	(void)fputc('\n', stderr);
 	(void)fflush(stderr);
+}
+
+/*
+ * Send one event message to a subscriber's port. MACH_SEND_TIMEOUT so
+ * a dead or backed-up subscriber can't block hwregd. The registry
+ * holds send rights, so the disposition is COPY_SEND.
+ */
+static void
+send_event_to(mach_port_t dst, char kind, const char *text)
+{
+	struct hwreg_event_msg m;
+	mach_msg_return_t mr;
+
+	memset(&m, 0, sizeof(m));
+	m.hdr.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0);
+	m.hdr.msgh_size = sizeof(m);
+	m.hdr.msgh_remote_port = dst;
+	m.hdr.msgh_local_port = MACH_PORT_NULL;
+	m.hdr.msgh_id = HWREG_MSG_EVENT;
+	m.kind = kind;
+	strlcpy(m.text, text, sizeof(m.text));
+
+	mr = mach_msg(&m.hdr, MACH_SEND_MSG | MACH_SEND_TIMEOUT,
+	    sizeof(m), 0, MACH_PORT_NULL, 200, MACH_PORT_NULL);
+	if (mr != MACH_MSG_SUCCESS)
+		xlog("Mach: send to subscriber 0x%x failed: 0x%x",
+		    (unsigned)dst, (unsigned)mr);
+}
+
+/*
+ * Publish a parsed device event to every subscriber. The registry is
+ * snapshotted under the lock and the sends happen outside it, so a
+ * slow send never blocks a new subscriber from being registered.
+ */
+static void
+publish_event(char kind, const char *text)
+{
+	mach_port_t snap[HWREGD_MAX_SUBSCRIBERS];
+	int i, n;
+
+	pthread_mutex_lock(&subscribers_lock);
+	n = n_subscribers;
+	memcpy(snap, subscribers, (size_t)n * sizeof(snap[0]));
+	pthread_mutex_unlock(&subscribers_lock);
+
+	for (i = 0; i < n; i++)
+		send_event_to(snap[i], kind, text);
 }
 
 /*
@@ -577,7 +650,14 @@ handle_nomatch(char *nomatch)
 	}
 	pnpinfo = nomatch + 4;
 
-	xlog("nomatch: bus=%s pnpinfo=%s", bus, pnpinfo);
+	{
+		char text[EVENT_LINE_MAX];
+
+		(void)snprintf(text, sizeof(text),
+		    "nomatch: bus=%s pnpinfo=%s", bus, pnpinfo);
+		xlog("%s", text);
+		publish_event('?', text);
+	}
 	if (hints == NULL)
 		return;
 	search_hints(bus, pnpinfo);
@@ -628,9 +708,17 @@ handle_notify(const char *line)
 	event_kv(kv, "system", system, sizeof(system));
 	event_kv(kv, "subsystem", subsystem, sizeof(subsystem));
 	event_kv(kv, "type", type, sizeof(type));
-	xlog("notify: system=%s subsystem=%s type=%s",
-	    system[0] ? system : "?", subsystem[0] ? subsystem : "?",
-	    type[0] ? type : "?");
+	{
+		char text[EVENT_LINE_MAX];
+
+		(void)snprintf(text, sizeof(text),
+		    "notify: system=%s subsystem=%s type=%s",
+		    system[0] ? system : "?",
+		    subsystem[0] ? subsystem : "?",
+		    type[0] ? type : "?");
+		xlog("%s", text);
+		publish_event('!', text);
+	}
 }
 
 /*
@@ -660,8 +748,15 @@ handle_attach_detach(char *line, const char *kind)
 		*on = '\0';
 		parent = on + 4;
 	}
-	xlog("%s: dev=%s parent=%s loc=[%s]", kind,
-	    dev[0] ? dev : "?", parent[0] ? parent : "?", loc);
+	{
+		char text[EVENT_LINE_MAX];
+
+		(void)snprintf(text, sizeof(text),
+		    "%s: dev=%s parent=%s loc=[%s]", kind,
+		    dev[0] ? dev : "?", parent[0] ? parent : "?", loc);
+		xlog("%s", text);
+		publish_event(line[0], text);
+	}
 }
 
 /* --- devctl event loop -------------------------------------------- */
@@ -770,9 +865,30 @@ mach_service_thread(void *arg)
 			    (unsigned)mr);
 			break;
 		}
-		/* iter 3b-ii: dispatch subscribe/unsubscribe by msgh_id. */
-		xlog("Mach message received: id=%d size=%u",
-		    msg.hdr.msgh_id, (unsigned)msg.hdr.msgh_size);
+		if (msg.hdr.msgh_id == HWREG_MSG_SUBSCRIBE) {
+			mach_port_t client = msg.hdr.msgh_remote_port;
+			int total = -1;
+
+			pthread_mutex_lock(&subscribers_lock);
+			if (n_subscribers < HWREGD_MAX_SUBSCRIBERS) {
+				subscribers[n_subscribers++] = client;
+				total = n_subscribers;
+			}
+			pthread_mutex_unlock(&subscribers_lock);
+
+			if (total < 0) {
+				xlog("Mach: subscriber table full, dropping 0x%x",
+				    (unsigned)client);
+			} else {
+				xlog("Mach: subscriber 0x%x added (total=%d)",
+				    (unsigned)client, total);
+				/* Ack so the client confirms the round-trip. */
+				send_event_to(client, 'A',
+				    "subscribed to " HWREGD_SERVICE_NAME);
+			}
+		} else {
+			xlog("Mach: ignoring message id=%d", msg.hdr.msgh_id);
+		}
 	}
 	return NULL;
 }
@@ -783,7 +899,7 @@ main(int argc, char **argv)
 	(void)argc;
 	(void)argv;
 
-	xlog("starting (Phase 0 iter 3b-i: Mach service skeleton)");
+	xlog("starting (Phase 0 iter 3b-ii: Mach pub/sub bus)");
 
 	/* Clean shutdown on SIGTERM / SIGINT (launchd sends SIGTERM). */
 	{
