@@ -497,36 +497,43 @@ de-gated. Investigation on the `bsd01` test VM root-caused it to a
   whole IPC space on exit. Re-enabled (`51e4f9e`, briefly reverted,
   re-applied as `09bcbf6`; CI-green). Residual: `mach_task` /
   `ipc_space` structs themselves still leak &mdash; deferred.
-- **Bug C &mdash; `proc_pidinfo` stub.** *Fixed, on branch
-  `wip/launchd-anon-lookup` (`b13c347`) &mdash; deliberately not on
-  `main`.* `freebsd-shims/libproc.h`'s `proc_pidinfo()` was an
-  unimplemented stub that always returned 0; launchd's
-  `job_new_anonymous()` reads that as "process gone" and returns NULL,
-  so `bootstrap_look_up` from any non-launchd process resolved
-  `j==NULL` &rarr; `BOOTSTRAP_NO_MEMORY` (`0x451`). Reimplemented via
+- **Bug C &mdash; `proc_pidinfo` stub.** *Fixed, on `main` (`8cb2981`).*
+  `freebsd-shims/libproc.h`'s `proc_pidinfo()` was an unimplemented
+  stub that always returned 0; launchd's `job_new_anonymous()` reads
+  that as "process gone" and returns NULL, so `bootstrap_look_up` from
+  any non-launchd process resolved `j==NULL` &rarr;
+  `BOOTSTRAP_NO_MEMORY` (`0x451`). Reimplemented via
   `sysctl(KERN_PROC_PID)`.
-- **Bug D &mdash; anonymous-job-path reboot.** *Open &mdash; the
-  current blocker.* With Bug C fixed, an anonymous `bootstrap_look_up`
-  reaches launchd's `job_new_anonymous` &rarr; `job_new` path for the
-  first time ever, and launchd (PID 1) **cleanly reboots the box**
-  (serial capture confirms a normal shutdown sequence, not a kernel
-  panic). Cause not yet identified.
-- **Bug B &mdash; `MACH_SEND_INVALID_DEST` (`0x10000003`).** *Open,
-  intermittent, lower priority* &mdash; ~half of fresh-boot anonymous
-  lookups never reach launchd; leak-correlated.
+- **Bug D &mdash; anonymous-job-path reboot.** *Fixed &mdash; was not a
+  launchd bug.* With Bug C fixed, an anonymous `bootstrap_look_up`
+  reached launchd's `job_new_anonymous` &rarr; `job_new` path for the
+  first time, and launchd (PID 1) appeared to **cleanly reboot the
+  box**. A reboot-surviving trace root-caused it: `job_new()` returns
+  cleanly, then PID 1 takes a `SIGSEGV` at `0xfffffffffffffffe` &mdash;
+  which is `AUTO_PICK_ANONYMOUS_LABEL`, `(const char *)(~1)`. A debug
+  trace on the `wip/launchd-anon-lookup` branch (commit `82a671d`)
+  printed `job_new_anonymous`'s `whichlabel` &mdash; an `AUTO_PICK_*`
+  sentinel pointer, never a real string &mdash; with `%s`; `vfprintf`
+  dereferenced it and crashed PID 1, and launchd's own crash handler
+  did `reboot(0)`. The diagnostic trace was itself rebooting the box.
+  Fixed on the branch (`84c6734`); the anonymous path then runs
+  end-to-end (`look_up2` returns `org.freebsd.hwregd`, box stays up).
+- **Bug B &mdash; `MACH_SEND_INVALID_DEST` (`0x10000003`).** *Open
+  &mdash; now the top blocker.* The anonymous client's `bootstrap_port`
+  send right is invalid, so `bootstrap_look_up` fails client-side
+  before reaching launchd. Intermittent and leak-correlated; likely
+  recedes once the Bug A residual (`mach_task` / `ipc_space` struct
+  leak) is fixed.
 - *Separate:* an `ipc_kmsg_destroy` page-fault panic at multi-user
   shutdown (a port destroyed with messages still queued) &mdash;
   verified pre-existing and independent of Bug A.
 
-**To resume:** the next target is **Bug D** &mdash; trace launchd past
-`job_new` to find why the anonymous-job path reboots the box (write
-the trace to a reboot-surviving file; `/var/run` is `tmpfs`). Once
-Bug D is fixed, the Bug C fix on `wip/launchd-anon-lookup` can merge
-to `main` &mdash; landing it alone would reboot the box during CI's
-boot test. Build/test runs on the `bsd01` VirtualBox VM (interactive
-serial console reachable via the `joe-windows` host); the branch also
-carries the `[T39-mig]` / `[BUGB]` debug instrumentation used here
-(commit `82a671d`).
+**To resume:** the next target is **Bug B**. The `[T39-mig]` /
+`[BUGD]` debug instrumentation used to root-cause Bug D lives on
+`wip/launchd-anon-lookup` (commits `82a671d`, `ff22891`, `22f32d9`,
+`84c6734`) and writes a reboot-surviving trace to
+`/root/launchd_bugd.log`. Build/test runs on the `bsd01` VirtualBox VM
+(interactive serial console reachable via the `joe-windows` host).
 
 ## CoreFoundation for system services &mdash; swift-corelibs CF
 
