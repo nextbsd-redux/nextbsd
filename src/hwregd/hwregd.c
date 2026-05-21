@@ -77,6 +77,8 @@
 #include <mach/mach.h>
 #include <servers/bootstrap.h>
 
+#include "hwreg_registry.h"
+
 #define DEVCTL_PATH		"/dev/devctl"
 #define READ_BUF_SIZE		(64 * 1024)
 #define EVENT_LINE_MAX		1024
@@ -799,6 +801,12 @@ handle_attach_detach(char *line, const char *kind)
 		xlog("%s", text);
 		publish_event(line[0], text);
 	}
+
+	/* Fold the event into the registry tree (Phase 1). */
+	if (line[0] == '+')
+		hwreg_note_attach(dev, parent, loc);
+	else
+		hwreg_note_detach(dev);
 }
 
 /* --- devctl event loop -------------------------------------------- */
@@ -940,13 +948,24 @@ mach_service_thread(void *arg)
 	return NULL;
 }
 
+/* hwreg_foreach() callback — log one registry node. */
+static void
+log_hw_node(const struct hw_node *n, void *arg)
+{
+	(void)arg;
+	xlog("hwreg: [%2ju<-%2ju] %-16s %-10s %-8s drv=%-8s %s",
+	    (uintmax_t)n->id, (uintmax_t)n->parent_id, n->name,
+	    n->classname, hw_state_name(n->state),
+	    n->driver[0] ? n->driver : "-", n->path);
+}
+
 int
 main(int argc, char **argv)
 {
 	(void)argc;
 	(void)argv;
 
-	xlog("starting (Phase 0 iter 3b-ii: Mach pub/sub bus)");
+	xlog("starting (Phase 1 iter 1: hardware registry tree)");
 
 	/* Clean shutdown on SIGTERM / SIGINT (launchd sends SIGTERM). */
 	{
@@ -957,6 +976,24 @@ main(int argc, char **argv)
 	}
 
 	read_linker_hints();
+
+	/*
+	 * Phase 1 iter 1 — build the hardware registry from a snapshot of
+	 * the kernel newbus tree. /dev/devctl attach/detach events keep it
+	 * current from here on (see handle_attach_detach).
+	 */
+	{
+		int nnodes = hwreg_build_snapshot();
+
+		if (nnodes < 0)
+			xlog("hwreg: registry snapshot failed: %s",
+			    strerror(errno));
+		else {
+			xlog("hwreg: registry built — %d device nodes",
+			    nnodes);
+			hwreg_foreach(log_hw_node, NULL);
+		}
+	}
 
 	int fd = open_devctl();
 	if (fd < 0)

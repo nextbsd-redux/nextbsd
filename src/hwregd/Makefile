@@ -13,7 +13,10 @@
 
 PROG=		hwregd
 MAN=
-SRCS=		hwregd.c
+# hwreg_registry.c — Phase 1 hardware registry tree (newbus snapshot
+# via hw.bus.* sysctls + devctl-event maintenance). libc-only, no
+# extra LDADD.
+SRCS=		hwregd.c hwreg_registry.c
 
 WARNS?=		6
 NO_MAN=		yes
