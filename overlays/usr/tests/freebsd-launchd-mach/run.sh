@@ -447,4 +447,13 @@ if [ ! -x "$hwregtest" ]; then
 fi
 "$hwregtest" || true	# marker (HWREG-PUBSUB-OK/FAIL) gates in boot-test.sh
 
+# HWREG-RPC — hwregd Mach-RPC query API: walk the registry tree via
+# the MIG hwreg.defs routines (get_root / get_children / get_node).
+hwregquery=/usr/tests/freebsd-launchd-mach/hwregquery
+if [ ! -x "$hwregquery" ]; then
+    echo "HWREG-RPC-FAIL: $hwregquery missing"
+    exit 1
+fi
+"$hwregquery" || true	# marker (HWREG-RPC-OK/FAIL) gates in boot-test.sh
+
 exit 0

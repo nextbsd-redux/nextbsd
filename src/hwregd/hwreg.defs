@@ -1,0 +1,73 @@
+/*
+ * hwreg.defs — Mach-RPC interface to hwregd's hardware registry
+ * (Phase 1 iter 2a: the tree-walk query API).
+ *
+ * MIG-generated. The server demux hwreg_server() runs inside hwregd's
+ * mach_service_thread receive loop, alongside the hand-rolled pub/sub
+ * SUBSCRIBE message (whose msgh_id sits well outside this subsystem's
+ * routine range, so the loop can tell them apart).
+ *
+ * iter 2a is the no-xpc subset — walk the tree and read each node's
+ * scalar identity fields. iter 2b adds hwreg_get_properties /
+ * hwreg_lookup with the typed xpc property bag.
+ *
+ * Plan: https://pkgdemon.github.io/freebsd-hardware-registry-iokit-plan.html
+ */
+
+#include <mach/std_types.defs>
+#include <mach/mach_types.defs>
+
+subsystem hwreg 30000;
+
+import <sys/types.h>;
+
+/*
+ * MIG needs arrays and strings declared as named types — they cannot
+ * appear inline in a routine's parameter list — and it does not emit
+ * a C typedef for a `type`, so hwreg_mig_types.h supplies them and is
+ * imported into the generated stubs. Bounds mirror the hw_node fields
+ * in hwreg_registry.h.
+ */
+import "hwreg_mig_types.h";
+
+type hwreg_id_array_t	= array[*:128] of uint64_t;
+type hwreg_name_t	= c_string[32];
+type hwreg_path_t	= c_string[256];
+
+/*
+ * hwreg_get_root — registry id of the tree root (the newbus root
+ * device, normally "root0"). 0 if the registry is empty.
+ */
+routine hwreg_get_root(
+	server		: mach_port_t;
+	out root_id	: uint64_t
+);
+
+/*
+ * hwreg_get_children — registry ids of node `id`'s direct children.
+ * Returns KERN_INVALID_ARGUMENT for an unknown id. The reply array is
+ * capped at its bound; a node with a larger fan-out is truncated
+ * (acceptable for the tree walk — iter 2b's lookup API is the route
+ * to a specific deep node).
+ */
+routine hwreg_get_children(
+	server		: mach_port_t;
+	id		: uint64_t;
+	out children	: hwreg_id_array_t
+);
+
+/*
+ * hwreg_get_node — the scalar identity fields of node `id`.
+ * KERN_INVALID_ARGUMENT for an unknown id. node_state is the
+ * hw_node_state enum; the typed property bag is iter 2b.
+ */
+routine hwreg_get_node(
+	server		: mach_port_t;
+	id		: uint64_t;
+	out parent_id	: uint64_t;
+	out node_state	: int;
+	out name	: hwreg_name_t;
+	out classname	: hwreg_name_t;
+	out driver	: hwreg_name_t;
+	out path	: hwreg_path_t
+);

@@ -18,6 +18,24 @@ MAN=
 # extra LDADD.
 SRCS=		hwregd.c hwreg_registry.c
 
+# hwregServer.c — MIG-generated server stub for hwreg.defs (Phase 1
+# iter 2a Mach-RPC query API). build.sh runs mig and passes MIGOUT=;
+# a bare standalone build without it fails at the generated #include,
+# the same way liblaunch does. -w on the generated TU: MIG output is
+# not WARNS-clean and must not gate the build.
+MIGOUT?=
+.if !empty(MIGOUT)
+.PATH:			${MIGOUT}
+SRCS+=			hwregServer.c
+CFLAGS+=		-I${MIGOUT}
+CFLAGS+=		-I${.CURDIR}	# generated stubs #include "hwreg_mig_types.h"
+CFLAGS.hwregServer.c+=	-w
+# The MIG stubs pull <mach/notify.h>, which redefines the MACH_NOTIFY_*
+# macros <mach/message.h> also defines (identical values, whitespace
+# differs) — a benign clash in the vendored mach headers.
+CFLAGS+=		-Wno-macro-redefined
+.endif
+
 WARNS?=		6
 NO_MAN=		yes
 

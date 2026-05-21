@@ -381,6 +381,18 @@ expect {
     "HWREG-PUBSUB-OK" { puts "\nOK: hwregd Mach pub/sub works" }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: HWREG-RPC marker not seen"
+        exit 1
+    }
+    "HWREG-RPC-FAIL" {
+        puts "\nFAIL: hwregd Mach-RPC registry query failed"
+        exit 1
+    }
+    "HWREG-RPC-OK" { puts "\nOK: hwregd Mach-RPC registry query works" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"

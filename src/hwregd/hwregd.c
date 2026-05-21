@@ -78,6 +78,7 @@
 #include <servers/bootstrap.h>
 
 #include "hwreg_registry.h"
+#include "hwregServer.h"		/* MIG: hwreg_server() demux + routine protos */
 
 #define DEVCTL_PATH		"/dev/devctl"
 #define READ_BUF_SIZE		(64 * 1024)
@@ -101,6 +102,16 @@
  */
 #define HWREG_MSG_SUBSCRIBE	0x48575201	/* client  -> hwregd */
 #define HWREG_MSG_EVENT		0x48575202	/* hwregd   -> subscriber */
+
+/*
+ * Mach-RPC query API (iter 2a) — MIG subsystem 30000, demuxed by
+ * hwreg_server() in the same receive loop. HWREG_RPC_BUFSZ sizes the
+ * request + reply buffers (the largest message is hwreg_get_children's
+ * id-array reply). HWREG_RPC_MAX_CHILDREN must match the array bound
+ * `array[*:128]` in hwreg.defs.
+ */
+#define HWREG_RPC_BUFSZ		4096
+#define HWREG_RPC_MAX_CHILDREN	128
 
 /* The event message hwregd pushes to each subscriber. */
 struct hwreg_event_msg {
@@ -870,16 +881,63 @@ drain_devctl(int fd, char *buf, size_t bufsz)
 	return n;
 }
 
+/* --- Mach-RPC query routines (MIG hwreg subsystem) ---------------- */
+
 /*
- * Mach service thread (iter 3b-i skeleton). Checks the
- * org.freebsd.hwregd service in with launchd and runs a raw mach_msg
- * receive loop. It is a SECOND thread on purpose — if Mach IPC
- * stalls, the devctl loop on the main thread keeps running. A raw
- * mach_msg loop, not a libdispatch DISPATCH_SOURCE_TYPE_MACH_RECV
- * source: dispatch sources deadlock in this port (task #41). The
- * 500ms receive timeout lets the loop re-check got_term for a clean
- * shutdown. iter 3b-ii adds the subscribe/publish protocol; for now
- * any received message is just logged.
+ * Server-side implementations of the hwreg.defs routines; MIG's
+ * hwreg_server() demux calls these. Each bridges the RPC to the
+ * registry's internally-locked query helpers.
+ */
+kern_return_t
+hwreg_get_root(mach_port_t server, uint64_t *root_id)
+{
+	(void)server;
+	*root_id = hwreg_root_id();
+	return KERN_SUCCESS;
+}
+
+kern_return_t
+hwreg_get_children(mach_port_t server, uint64_t id,
+    hwreg_id_array_t children, mach_msg_type_number_t *childrenCnt)
+{
+	int n = hwreg_children(id, children, HWREG_RPC_MAX_CHILDREN);
+
+	(void)server;
+	if (n < 0)
+		return KERN_INVALID_ARGUMENT;	/* unknown id */
+	*childrenCnt = (mach_msg_type_number_t)n;
+	return KERN_SUCCESS;
+}
+
+kern_return_t
+hwreg_get_node(mach_port_t server, uint64_t id, uint64_t *parent_id,
+    int *node_state, hwreg_name_t name, hwreg_name_t classname,
+    hwreg_name_t driver, hwreg_path_t path)
+{
+	struct hw_node n;
+
+	(void)server;
+	if (!hwreg_copy(id, &n))
+		return KERN_INVALID_ARGUMENT;	/* unknown id */
+	*parent_id = n.parent_id;
+	*node_state = (int)n.state;
+	strlcpy(name, n.name, sizeof(n.name));
+	strlcpy(classname, n.classname, sizeof(n.classname));
+	strlcpy(driver, n.driver, sizeof(n.driver));
+	strlcpy(path, n.path, sizeof(n.path));
+	return KERN_SUCCESS;
+}
+
+/*
+ * Mach service thread. Checks the org.freebsd.hwregd service in with
+ * launchd and runs a raw mach_msg receive loop. It is a SECOND thread
+ * on purpose — if Mach IPC stalls, the devctl loop on the main thread
+ * keeps running. A raw mach_msg loop, not a libdispatch
+ * DISPATCH_SOURCE_TYPE_MACH_RECV source: dispatch sources deadlock in
+ * this port (task #41). The 500ms receive timeout lets the loop
+ * re-check got_term for a clean shutdown. Each message is dispatched
+ * either to the pub/sub registry (a SUBSCRIBE) or to the MIG query
+ * demux hwreg_server() (a hwreg.defs RPC).
  */
 static void *
 mach_service_thread(void *arg)
@@ -899,24 +957,25 @@ mach_service_thread(void *arg)
 	    HWREGD_SERVICE_NAME, (unsigned)sp);
 
 	while (!got_term) {
-		struct {
+		union {
 			mach_msg_header_t hdr;
-			uint8_t body[512];
-		} msg;
+			char buf[HWREG_RPC_BUFSZ];
+		} req, rep;
 		mach_msg_return_t mr;
 
-		memset(&msg, 0, sizeof(msg));
-		mr = mach_msg(&msg.hdr, MACH_RCV_MSG | MACH_RCV_TIMEOUT,
-		    0, sizeof(msg), sp, 500, MACH_PORT_NULL);
+		memset(&req, 0, sizeof(req));
+		mr = mach_msg(&req.hdr, MACH_RCV_MSG | MACH_RCV_TIMEOUT,
+		    0, sizeof(req), sp, 500, MACH_PORT_NULL);
 		if (mr == MACH_RCV_TIMED_OUT)
 			continue;
 		if (mr != MACH_MSG_SUCCESS) {
-			xlog("Mach receive failed: 0x%x — Mach pub/sub off",
+			xlog("Mach receive failed: 0x%x — Mach service off",
 			    (unsigned)mr);
 			break;
 		}
-		if (msg.hdr.msgh_id == HWREG_MSG_SUBSCRIBE) {
-			mach_port_t client = msg.hdr.msgh_remote_port;
+
+		if (req.hdr.msgh_id == HWREG_MSG_SUBSCRIBE) {
+			mach_port_t client = req.hdr.msgh_remote_port;
 			int total = -1;
 
 			pthread_mutex_lock(&subscribers_lock);
@@ -935,14 +994,31 @@ mach_service_thread(void *arg)
 				/*
 				 * Ack so the client confirms the round-trip.
 				 * If the client already vanished the next
-				 * publish_event() prunes it — no need to act
-				 * on the result here.
+				 * publish_event() prunes it.
 				 */
 				(void)send_event_to(client, 'A',
 				    "subscribed to " HWREGD_SERVICE_NAME);
 			}
-		} else {
-			xlog("Mach: ignoring message id=%d", msg.hdr.msgh_id);
+			continue;
+		}
+
+		/*
+		 * Anything else goes to the MIG query demux: it writes the
+		 * routine's reply (or a MIG error) into `rep`. A false
+		 * return is a msgh_id this subsystem doesn't recognise.
+		 */
+		memset(&rep, 0, sizeof(rep));
+		if (!hwreg_server(&req.hdr, &rep.hdr)) {
+			xlog("Mach: ignoring message id=%d", req.hdr.msgh_id);
+			continue;
+		}
+		if (rep.hdr.msgh_remote_port != MACH_PORT_NULL) {
+			mr = mach_msg(&rep.hdr, MACH_SEND_MSG | MACH_SEND_TIMEOUT,
+			    rep.hdr.msgh_size, 0, MACH_PORT_NULL, 200,
+			    MACH_PORT_NULL);
+			if (mr != MACH_MSG_SUCCESS)
+				xlog("Mach: RPC reply send failed: 0x%x",
+				    (unsigned)mr);
 		}
 	}
 	return NULL;

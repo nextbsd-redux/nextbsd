@@ -1,12 +1,18 @@
 /*
- * hwreg_registry.c — hwregd hardware registry tree (Phase 1 iter 1).
+ * hwreg_registry.c — hwregd hardware registry tree (Phase 1).
  *
  * Builds and maintains the hw_node tree described in hwreg_registry.h.
  * The boot snapshot comes from the kernel newbus tree via the hw.bus.*
- * sysctls (hw.bus.info for the ABI version, hw.bus.devices.<N> for one
- * struct u_device per device) — the same data libdevinfo reads, but
- * read directly so hwregd needs no FreeBSD-devmatch dependency. After
- * the snapshot, /dev/devctl attach/detach events keep the tree current.
+ * sysctls (hw.bus.info for the ABI version, hw.bus.devices.<gen>.<idx>
+ * for one struct u_device per device) — the same data libdevinfo
+ * reads, but read directly so hwregd needs no FreeBSD-devmatch
+ * dependency. After the snapshot, /dev/devctl attach/detach events
+ * keep the tree current.
+ *
+ * Concurrency (iter 2a): the devctl thread mutates the tree while the
+ * Mach-RPC thread reads it, so the registry is guarded by reg_lock.
+ * Every public (hwreg_*) function locks; the static helpers below run
+ * with the lock already held by their caller.
  */
 
 #include <sys/types.h>
@@ -15,6 +21,7 @@
 #include <sys/sysctl.h>
 
 #include <errno.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,14 +31,13 @@
 
 /*
  * The registry is a singly-linked list kept in enumeration order
- * (head .. tail). iter 1 is single-threaded — only hwregd's devctl
- * thread touches it — so there is no lock; iter 2's Mach-RPC reader
- * thread adds one.
+ * (head .. tail), guarded by reg_lock.
  */
 static struct hw_node *registry_head;
 static struct hw_node *registry_tail;
 static uint64_t		next_id = 1;	/* 0 is reserved for "no node" */
 static int		node_count;
+static pthread_mutex_t	reg_lock = PTHREAD_MUTEX_INITIALIZER;
 
 const char *
 hw_state_name(enum hw_node_state s)
@@ -45,27 +51,10 @@ hw_state_name(enum hw_node_state s)
 	return "?";
 }
 
-int
-hwreg_count(void)
-{
-	return node_count;
-}
+/* --- internal helpers — caller must hold reg_lock --------------- */
 
-struct hw_node *
-hwreg_find_by_name(const char *name)
-{
-	struct hw_node *n;
-
-	if (name == NULL || name[0] == '\0')
-		return NULL;
-	for (n = registry_head; n != NULL; n = n->next)
-		if (strcmp(n->name, name) == 0)
-			return n;
-	return NULL;
-}
-
-struct hw_node *
-hwreg_get(uint64_t id)
+static struct hw_node *
+find_by_id(uint64_t id)
 {
 	struct hw_node *n;
 
@@ -77,13 +66,17 @@ hwreg_get(uint64_t id)
 	return NULL;
 }
 
-void
-hwreg_foreach(void (*fn)(const struct hw_node *n, void *arg), void *arg)
+static struct hw_node *
+find_by_name(const char *name)
 {
 	struct hw_node *n;
 
+	if (name == NULL || name[0] == '\0')
+		return NULL;
 	for (n = registry_head; n != NULL; n = n->next)
-		fn(n, arg);
+		if (strcmp(n->name, name) == 0)
+			return n;
+	return NULL;
 }
 
 /* Append a freshly-allocated node for `name`; returns NULL on OOM. */
@@ -109,12 +102,12 @@ node_new(const char *name, uint64_t parent_id)
 
 /*
  * Coarse device class, IORegistry-style. Cheap heuristic off the
- * parent bus / device name; iter 2 refines it from PCI/USB enrichment.
+ * parent bus / device name; iter 2b refines it from PCI/USB enrichment.
  */
 static void
 classify(struct hw_node *n)
 {
-	const struct hw_node *p = hwreg_get(n->parent_id);
+	const struct hw_node *p = find_by_id(n->parent_id);
 	const char *pn = (p != NULL) ? p->name : "";
 
 	if (strncmp(pn, "pci", 3) == 0)
@@ -142,7 +135,7 @@ ensure_path(struct hw_node *n)
 
 	if (n->path[0] != '\0')
 		return;
-	p = hwreg_get(n->parent_id);
+	p = find_by_id(n->parent_id);
 	if (p != NULL) {
 		ensure_path(p);
 		(void)snprintf(n->path, sizeof(n->path), "%s/%s",
@@ -150,6 +143,24 @@ ensure_path(struct hw_node *n)
 	} else {
 		(void)snprintf(n->path, sizeof(n->path), "/%s", n->name);
 	}
+}
+
+/* Free every node and reset the registry to empty — used between
+ * snapshot retries when the kernel generation count moves. */
+static void
+registry_reset(void)
+{
+	struct hw_node *n = registry_head, *nx;
+
+	while (n != NULL) {
+		nx = n->next;
+		free(n);
+		n = nx;
+	}
+	registry_head = NULL;
+	registry_tail = NULL;
+	node_count = 0;
+	next_id = 1;
 }
 
 /* Transient parent-handle map, used only while building the snapshot. */
@@ -175,24 +186,6 @@ next_field(const char **pp, const char *end)
 		q++;
 	*pp = (q < end) ? q + 1 : end;
 	return s;
-}
-
-/* Free every node and reset the registry to empty — used between
- * snapshot retries when the kernel generation count moves. */
-static void
-registry_reset(void)
-{
-	struct hw_node *n = registry_head, *nx;
-
-	while (n != NULL) {
-		nx = n->next;
-		free(n);
-		n = nx;
-	}
-	registry_head = NULL;
-	registry_tail = NULL;
-	node_count = 0;
-	next_id = 1;
 }
 
 /*
@@ -311,6 +304,8 @@ snapshot_attempt(void)
 	return (int)nents;
 }
 
+/* --- public API — each locks reg_lock --------------------------- */
+
 int
 hwreg_build_snapshot(void)
 {
@@ -321,16 +316,43 @@ hwreg_build_snapshot(void)
 	 * (snapshot_attempt() returns -1/EINVAL) — the registry built so
 	 * far is stale, so discard it and rescan from a fresh generation.
 	 */
+	pthread_mutex_lock(&reg_lock);
 	for (retries = 0; retries < 8; retries++) {
 		r = snapshot_attempt();
 		if (r >= 0)
-			return r;
+			goto out;		/* success */
 		if (errno != EINVAL)
-			return -1;
-		registry_reset();
+			goto out;		/* hard failure, errno set */
+		registry_reset();		/* generation moved — retry */
 	}
-	errno = EAGAIN;
-	return -1;
+	errno = EAGAIN;				/* gave up after 8 tries */
+	r = -1;
+out:
+	pthread_mutex_unlock(&reg_lock);
+	return r;
+}
+
+int
+hwreg_count(void)
+{
+	int n;
+
+	pthread_mutex_lock(&reg_lock);
+	n = node_count;
+	pthread_mutex_unlock(&reg_lock);
+	return n;
+}
+
+void
+hwreg_foreach(void (*fn)(const struct hw_node *n, void *arg), void *arg)
+{
+	struct hw_node *n;
+
+	/* Callback runs under the lock — fn must not re-enter hwreg_*. */
+	pthread_mutex_lock(&reg_lock);
+	for (n = registry_head; n != NULL; n = n->next)
+		fn(n, arg);
+	pthread_mutex_unlock(&reg_lock);
 }
 
 void
@@ -340,27 +362,87 @@ hwreg_note_attach(const char *name, const char *parent, const char *location)
 
 	if (name == NULL || name[0] == '\0')
 		return;
-	n = hwreg_find_by_name(name);
+	pthread_mutex_lock(&reg_lock);
+	n = find_by_name(name);
 	if (n == NULL) {
 		/* Hot-plugged device that was not in the boot snapshot. */
-		struct hw_node *p = hwreg_find_by_name(parent);
+		struct hw_node *p = find_by_name(parent);
 
 		n = node_new(name, (p != NULL) ? p->id : 0);
-		if (n == NULL)
-			return;
-		classify(n);
-		ensure_path(n);
+		if (n != NULL) {
+			classify(n);
+			ensure_path(n);
+		}
 	}
-	n->state = HW_ATTACHED;
-	if (location != NULL && location[0] != '\0')
-		strlcpy(n->location, location, sizeof(n->location));
+	if (n != NULL) {
+		n->state = HW_ATTACHED;
+		if (location != NULL && location[0] != '\0')
+			strlcpy(n->location, location, sizeof(n->location));
+	}
+	pthread_mutex_unlock(&reg_lock);
 }
 
 void
 hwreg_note_detach(const char *name)
 {
-	struct hw_node *n = hwreg_find_by_name(name);
+	struct hw_node *n;
 
+	pthread_mutex_lock(&reg_lock);
+	n = find_by_name(name);
 	if (n != NULL)
 		n->state = HW_DETACHED;
+	pthread_mutex_unlock(&reg_lock);
+}
+
+uint64_t
+hwreg_root_id(void)
+{
+	struct hw_node *n;
+	uint64_t id = 0;
+
+	pthread_mutex_lock(&reg_lock);
+	for (n = registry_head; n != NULL; n = n->next)
+		if (n->parent_id == 0) {
+			id = n->id;
+			break;
+		}
+	pthread_mutex_unlock(&reg_lock);
+	return id;
+}
+
+int
+hwreg_children(uint64_t parent_id, uint64_t *ids, int max)
+{
+	struct hw_node *n;
+	int count = 0;
+
+	pthread_mutex_lock(&reg_lock);
+	if (find_by_id(parent_id) == NULL) {
+		pthread_mutex_unlock(&reg_lock);
+		return -1;			/* unknown parent id */
+	}
+	for (n = registry_head; n != NULL; n = n->next) {
+		if (n->parent_id == parent_id) {
+			if (count < max)
+				ids[count] = n->id;
+			count++;
+		}
+	}
+	pthread_mutex_unlock(&reg_lock);
+	return (count > max) ? max : count;
+}
+
+int
+hwreg_copy(uint64_t id, struct hw_node *dst)
+{
+	struct hw_node *n;
+	int found;
+
+	pthread_mutex_lock(&reg_lock);
+	n = find_by_id(id);
+	if (n != NULL)
+		*dst = *n;		/* struct copy; dst->next is meaningless */
+	found = (n != NULL);
+	pthread_mutex_unlock(&reg_lock);
+	return found;
 }
