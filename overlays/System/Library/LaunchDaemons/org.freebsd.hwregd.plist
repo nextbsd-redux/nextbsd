@@ -28,6 +28,11 @@
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <key>MachServices</key>
+    <dict>
+        <key>org.freebsd.hwregd</key>
+        <true/>
+    </dict>
     <key>StandardOutPath</key>
     <string>/var/log/hwregd.stderr</string>
     <key>StandardErrorPath</key>

@@ -62,6 +62,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -71,6 +72,9 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+
+#include <mach/mach.h>
+#include <servers/bootstrap.h>
 
 #define DEVCTL_PATH		"/dev/devctl"
 #define READ_BUF_SIZE		(64 * 1024)
@@ -83,6 +87,9 @@
  * autoload never runs a driver attach mid-boot.
  */
 #define HWREGD_SETTLE_SECONDS	60
+
+/* Mach service name hwregd checks in with launchd for its pub/sub bus. */
+#define HWREGD_SERVICE_NAME	"org.freebsd.hwregd"
 
 static volatile sig_atomic_t got_term = 0;
 
@@ -718,13 +725,65 @@ drain_devctl(int fd, char *buf, size_t bufsz)
 	return n;
 }
 
+/*
+ * Mach service thread (iter 3b-i skeleton). Checks the
+ * org.freebsd.hwregd service in with launchd and runs a raw mach_msg
+ * receive loop. It is a SECOND thread on purpose — if Mach IPC
+ * stalls, the devctl loop on the main thread keeps running. A raw
+ * mach_msg loop, not a libdispatch DISPATCH_SOURCE_TYPE_MACH_RECV
+ * source: dispatch sources deadlock in this port (task #41). The
+ * 500ms receive timeout lets the loop re-check got_term for a clean
+ * shutdown. iter 3b-ii adds the subscribe/publish protocol; for now
+ * any received message is just logged.
+ */
+static void *
+mach_service_thread(void *arg)
+{
+	mach_port_t sp = MACH_PORT_NULL;
+	kern_return_t kr;
+
+	(void)arg;
+
+	kr = bootstrap_check_in(bootstrap_port, HWREGD_SERVICE_NAME, &sp);
+	if (kr != KERN_SUCCESS) {
+		xlog("bootstrap_check_in(%s) failed: 0x%x — Mach pub/sub off",
+		    HWREGD_SERVICE_NAME, (unsigned)kr);
+		return NULL;
+	}
+	xlog("Mach service '%s' checked in (port=0x%x)",
+	    HWREGD_SERVICE_NAME, (unsigned)sp);
+
+	while (!got_term) {
+		struct {
+			mach_msg_header_t hdr;
+			uint8_t body[512];
+		} msg;
+		mach_msg_return_t mr;
+
+		memset(&msg, 0, sizeof(msg));
+		mr = mach_msg(&msg.hdr, MACH_RCV_MSG | MACH_RCV_TIMEOUT,
+		    0, sizeof(msg), sp, 500, MACH_PORT_NULL);
+		if (mr == MACH_RCV_TIMED_OUT)
+			continue;
+		if (mr != MACH_MSG_SUCCESS) {
+			xlog("Mach receive failed: 0x%x — Mach pub/sub off",
+			    (unsigned)mr);
+			break;
+		}
+		/* iter 3b-ii: dispatch subscribe/unsubscribe by msgh_id. */
+		xlog("Mach message received: id=%d size=%u",
+		    msg.hdr.msgh_id, (unsigned)msg.hdr.msgh_size);
+	}
+	return NULL;
+}
+
 int
 main(int argc, char **argv)
 {
 	(void)argc;
 	(void)argv;
 
-	xlog("starting (Phase 0 iter 3a: structured event parsing)");
+	xlog("starting (Phase 0 iter 3b-i: Mach service skeleton)");
 
 	/* Clean shutdown on SIGTERM / SIGINT (launchd sends SIGTERM). */
 	{
@@ -740,6 +799,17 @@ main(int argc, char **argv)
 	if (fd < 0)
 		return 1;
 	xlog("opened %s fd=%d", DEVCTL_PATH, fd);
+
+	/* Mach pub/sub service runs on its own thread (iter 3b-i). */
+	{
+		pthread_t mth;
+		if (pthread_create(&mth, NULL, mach_service_thread,
+		    NULL) != 0)
+			xlog("pthread_create(mach_service_thread) failed: %s",
+			    strerror(errno));
+		else
+			(void)pthread_detach(mth);
+	}
 
 	static char buf[READ_BUF_SIZE];
 	time_t started = time(NULL);

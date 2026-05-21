@@ -897,6 +897,7 @@ echo "==> building hwregd (src/hwregd)"
 mkdir -p "$WORK/rootfs/usr/sbin"
 make -C "$ROOT/src/hwregd" \
     DESTDIR="$WORK/rootfs" \
+    SYSROOT="$WORK/rootfs" \
     all install
 ls -lh "$WORK/rootfs/usr/sbin/hwregd"
 test -x "$WORK/rootfs/usr/sbin/hwregd" \
