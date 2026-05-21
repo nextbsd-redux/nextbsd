@@ -6,7 +6,8 @@
  * hwreg_get_children / hwreg_get_node), unpacks a node's property bag
  * (hwreg_get_properties), runs a criteria lookup (hwreg_lookup), and
  * registers + cancels a device-event watch (hwreg_watch /
- * hwreg_unwatch). Prints HWREG-RPC-OK on success — the CI boot test
+ * hwreg_unwatch), and exercises hwreg_load_driver / hwreg_retain /
+ * hwreg_release. Prints HWREG-RPC-OK on success — the CI boot test
  * (run.sh / boot-test.sh) matches that marker. Built against the MIG
  * user stub hwregUser.c.
  */
@@ -186,7 +187,36 @@ main(void)
 		}
 	}
 
-	printf("HWREG-RPC-OK: walked %d nodes; props, lookup, watch OK "
-	    "(root id=%llu)\n", walked, (unsigned long long)root);
+	/* hwreg_load_driver / hwreg_retain / hwreg_release on the root. */
+	{
+		hwreg_name_t loaded;
+		int err = 0;
+
+		kr = hwreg_load_driver(svc, root, loaded, &err);
+		if (kr != KERN_SUCCESS) {
+			printf("HWREG-RPC-FAIL: hwreg_load_driver: 0x%x\n",
+			    (unsigned)kr);
+			return 1;
+		}
+		printf("  load_driver(root): module=%s error=%d\n",
+		    loaded[0] ? loaded : "-", err);
+
+		kr = hwreg_retain(svc, root);
+		if (kr != KERN_SUCCESS) {
+			printf("HWREG-RPC-FAIL: hwreg_retain: 0x%x\n",
+			    (unsigned)kr);
+			return 1;
+		}
+		kr = hwreg_release(svc, root);
+		if (kr != KERN_SUCCESS) {
+			printf("HWREG-RPC-FAIL: hwreg_release: 0x%x\n",
+			    (unsigned)kr);
+			return 1;
+		}
+	}
+
+	printf("HWREG-RPC-OK: walked %d nodes; props, lookup, watch, "
+	    "load+retain OK (root id=%llu)\n", walked,
+	    (unsigned long long)root);
 	return 0;
 }

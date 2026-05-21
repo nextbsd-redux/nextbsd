@@ -95,6 +95,13 @@ int		hwreg_copy(uint64_t id, struct hw_node *dst);
 /* Like hwreg_copy(), but keyed on the newbus name. */
 int		hwreg_copy_by_name(const char *name, struct hw_node *dst);
 
+/*
+ * Adjust node `id`'s reference count. Returns the new count, or -1 if
+ * no node has that id. hwreg_node_release() floors the count at 0.
+ */
+int		hwreg_node_retain(uint64_t id);
+int		hwreg_node_release(uint64_t id);
+
 /* Human-readable name for a node state. */
 const char     *hw_state_name(enum hw_node_state s);
 

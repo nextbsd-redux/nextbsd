@@ -461,3 +461,34 @@ hwreg_copy_by_name(const char *name, struct hw_node *dst)
 	pthread_mutex_unlock(&reg_lock);
 	return found;
 }
+
+int
+hwreg_node_retain(uint64_t id)
+{
+	struct hw_node *n;
+	int rc = -1;
+
+	pthread_mutex_lock(&reg_lock);
+	n = find_by_id(id);
+	if (n != NULL)
+		rc = (int)++n->refcnt;
+	pthread_mutex_unlock(&reg_lock);
+	return rc;
+}
+
+int
+hwreg_node_release(uint64_t id)
+{
+	struct hw_node *n;
+	int rc = -1;
+
+	pthread_mutex_lock(&reg_lock);
+	n = find_by_id(id);
+	if (n != NULL) {
+		if (n->refcnt > 0)
+			n->refcnt--;
+		rc = (int)n->refcnt;
+	}
+	pthread_mutex_unlock(&reg_lock);
+	return rc;
+}

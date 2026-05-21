@@ -609,21 +609,24 @@ pnpval_as_str(const char *val, const char *pnpinfo)
 /*
  * Walk linker.hints looking for a module whose MDT_PNP_INFO table
  * claims the device described by (bus, pnpinfo). Ported from
- * devmatch.c's search_hints(); on a match, kldload the module
- * instead of printing it. The dump_flag / verbose_flag branches are
- * dead (compile-time false) but kept so the port stays verbatim.
+ * devmatch.c's search_hints(); the first matching module name is
+ * copied into modout (left "" if nothing claims the device). The
+ * dump_flag / unbound_flag branches are dead (compile-time false) but
+ * kept so the port stays close to verbatim. Callers decide what to do
+ * with the module — handle_nomatch() auto-loads it, hwreg_load_driver()
+ * loads it on demand.
  */
 static void
-search_hints(const char *bus, const char *pnpinfo)
+search_hints(const char *bus, const char *pnpinfo, char *modout, size_t modsz)
 {
 	char val1[256], val2[256];
-	int ival, len, ents, i, notme, mask, bit, v, found;
+	int ival, len, ents, i, notme, mask, bit, v;
 	void *ptr, *walker;
 	char *lastmod = NULL, *cp, *s;
 
+	modout[0] = '\0';
 	walker = hints;
 	getint(&walker);
-	found = 0;
 	while (walker < hints_end) {
 		len = getint(&walker);
 		ival = getint(&walker);
@@ -736,10 +739,9 @@ search_hints(const char *bus, const char *pnpinfo)
 					if (cp)
 						cp++;
 				} while (cp && *cp);
-				if (!dump_flag && !notme) {
-					act_on_match(lastmod);
-					found++;
-				}
+				if (!dump_flag && !notme &&
+				    lastmod != NULL && modout[0] == '\0')
+					strlcpy(modout, lastmod, modsz);
 			}
 			break;
 		default:
@@ -747,9 +749,6 @@ search_hints(const char *bus, const char *pnpinfo)
 		}
 		walker = (void *)(len - sizeof(int) + (intptr_t)walker);
 	}
-	if (found == 0)
-		xlog("nomatch: no module in linker.hints claims '%s'",
-		    pnpinfo);
 	free(lastmod);
 }
 
@@ -806,7 +805,16 @@ handle_nomatch(char *nomatch)
 	}
 	if (hints == NULL)
 		return;
-	search_hints(bus, pnpinfo);
+	{
+		char mod[64] = "";
+
+		search_hints(bus, pnpinfo, mod, sizeof(mod));
+		if (mod[0] != '\0')
+			act_on_match(mod);
+		else
+			xlog("nomatch: no module in linker.hints "
+			    "claims '%s'", pnpinfo);
+	}
 }
 
 /*
@@ -1212,6 +1220,80 @@ hwreg_unwatch(mach_port_t server, uint64_t watcher_id)
 		return KERN_INVALID_ARGUMENT;	/* unknown watcher_id */
 	(void)mach_port_deallocate(mach_task_self(), port);
 	xlog("Mach: watcher %ju cancelled", (uintmax_t)watcher_id);
+	return KERN_SUCCESS;
+}
+
+/*
+ * hwreg_load_driver — kldload the driver for node `id`. A node that
+ * already has a driver needs nothing; otherwise its pnpinfo is run
+ * through linker.hints and the claiming module is loaded. error_code
+ * carries an errno (0 = ok, ENOENT = nothing in linker.hints claims
+ * the device).
+ */
+kern_return_t
+hwreg_load_driver(mach_port_t server, uint64_t id, hwreg_name_t loaded_module,
+    int *error_code)
+{
+	struct hw_node n, parent;
+	char bus[32], mod[64] = "";
+	size_t k;
+
+	(void)server;
+	loaded_module[0] = '\0';
+	*error_code = 0;
+	if (!hwreg_copy(id, &n))
+		return KERN_INVALID_ARGUMENT;		/* unknown id */
+
+	if (n.driver[0] != '\0') {			/* already attached */
+		strlcpy(loaded_module, n.driver, sizeof(hwreg_name_t));
+		return KERN_SUCCESS;
+	}
+	if (hints == NULL) {
+		*error_code = ENOENT;			/* no linker.hints */
+		return KERN_SUCCESS;
+	}
+
+	/* Bus name = the parent device's name with its unit stripped. */
+	bus[0] = '\0';
+	if (hwreg_copy(n.parent_id, &parent)) {
+		strlcpy(bus, parent.name, sizeof(bus));
+		k = strlen(bus);
+		while (k > 0 && bus[k - 1] >= '0' && bus[k - 1] <= '9')
+			bus[--k] = '\0';
+	}
+	search_hints(bus[0] != '\0' ? bus : NULL, n.pnpinfo, mod, sizeof(mod));
+	if (mod[0] == '\0' || strcmp(mod, "kernel") == 0) {
+		*error_code = ENOENT;			/* nothing claims it */
+		return KERN_SUCCESS;
+	}
+	if (kldload(mod) < 0 && errno != EEXIST) {
+		*error_code = errno;
+		xlog("hwreg_load_driver(%ju): kldload(%s): %s",
+		    (uintmax_t)id, mod, strerror(errno));
+		return KERN_SUCCESS;
+	}
+	strlcpy(loaded_module, mod, sizeof(hwreg_name_t));
+	xlog("hwreg_load_driver(%ju): module %s loaded", (uintmax_t)id, mod);
+	return KERN_SUCCESS;
+}
+
+/* hwreg_retain — bump node `id`'s reference count. */
+kern_return_t
+hwreg_retain(mach_port_t server, uint64_t id)
+{
+	(void)server;
+	if (hwreg_node_retain(id) < 0)
+		return KERN_INVALID_ARGUMENT;		/* unknown id */
+	return KERN_SUCCESS;
+}
+
+/* hwreg_release — drop a reference on node `id`. */
+kern_return_t
+hwreg_release(mach_port_t server, uint64_t id)
+{
+	(void)server;
+	if (hwreg_node_release(id) < 0)
+		return KERN_INVALID_ARGUMENT;		/* unknown id */
 	return KERN_SUCCESS;
 }
 
