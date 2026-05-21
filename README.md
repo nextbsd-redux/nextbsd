@@ -484,6 +484,50 @@ network-config stack, the proper replacement for the interim
 Full design: the
 [hardware registry + IOKit porting plan](https://pkgdemon.github.io/freebsd-hardware-registry-iokit-plan.html).
 
+### Phase K &mdash; HWREG-PUBSUB blocker (in progress, 2026-05-21)
+
+iter 3b-ii gave `hwregd` a Mach pub/sub bus and an `hwregtest` client,
+but the `HWREG-PUBSUB` round-trip fails &mdash; the CI marker is
+de-gated. Investigation on the `bsd01` test VM root-caused it to a
+**stack of bugs**, each fix uncovering the next:
+
+- **Bug A &mdash; IPC-space leak.** *Fixed, on `main`.*
+  `ipc_entry_sysinit`'s `process_exit`/`process_exec` cleanup handlers
+  (`ipc_entry_list_close`) were `#if 0`'d, so every process leaked its
+  whole IPC space on exit. Re-enabled (`51e4f9e`, briefly reverted,
+  re-applied as `09bcbf6`; CI-green). Residual: `mach_task` /
+  `ipc_space` structs themselves still leak &mdash; deferred.
+- **Bug C &mdash; `proc_pidinfo` stub.** *Fixed, on branch
+  `wip/launchd-anon-lookup` (`b13c347`) &mdash; deliberately not on
+  `main`.* `freebsd-shims/libproc.h`'s `proc_pidinfo()` was an
+  unimplemented stub that always returned 0; launchd's
+  `job_new_anonymous()` reads that as "process gone" and returns NULL,
+  so `bootstrap_look_up` from any non-launchd process resolved
+  `j==NULL` &rarr; `BOOTSTRAP_NO_MEMORY` (`0x451`). Reimplemented via
+  `sysctl(KERN_PROC_PID)`.
+- **Bug D &mdash; anonymous-job-path reboot.** *Open &mdash; the
+  current blocker.* With Bug C fixed, an anonymous `bootstrap_look_up`
+  reaches launchd's `job_new_anonymous` &rarr; `job_new` path for the
+  first time ever, and launchd (PID 1) **cleanly reboots the box**
+  (serial capture confirms a normal shutdown sequence, not a kernel
+  panic). Cause not yet identified.
+- **Bug B &mdash; `MACH_SEND_INVALID_DEST` (`0x10000003`).** *Open,
+  intermittent, lower priority* &mdash; ~half of fresh-boot anonymous
+  lookups never reach launchd; leak-correlated.
+- *Separate:* an `ipc_kmsg_destroy` page-fault panic at multi-user
+  shutdown (a port destroyed with messages still queued) &mdash;
+  verified pre-existing and independent of Bug A.
+
+**To resume:** the next target is **Bug D** &mdash; trace launchd past
+`job_new` to find why the anonymous-job path reboots the box (write
+the trace to a reboot-surviving file; `/var/run` is `tmpfs`). Once
+Bug D is fixed, the Bug C fix on `wip/launchd-anon-lookup` can merge
+to `main` &mdash; landing it alone would reboot the box during CI's
+boot test. Build/test runs on the `bsd01` VirtualBox VM (interactive
+serial console reachable via the `joe-windows` host); the branch also
+carries the `[T39-mig]` / `[BUGB]` debug instrumentation used here
+(commit `82a671d`).
+
 ## CoreFoundation for system services &mdash; swift-corelibs CF
 
 The launchd daemon itself uses **zero** CoreFoundation (audit
