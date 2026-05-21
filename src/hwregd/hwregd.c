@@ -79,6 +79,7 @@
 
 #include "hwreg_registry.h"
 #include "hwregServer.h"		/* MIG: hwreg_server() demux + routine protos */
+#include "nv.h"			/* libxpc nvlist — property-bag (de)serialise */
 
 #define DEVCTL_PATH		"/dev/devctl"
 #define READ_BUF_SIZE		(64 * 1024)
@@ -112,6 +113,7 @@
  */
 #define HWREG_RPC_BUFSZ		4096
 #define HWREG_RPC_MAX_CHILDREN	128
+#define HWREG_RPC_BLOBSZ	2048	/* hwreg_blob_t bound — matches hwreg.defs */
 
 /* The event message hwregd pushes to each subscriber. */
 struct hwreg_event_msg {
@@ -925,6 +927,119 @@ hwreg_get_node(mach_port_t server, uint64_t id, uint64_t *parent_id,
 	strlcpy(classname, n.classname, sizeof(n.classname));
 	strlcpy(driver, n.driver, sizeof(n.driver));
 	strlcpy(path, n.path, sizeof(n.path));
+	return KERN_SUCCESS;
+}
+
+/*
+ * hwreg_get_properties — node `id`'s property bag as a packed nvlist
+ * dictionary. The bag is built on demand from the hw_node fields;
+ * there is no stored bag until iter 4's enrichment needs one.
+ */
+kern_return_t
+hwreg_get_properties(mach_port_t server, uint64_t id, hwreg_blob_t props,
+    mach_msg_type_number_t *propsCnt)
+{
+	struct hw_node n;
+	nvlist_t *nv;
+	void *packed;
+	size_t size;
+
+	(void)server;
+	if (!hwreg_copy(id, &n))
+		return KERN_INVALID_ARGUMENT;	/* unknown id */
+
+	nv = nvlist_create_dictionary(0);
+	if (nv == NULL)
+		return KERN_RESOURCE_SHORTAGE;
+	nvlist_add_number(nv, "id", n.id);
+	nvlist_add_number(nv, "parent-id", n.parent_id);
+	nvlist_add_number(nv, "state", (uint64_t)n.state);
+	nvlist_add_string(nv, "name", n.name);
+	nvlist_add_string(nv, "class", n.classname);
+	nvlist_add_string(nv, "driver", n.driver);
+	nvlist_add_string(nv, "description", n.desc);
+	nvlist_add_string(nv, "pnpinfo", n.pnpinfo);
+	nvlist_add_string(nv, "location", n.location);
+	nvlist_add_string(nv, "path", n.path);
+
+	packed = nvlist_pack(nv, &size);
+	nvlist_destroy(nv);
+	if (packed == NULL)
+		return KERN_RESOURCE_SHORTAGE;
+	if (size > HWREG_RPC_BLOBSZ) {		/* a node bag never gets this big */
+		free(packed);
+		return KERN_NO_SPACE;
+	}
+	memcpy(props, packed, size);
+	free(packed);
+	*propsCnt = (mach_msg_type_number_t)size;
+	return KERN_SUCCESS;
+}
+
+/* hwreg_lookup match state, threaded through hwreg_foreach(). */
+struct lookup_ctx {
+	const char	*want_name;
+	const char	*want_class;
+	const char	*want_driver;
+	uint64_t	*ids;
+	int		 max;
+	int		 count;
+};
+
+/* hwreg_foreach() callback — record `n` if it meets every criterion. */
+static void
+lookup_match(const struct hw_node *n, void *arg)
+{
+	struct lookup_ctx *c = arg;
+
+	if (c->want_name != NULL && strcmp(c->want_name, n->name) != 0)
+		return;
+	if (c->want_class != NULL && strcmp(c->want_class, n->classname) != 0)
+		return;
+	if (c->want_driver != NULL && strcmp(c->want_driver, n->driver) != 0)
+		return;
+	if (c->count < c->max)
+		c->ids[c->count] = n->id;
+	c->count++;
+}
+
+/*
+ * hwreg_lookup — ids of the nodes matching the packed-nvlist criteria.
+ * iter 2b matches the string fields name / class / driver; empty
+ * criteria matches nothing.
+ */
+kern_return_t
+hwreg_lookup(mach_port_t server, hwreg_blob_t criteria,
+    mach_msg_type_number_t criteriaCnt, hwreg_id_array_t matches,
+    mach_msg_type_number_t *matchesCnt)
+{
+	struct lookup_ctx ctx;
+	nvlist_t *nv;
+
+	(void)server;
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.ids = matches;
+	ctx.max = HWREG_RPC_MAX_CHILDREN;	/* hwreg_id_array_t bound */
+
+	nv = nvlist_unpack(criteria, criteriaCnt);
+	if (nv == NULL)
+		return KERN_INVALID_ARGUMENT;	/* malformed criteria */
+	if (nvlist_empty(nv)) {
+		nvlist_destroy(nv);
+		*matchesCnt = 0;
+		return KERN_SUCCESS;
+	}
+	if (nvlist_exists_string(nv, "name"))
+		ctx.want_name = nvlist_get_string(nv, "name");
+	if (nvlist_exists_string(nv, "class"))
+		ctx.want_class = nvlist_get_string(nv, "class");
+	if (nvlist_exists_string(nv, "driver"))
+		ctx.want_driver = nvlist_get_string(nv, "driver");
+
+	hwreg_foreach(lookup_match, &ctx);	/* strings stay valid: nv alive */
+	nvlist_destroy(nv);
+	*matchesCnt = (mach_msg_type_number_t)
+	    (ctx.count > ctx.max ? ctx.max : ctx.count);
 	return KERN_SUCCESS;
 }
 

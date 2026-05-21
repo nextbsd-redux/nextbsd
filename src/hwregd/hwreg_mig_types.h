@@ -17,5 +17,6 @@
 typedef uint64_t	hwreg_id_array_t[128];	/* array[*:128] of uint64_t */
 typedef char		hwreg_name_t[32];	/* c_string[32]  */
 typedef char		hwreg_path_t[256];	/* c_string[256] */
+typedef uint8_t		hwreg_blob_t[2048];	/* array[*:2048] of hwreg_byte_t */
 
 #endif /* HWREG_MIG_TYPES_H */

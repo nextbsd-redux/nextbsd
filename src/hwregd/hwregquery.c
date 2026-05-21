@@ -1,18 +1,23 @@
 /*
- * hwregquery — iter 2a test client for hwregd's Mach-RPC query API.
+ * hwregquery — iter 2a/2b test client for hwregd's Mach-RPC query API.
  *
- * Looks up the org.freebsd.hwregd Mach service, then uses the MIG
- * hwreg.defs routines (hwreg_get_root / hwreg_get_children /
- * hwreg_get_node) to walk the hardware registry tree. Prints
- * HWREG-RPC-OK on success — the CI boot test (run.sh / boot-test.sh)
- * matches that marker. Built against the MIG user stub hwregUser.c.
+ * Looks up the org.freebsd.hwregd Mach service, then exercises the MIG
+ * hwreg.defs routines: walks the registry tree (hwreg_get_root /
+ * hwreg_get_children / hwreg_get_node), unpacks a node's property bag
+ * (hwreg_get_properties), and runs a criteria lookup (hwreg_lookup).
+ * Prints HWREG-RPC-OK on success — the CI boot test (run.sh /
+ * boot-test.sh) matches that marker. Built against the MIG user stub
+ * hwregUser.c.
  */
 #include <mach/mach.h>
 #include <servers/bootstrap.h>
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "hwreg.h"		/* MIG user-side routine prototypes + types */
+#include "nv.h"			/* libxpc nvlist — property bag (de)serialise */
 
 #define MAXKIDS	128		/* matches array[*:128] in hwreg.defs */
 
@@ -86,7 +91,59 @@ main(void)
 		return 1;
 	}
 
-	printf("HWREG-RPC-OK: walked %d registry nodes from root id=%llu\n",
-	    walked, (unsigned long long)root);
+	/* hwreg_get_properties — unpack the root node's property bag. */
+	{
+		hwreg_blob_t props;
+		mach_msg_type_number_t propcnt = 0;
+		nvlist_t *nv;
+
+		kr = hwreg_get_properties(svc, root, props, &propcnt);
+		if (kr != KERN_SUCCESS) {
+			printf("HWREG-RPC-FAIL: hwreg_get_properties: 0x%x\n",
+			    (unsigned)kr);
+			return 1;
+		}
+		nv = nvlist_unpack(props, propcnt);
+		if (nv == NULL) {
+			printf("HWREG-RPC-FAIL: property bag did not unpack\n");
+			return 1;
+		}
+		printf("  root props: name=%s class=%s path=%s\n",
+		    nvlist_get_string(nv, "name"),
+		    nvlist_get_string(nv, "class"),
+		    nvlist_get_string(nv, "path"));
+		nvlist_destroy(nv);
+	}
+
+	/* hwreg_lookup — count the CPU-class nodes via a criteria dict. */
+	{
+		nvlist_t *crit = nvlist_create_dictionary(0);
+		void *packed;
+		size_t psz = 0;
+		hwreg_blob_t critblob;
+		uint64_t ids[MAXKIDS];
+		mach_msg_type_number_t nids = 0;
+
+		nvlist_add_string(crit, "class", "CPU");
+		packed = nvlist_pack(crit, &psz);
+		nvlist_destroy(crit);
+		if (packed == NULL || psz > sizeof(critblob)) {
+			printf("HWREG-RPC-FAIL: criteria pack failed\n");
+			return 1;
+		}
+		memcpy(critblob, packed, psz);
+		free(packed);
+		kr = hwreg_lookup(svc, critblob, (mach_msg_type_number_t)psz,
+		    ids, &nids);
+		if (kr != KERN_SUCCESS) {
+			printf("HWREG-RPC-FAIL: hwreg_lookup: 0x%x\n",
+			    (unsigned)kr);
+			return 1;
+		}
+		printf("  lookup class=CPU: %u match(es)\n", (unsigned)nids);
+	}
+
+	printf("HWREG-RPC-OK: walked %d nodes, props + lookup OK "
+	    "(root id=%llu)\n", walked, (unsigned long long)root);
 	return 0;
 }
