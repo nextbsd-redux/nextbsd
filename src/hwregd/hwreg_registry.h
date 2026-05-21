@@ -48,6 +48,11 @@ struct hw_node {
 	char			path[256];	/* "/nexus0/.../em0" */
 	enum hw_node_state	state;
 	uint32_t		refcnt;		/* iter 4 stale-handle detection */
+	/* PCI enrichment (iter 4b); pci_vendor == 0 means "not enriched". */
+	uint32_t		pci_vendor;	/* chip vendor id */
+	uint32_t		pci_device;	/* chip device id */
+	uint32_t		pci_subvendor;	/* card subvendor id */
+	uint32_t		pci_class;	/* (class<<16)|(subclass<<8)|progif */
 	struct hw_node		*next;		/* registry-internal list link */
 };
 
@@ -101,6 +106,13 @@ int		hwreg_copy_by_name(const char *name, struct hw_node *dst);
  */
 int		hwreg_node_retain(uint64_t id);
 int		hwreg_node_release(uint64_t id);
+
+/*
+ * Attach PCI identity to the node named `name` (iter 4b enrichment).
+ * Returns 1 if the node was found and updated, 0 if not.
+ */
+int		hwreg_set_pci(const char *name, uint32_t vendor,
+		    uint32_t device, uint32_t subvendor, uint32_t class_code);
 
 /* Human-readable name for a node state. */
 const char     *hw_state_name(enum hw_node_state s);

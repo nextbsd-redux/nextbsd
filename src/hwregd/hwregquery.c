@@ -215,8 +215,68 @@ main(void)
 		}
 	}
 
+	/* PCI enrichment — look up the PCIDevice nodes and confirm at
+	 * least one carries the pci-vendor property iter 4b adds. */
+	{
+		nvlist_t *crit = nvlist_create_dictionary(0);
+		void *packed;
+		size_t psz = 0;
+		hwreg_blob_t critblob, props;
+		uint64_t ids[MAXKIDS];
+		mach_msg_type_number_t nids = 0, propcnt;
+		unsigned int i;
+		int enriched = 0;
+
+		nvlist_add_string(crit, "class", "PCIDevice");
+		packed = nvlist_pack(crit, &psz);
+		nvlist_destroy(crit);
+		if (packed == NULL || psz > sizeof(critblob)) {
+			printf("HWREG-RPC-FAIL: PCI criteria pack failed\n");
+			return 1;
+		}
+		memcpy(critblob, packed, psz);
+		free(packed);
+		kr = hwreg_lookup(svc, critblob, (mach_msg_type_number_t)psz,
+		    ids, &nids);
+		if (kr != KERN_SUCCESS) {
+			printf("HWREG-RPC-FAIL: PCI lookup: 0x%x\n",
+			    (unsigned)kr);
+			return 1;
+		}
+		for (i = 0; i < nids; i++) {
+			nvlist_t *nv;
+
+			propcnt = 0;
+			if (hwreg_get_properties(svc, ids[i], props,
+			    &propcnt) != KERN_SUCCESS)
+				continue;
+			nv = nvlist_unpack(props, propcnt);
+			if (nv == NULL)
+				continue;
+			if (nvlist_exists_number(nv, "pci-vendor")) {
+				if (enriched == 0)
+					printf("  PCI node %s: vendor=0x%04llx "
+					    "device=0x%04llx\n",
+					    nvlist_get_string(nv, "name"),
+					    (unsigned long long)
+					    nvlist_get_number(nv, "pci-vendor"),
+					    (unsigned long long)
+					    nvlist_get_number(nv, "pci-device"));
+				enriched++;
+			}
+			nvlist_destroy(nv);
+		}
+		printf("  class=PCIDevice: %u node(s), %d PCI-enriched\n",
+		    (unsigned)nids, enriched);
+		if (nids > 0 && enriched == 0) {
+			printf("HWREG-RPC-FAIL: PCI nodes exist but none "
+			    "enriched\n");
+			return 1;
+		}
+	}
+
 	printf("HWREG-RPC-OK: walked %d nodes; props, lookup, watch, "
-	    "load+retain OK (root id=%llu)\n", walked,
+	    "load+retain, PCI OK (root id=%llu)\n", walked,
 	    (unsigned long long)root);
 	return 0;
 }

@@ -54,8 +54,10 @@
 
 #include <sys/types.h>
 #include <sys/param.h>
+#include <sys/ioctl.h>
 #include <sys/linker.h>
 #include <sys/module.h>
+#include <sys/pciio.h>
 #include <sys/select.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
@@ -1061,6 +1063,13 @@ hwreg_get_properties(mach_port_t server, uint64_t id, hwreg_blob_t props,
 	nvlist_add_string(nv, "pnpinfo", n.pnpinfo);
 	nvlist_add_string(nv, "location", n.location);
 	nvlist_add_string(nv, "path", n.path);
+	/* PCI identity, present only on enriched PCI nodes (iter 4b). */
+	if (n.pci_vendor != 0) {
+		nvlist_add_number(nv, "pci-vendor", n.pci_vendor);
+		nvlist_add_number(nv, "pci-device", n.pci_device);
+		nvlist_add_number(nv, "pci-subvendor", n.pci_subvendor);
+		nvlist_add_number(nv, "pci-class", n.pci_class);
+	}
 
 	packed = nvlist_pack(nv, &size);
 	nvlist_destroy(nv);
@@ -1393,6 +1402,64 @@ mach_service_thread(void *arg)
 	return NULL;
 }
 
+/*
+ * PCI property enrichment (Phase 1 iter 4b). Walk /dev/pci via
+ * PCIOCGETCONF and attach each device's vendor / device / subvendor /
+ * class ids to its registry node, matched by driver name + unit.
+ */
+static void
+enrich_pci(void)
+{
+	struct pci_conf conf[32];
+	struct pci_conf_io io;
+	int fd, enriched = 0, restarts = 0;
+
+	fd = open("/dev/pci", O_RDONLY | O_CLOEXEC);
+	if (fd < 0) {
+		xlog("hwreg: /dev/pci unavailable (%s) — PCI enrichment skipped",
+		    strerror(errno));
+		return;
+	}
+	memset(&io, 0, sizeof(io));
+	do {
+		unsigned int i;
+
+		io.matches = conf;
+		io.match_buf_len = sizeof(conf);
+		if (ioctl(fd, PCIOCGETCONF, &io) < 0) {
+			xlog("hwreg: PCIOCGETCONF failed: %s", strerror(errno));
+			break;
+		}
+		if (io.status == PCI_GETCONF_LIST_CHANGED) {
+			/* The device list moved under us — restart the scan. */
+			if (++restarts > 4)
+				break;
+			memset(&io, 0, sizeof(io));
+			enriched = 0;
+			continue;
+		}
+		if (io.status == PCI_GETCONF_ERROR)
+			break;
+		for (i = 0; i < io.num_matches; i++) {
+			char name[32];
+			uint32_t cls;
+
+			if (conf[i].pd_name[0] == '\0')
+				continue;	/* no driver — no node to match */
+			(void)snprintf(name, sizeof(name), "%s%lu",
+			    conf[i].pd_name, conf[i].pd_unit);
+			cls = ((uint32_t)conf[i].pc_class << 16) |
+			    ((uint32_t)conf[i].pc_subclass << 8) |
+			    (uint32_t)conf[i].pc_progif;
+			if (hwreg_set_pci(name, conf[i].pc_vendor,
+			    conf[i].pc_device, conf[i].pc_subvendor, cls))
+				enriched++;
+		}
+	} while (io.status == PCI_GETCONF_MORE_DEVS);
+	(void)close(fd);
+	xlog("hwreg: PCI enrichment — %d device node(s) enriched", enriched);
+}
+
 /* hwreg_foreach() callback — log one registry node. */
 static void
 log_hw_node(const struct hw_node *n, void *arg)
@@ -1436,6 +1503,7 @@ main(int argc, char **argv)
 		else {
 			xlog("hwreg: registry built — %d device nodes",
 			    nnodes);
+			enrich_pci();		/* Phase 1 iter 4b */
 			hwreg_foreach(log_hw_node, NULL);
 		}
 	}
