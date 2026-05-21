@@ -3,21 +3,24 @@
 <!--
   org.freebsd.hwmatch-test.plist
 
-  Phase K iteration 1 fixture for the launchd HardwareMatch plist
-  key. launchd PID 1 imports this plist at boot; parsing its
-  HardwareMatch <array> and HardwareMatchAction <string> exercises
-  the new hwmatch_new_from_obj() path in src/launchd/src/core.c.
+  Phase K fixture for the launchd HardwareMatch plist key. launchd
+  PID 1 imports this plist at boot; parsing its HardwareMatch <array>
+  and HardwareMatchAction <string> exercises hwmatch_new_from_obj()
+  and lands the job on launchd's global HardwareMatch list.
 
-  iter 1 only parses and stores the criteria — there is no
-  device-arrival trigger yet, and the job has no RunAtLoad /
-  KeepAlive, so /usr/bin/true is never actually run. The boot test
-  staying green is the iter-1 verification: a HardwareMatch parsing
-  bug would crash launchd PID 1 and fail every CI marker.
+  iter 2 wired launchd to hwregd's device-event notify bus: at boot,
+  when hwregd checks its Mach service in, launchd subscribes; on a
+  device arrival whose BSD name equals a job's HardwareMatch `name`
+  criterion, launchd dispatches the job. iter 2 matches the device
+  name only (the SUBSCRIBE event line carries no class / driver).
 
-  The hwreg_watch RPC client that registers these criteria with
-  hwregd and fires the job on a matching device arrival lands in
-  iter 2. The criteria keys mirror hwregd's watch filter — name /
-  class / driver (hwreg.defs hwreg_watch).
+  The criterion below names a device that no QEMU CI guest has, so
+  the job does not fire during the boot test — the CI gate for iter 2
+  is the launchd<->hwregd subscription round-trip (the "subscription
+  to hwregd device events confirmed" console line), not this job
+  firing. /usr/bin/true is a harmless placeholder program; the job
+  has no RunAtLoad / KeepAlive so it only ever runs on a matching
+  device arrival.
 
   Plan: pkgdemon.github.io/freebsd-hardware-registry-iokit-plan.html §4
 -->
@@ -32,8 +35,8 @@
     <key>HardwareMatch</key>
     <array>
         <dict>
-            <key>class</key>
-            <string>cpu</string>
+            <key>name</key>
+            <string>hwmatchtest0</string>
         </dict>
     </array>
     <key>HardwareMatchAction</key>

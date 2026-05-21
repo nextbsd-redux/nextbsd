@@ -393,6 +393,18 @@ expect {
     "HWREG-RPC-OK" { puts "\nOK: hwregd Mach-RPC registry query works" }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: HWMATCH-SUB marker not seen"
+        exit 1
+    }
+    "HWMATCH-SUB-FAIL" {
+        puts "\nFAIL: launchd HardwareMatch subscription to hwregd failed"
+        exit 1
+    }
+    "HWMATCH-SUB-OK" { puts "\nOK: launchd HardwareMatch subscription works" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"

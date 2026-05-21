@@ -264,9 +264,15 @@ static void calendarinterval_sanity_check(void);
  * device matches the criterion when every field that is present
  * equals the device's corresponding field; a NULL field means
  * "any". This mirrors hwregd's watch filter (hwreg.defs hwreg_watch
- * matches name / class / driver). iter 1 only parses and stores the
- * criteria; iter 2 registers them against hwregd's watch RPC and
- * dispatches matching jobs on a HWREG_EVT_ARRIVED event.
+ * matches name / class / driver).
+ *
+ * iter 1 parsed and stored the criteria. iter 2 connects to hwregd's
+ * notify bus: launchd subscribes for device events and, on a device
+ * arrival, dispatches every job whose HardwareMatch criteria match
+ * the device. iter 2 matches the device (BSD) name only — the
+ * SUBSCRIBE-protocol event line carries no class / driver; a watch
+ * RPC that surfaces those (and DEPARTED / KeepAlive handling) is a
+ * later iteration.
  */
 struct hwmatch {
 	SLIST_ENTRY(hwmatch) sle;
@@ -286,8 +292,39 @@ enum {
 	HWMATCH_ACTION_ONESHOT,
 };
 
+/*
+ * hwregd notify-bus wire protocol — mirrors src/hwregd/hwregd.c (the
+ * project's other hwregd clients, hwregtest.c / hwregquery.c, carry
+ * the same redefinition; there is no shared header). A subscriber
+ * sends a bare-header SUBSCRIBE whose local port travels as a send
+ * right, then receives EVENT messages: `kind` is '+' (device
+ * arrived) / '-' (departed) / '!' (notify) / '?' (nomatch) / 'A'
+ * (subscription ack); `text` is the NUL-terminated event line, e.g.
+ * "attach: dev=em0 parent=pci0 loc=[...]".
+ */
+#define HWREG_MSG_SUBSCRIBE	0x48575201	/* launchd -> hwregd */
+#define HWREG_MSG_EVENT		0x48575202	/* hwregd  -> launchd */
+
+struct hwreg_event_msg {
+	mach_msg_header_t	hdr;
+	char			kind;
+	char			text[479];
+};
+
 static bool hwmatch_new_from_obj(job_t j, launch_data_t obj);
 static void hwmatch_delete(job_t j, struct hwmatch *hm);
+static void jobmgr_hwreg_subscribe(mach_port_t hwregd_port);
+static void jobmgr_dispatch_hwreg_event(char kind, const char *text);
+static boolean_t hwreg_event_demux(mach_msg_header_t *request, mach_msg_header_t *reply);
+
+/*
+ * Every job that declared a HardwareMatch criterion, linked through
+ * job_s.hwmatch_jobs_sle. hwmatch_new_from_obj() adds a job on its
+ * first criterion; job_remove() drops it. jobmgr_dispatch_hwreg_event()
+ * walks this list on a device event instead of every job in every
+ * job manager.
+ */
+static LIST_HEAD(, job_s) s_hwmatch_jobs;
 
 struct envitem {
 	SLIST_ENTRY(envitem) sle;
@@ -526,6 +563,7 @@ struct job_s {
 	LIST_ENTRY(job_s) global_pid_hash_sle;
 	LIST_ENTRY(job_s) label_hash_sle;
 	LIST_ENTRY(job_s) global_env_sle;
+	LIST_ENTRY(job_s) hwmatch_jobs_sle;
 	SLIST_ENTRY(job_s) curious_jobs_sle;
 	LIST_HEAD(, suspended_peruser) suspended_perusers;
 	LIST_HEAD(, waiting_for_exit) exit_watchers;
@@ -1508,6 +1546,9 @@ job_remove(job_t j)
 	}
 	while ((si = SLIST_FIRST(&j->semaphores))) {
 		semaphoreitem_delete(j, si);
+	}
+	if (!SLIST_EMPTY(&j->hwmatches)) {
+		LIST_REMOVE(j, hwmatch_jobs_sle);
 	}
 	while ((hm = SLIST_FIRST(&j->hwmatches))) {
 		hwmatch_delete(j, hm);
@@ -5995,12 +6036,13 @@ hwmatch_new_from_obj(job_t j, launch_data_t obj)
 		return false;
 	}
 
+	/* The job joins the global HardwareMatch list on its first
+	 * criterion — jobmgr_dispatch_hwreg_event() walks that list. */
+	if (SLIST_EMPTY(&j->hwmatches)) {
+		LIST_INSERT_HEAD(&s_hwmatch_jobs, j, hwmatch_jobs_sle);
+	}
 	SLIST_INSERT_HEAD(&j->hwmatches, hm, sle);
 
-	/* The action is a separate plist key; dictionary iteration order
-	 * is unspecified, so it may not be parsed yet — log only the
-	 * criterion here. iter 2 logs the effective action at watch
-	 * registration, once the whole plist has been imported. */
 	job_log(j, LOG_NOTICE, "HardwareMatch criterion: name=%s class=%s "
 	    "driver=%s", hm->name ? hm->name : "*", hm->cls ? hm->cls : "*",
 	    hm->driver ? hm->driver : "*");
@@ -6017,6 +6059,161 @@ hwmatch_delete(job_t j, struct hwmatch *hm)
 	free(hm->cls);
 	free(hm->driver);
 	free(hm);
+}
+
+/*
+ * jobmgr_dispatch_hwreg_event — act on one hwregd device event.
+ * `kind` is '+' arrived / '-' departed / '!' notify / '?' nomatch /
+ * 'A' subscription ack; `text` is the hwregd event line. iter 2 acts
+ * only on arrivals: every HardwareMatch job whose criteria match the
+ * arrived device is dispatched. Departure handling (and the
+ * HardwareMatchAction == KeepAlive stop) is a later iteration.
+ */
+void
+jobmgr_dispatch_hwreg_event(char kind, const char *text)
+{
+	const char *dev;
+	char devname[64];
+	size_t i;
+	job_t j;
+
+	if (kind == 'A') {
+		/* LOG_CONSOLE so the round-trip confirmation lands in the
+		 * boot console transcript the CI boot test scans. */
+		launchd_syslog(LOG_NOTICE | LOG_CONSOLE, "HardwareMatch: "
+		    "subscription to hwregd device events confirmed (%s)",
+		    text);
+		return;
+	}
+	if (kind != '+') {
+		return;		/* departures / notify / nomatch: not iter 2 */
+	}
+
+	/* hwregd publish_event() attach line: "attach: dev=NAME ...". */
+	dev = strstr(text, "dev=");
+	if (dev == NULL) {
+		return;
+	}
+	dev += sizeof("dev=") - 1;
+	for (i = 0; i < sizeof(devname) - 1 && dev[i] != '\0' && dev[i] != ' '; i++) {
+		devname[i] = dev[i];
+	}
+	devname[i] = '\0';
+	if (devname[0] == '\0') {
+		return;
+	}
+
+	LIST_FOREACH(j, &s_hwmatch_jobs, hwmatch_jobs_sle) {
+		struct hwmatch *hm;
+
+		SLIST_FOREACH(hm, &j->hwmatches, sle) {
+			/* iter 2 matches the device name only; a criterion
+			 * with no name (class / driver only) cannot be
+			 * matched against the SUBSCRIBE event line. */
+			if (hm->name == NULL ||
+			    strcmp(hm->name, devname) != 0) {
+				continue;
+			}
+			job_log(j, LOG_NOTICE, "HardwareMatch: device \"%s\" "
+			    "arrived — dispatching job", devname);
+			job_dispatch(j, true);
+			break;		/* one dispatch per job per event */
+		}
+	}
+}
+
+/*
+ * hwreg_event_demux — the launchd_mig_demux callback for launchd's
+ * hwregd notify port. The port is registered with runtime_add_mport(),
+ * so this runs on the main runtime thread and may call job_dispatch()
+ * directly. The hwregd EVENT message is a bare hand-rolled message,
+ * not a MIG request, and expects no reply: xpc_pipe_try_receive()
+ * only skips the reply send when the demux returns TRUE *and* the
+ * reply is a non-complex header carrying RetCode == MIG_NO_REPLY, so
+ * the reply is built to be exactly that.
+ */
+boolean_t
+hwreg_event_demux(mach_msg_header_t *request, mach_msg_header_t *reply)
+{
+	mig_reply_error_t *r = (mig_reply_error_t *)reply;
+
+	r->Head.msgh_bits = 0;
+	r->Head.msgh_remote_port = MACH_PORT_NULL;
+	r->Head.msgh_local_port = MACH_PORT_NULL;
+	r->Head.msgh_size = sizeof(*r);
+	r->Head.msgh_id = request->msgh_id + 100;
+	r->RetCode = MIG_NO_REPLY;
+
+	if (request->msgh_id == HWREG_MSG_EVENT &&
+	    request->msgh_size >= sizeof(struct hwreg_event_msg)) {
+		struct hwreg_event_msg *ev = (struct hwreg_event_msg *)request;
+
+		ev->text[sizeof(ev->text) - 1] = '\0';	/* defensive */
+		jobmgr_dispatch_hwreg_event(ev->kind, ev->text);
+	} else {
+		launchd_syslog(LOG_NOTICE, "HardwareMatch: ignoring an "
+		    "unexpected message (id 0x%x) on the hwregd notify port",
+		    (unsigned)request->msgh_id);
+	}
+
+	return TRUE;
+}
+
+/*
+ * jobmgr_hwreg_subscribe — subscribe launchd to hwregd's device-event
+ * notify bus. Called from job_mig_check_in2() when hwregd checks its
+ * Mach service in, so hwregd is up and owns the service's receive
+ * right by the time any SUBSCRIBE message is drained.
+ *
+ * `hwregd_port` is hwregd's service port. machservice_new() inserted
+ * a send right onto that name and check-in moves only the receive
+ * right to hwregd, so launchd keeps the send right used here. The
+ * notify port is allocated once and re-subscribed on each hwregd
+ * check-in, so a hwregd restart re-establishes the subscription. The
+ * SUBSCRIBE send is fire-and-forget with a timeout — the PID-1
+ * runtime is never blocked waiting on hwregd.
+ */
+void
+jobmgr_hwreg_subscribe(mach_port_t hwregd_port)
+{
+	static mach_port_t notify_port = MACH_PORT_NULL;
+	mach_msg_header_t msg;
+	mach_msg_return_t mr;
+
+	if (notify_port == MACH_PORT_NULL) {
+		if (launchd_mport_create_recv(&notify_port) != KERN_SUCCESS) {
+			launchd_syslog(LOG_ERR, "HardwareMatch: could not "
+			    "allocate the hwregd notify port");
+			notify_port = MACH_PORT_NULL;
+			return;
+		}
+		if (runtime_add_mport(notify_port, hwreg_event_demux) != KERN_SUCCESS) {
+			launchd_syslog(LOG_ERR, "HardwareMatch: could not "
+			    "register the hwregd notify port");
+			return;
+		}
+	}
+
+	/* Bare-header SUBSCRIBE — remote = hwregd's service port
+	 * (COPY_SEND), local = our notify port (MAKE_SEND) so hwregd
+	 * gets a send right to push EVENT messages back to us. */
+	memset(&msg, 0, sizeof(msg));
+	msg.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND,
+	    MACH_MSG_TYPE_MAKE_SEND);
+	msg.msgh_size = sizeof(msg);
+	msg.msgh_remote_port = hwregd_port;
+	msg.msgh_local_port = notify_port;
+	msg.msgh_id = HWREG_MSG_SUBSCRIBE;
+
+	mr = mach_msg(&msg, MACH_SEND_MSG | MACH_SEND_TIMEOUT, sizeof(msg),
+	    0, MACH_PORT_NULL, 2000, MACH_PORT_NULL);
+	if (mr != MACH_MSG_SUCCESS) {
+		launchd_syslog(LOG_ERR, "HardwareMatch: SUBSCRIBE to hwregd "
+		    "failed: 0x%x", (unsigned)mr);
+		return;
+	}
+
+	launchd_syslog(LOG_NOTICE, "HardwareMatch: SUBSCRIBE sent to hwregd");
 }
 
 bool
@@ -9159,6 +9356,16 @@ job_mig_check_in2(job_t j, name_t servicename, mach_port_t *serviceportp, uuid_t
 	job_log(j, LOG_INFO, "Check-in of service: %s", servicename);
 
 	*serviceportp = machservice_port(ms);
+
+	/* HardwareMatch (Phase K): when hwregd checks its service in,
+	 * launchd subscribes to its device-event notify bus. Doing it
+	 * here guarantees hwregd is up; the SUBSCRIBE message queues on
+	 * the service port and travels with the receive right the MIG
+	 * reply hands to hwregd. */
+	if (strcmp(servicename, "org.freebsd.hwregd") == 0) {
+		jobmgr_hwreg_subscribe(machservice_port(ms));
+	}
+
 	LD_TRACE("[T39-mig] job_mig_check_in2 service=%s -> SUCCESS port=0x%x ms=%p",
 	    servicename, (unsigned)*serviceportp, ms);
 	return BOOTSTRAP_SUCCESS;

@@ -456,4 +456,40 @@ if [ ! -x "$hwregquery" ]; then
 fi
 "$hwregquery" || true	# marker (HWREG-RPC-OK/FAIL) gates in boot-test.sh
 
+# HWMATCH-SUB — launchd HardwareMatch (Phase K, plan §4): confirm
+# launchd subscribed to hwregd's device-event notify bus at boot.
+# When hwregd checks its Mach service in, launchd sends a SUBSCRIBE
+# and hwregd replies with an ack EVENT; launchd's demux logs the
+# round-trip confirmation, which reaches /var/log/system.log via
+# launchd's syslog drain. Seeing that line proves the whole
+# launchd<->hwregd notify path — SUBSCRIBE send, notify-port
+# registration, EVENT receive — is wired. Retry-poll: launchd logs
+# this early in boot but the syslog drain to system.log can lag.
+hwmatch_found=0
+i=0
+while [ "$i" -lt 10 ]; do
+    if grep -q "subscription to hwregd device events confirmed" \
+        /var/log/system.log 2>/dev/null; then
+        hwmatch_found=1
+        break
+    fi
+    sleep 1
+    i=$((i + 1))
+done
+
+if [ "$hwmatch_found" -eq 1 ]; then
+    echo "HWMATCH-SUB-OK: launchd subscribed to hwregd device events"
+else
+    # Diagnostics first — the expect harness kills the VM on the
+    # HWMATCH-SUB-FAIL token, so emit that marker last.
+    echo "=== HWMATCH-SUB diagnostics ==="
+    grep -i "hardwarematch" /var/log/system.log 2>/dev/null \
+        || echo "(no HardwareMatch lines in /var/log/system.log)"
+    echo "--- hwregd.stderr (final state) ---"
+    cat /var/log/hwregd.stderr 2>/dev/null || echo "(no hwregd.stderr)"
+    echo "=== end diagnostics ==="
+    echo "HWMATCH-SUB-FAIL: launchd HardwareMatch subscription not confirmed"
+    exit 1
+fi
+
 exit 0
