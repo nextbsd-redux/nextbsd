@@ -895,9 +895,25 @@ echo "==> launchctl built + ldd verified"
 #
 echo "==> building hwregd (src/hwregd)"
 mkdir -p "$WORK/rootfs/usr/sbin"
+# Phase 1 iter 2a — generate the hwreg.defs MIG stubs (hwreg_server()
+# demux for hwregd, hwregUser.c for the hwregquery test client). Same
+# mig.sh + migcom path as the launchd MIG step above.
+HWREG_MIG="$WORK/hwreg-mig"
+mkdir -p "$HWREG_MIG"
+( cd "$HWREG_MIG" && \
+  MIGCC=/usr/bin/cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
+  /bin/sh "$ROOT/src/bootstrap_cmds/migcom.tproj/mig.sh" \
+    -I"$ROOT/src/libmach/include" \
+    -header hwreg.h -user hwregUser.c \
+    -server hwregServer.c -sheader hwregServer.h \
+    "$ROOT/src/hwregd/hwreg.defs" ) \
+  || { echo "FAIL: mig could not process hwreg.defs"; exit 1; }
+test -s "$HWREG_MIG/hwregServer.c" \
+    || { echo "FAIL: mig produced no hwregServer.c"; exit 1; }
 make -C "$ROOT/src/hwregd" \
     DESTDIR="$WORK/rootfs" \
     SYSROOT="$WORK/rootfs" \
+    MIGOUT="$HWREG_MIG" \
     all install
 ls -lh "$WORK/rootfs/usr/sbin/hwregd"
 test -x "$WORK/rootfs/usr/sbin/hwregd" \
@@ -916,6 +932,19 @@ cc -I"$WORK/rootfs/usr/include" \
    -llaunch -lsystem_kernel
 test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hwregtest" \
     || { echo "FAIL: hwregtest not built"; exit 1; }
+
+# hwregquery — iter 2a test client for hwregd's Mach-RPC query API.
+# Links the MIG user stub hwregUser.c; run.sh walks the registry tree
+# with it and checks for the HWREG-RPC-OK marker.
+echo "==> building hwregquery"
+cc -I"$HWREG_MIG" -I"$ROOT/src/hwregd" -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hwregquery" \
+   "$ROOT/src/hwregd/hwregquery.c" "$HWREG_MIG/hwregUser.c" \
+   -llaunch -lsystem_kernel
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hwregquery" \
+    || { echo "FAIL: hwregquery not built"; exit 1; }
 
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
