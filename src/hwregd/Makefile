@@ -50,6 +50,8 @@ CFLAGS+=	-Wmissing-prototypes -Wpointer-arith
 # the Mach headers come from the rootfs.
 CFLAGS+=	-I${.CURDIR}/../launchd/liblaunch
 CFLAGS+=	-I${.CURDIR}/../launchd/freebsd-shims
+# iter 2b: nv.h — the libxpc nvlist API hwregd packs property bags with.
+CFLAGS+=	-I${.CURDIR}/../libxpc
 
 SYSROOT?=
 .if !empty(SYSROOT)
@@ -61,7 +63,8 @@ LDFLAGS+=	-Wl,--allow-shlib-undefined
 
 # -llaunch: bootstrap_check_in + the bootstrap_port global.
 # -lsystem_kernel: mach_msg and the Mach port syscalls.
-LDADD+=		-llaunch -lsystem_kernel -lpthread
+# -lxpc: the nvlist API (nvlist_pack / _unpack / ...) for property bags.
+LDADD+=		-llaunch -lsystem_kernel -lpthread -lxpc
 
 BINDIR=		/usr/sbin
 

@@ -933,16 +933,18 @@ cc -I"$WORK/rootfs/usr/include" \
 test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hwregtest" \
     || { echo "FAIL: hwregtest not built"; exit 1; }
 
-# hwregquery — iter 2a test client for hwregd's Mach-RPC query API.
-# Links the MIG user stub hwregUser.c; run.sh walks the registry tree
-# with it and checks for the HWREG-RPC-OK marker.
+# hwregquery — iter 2a/2b test client for hwregd's Mach-RPC query API.
+# Links the MIG user stub hwregUser.c (+ libxpc for the nvlist API the
+# iter 2b property-bag / lookup routines use); run.sh exercises it and
+# checks for the HWREG-RPC-OK marker.
 echo "==> building hwregquery"
-cc -I"$HWREG_MIG" -I"$ROOT/src/hwregd" -I"$WORK/rootfs/usr/include" \
+cc -I"$HWREG_MIG" -I"$ROOT/src/hwregd" -I"$ROOT/src/libxpc" \
+   -I"$WORK/rootfs/usr/include" \
    -L"$WORK/rootfs/usr/lib/system" \
    -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
    -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hwregquery" \
    "$ROOT/src/hwregd/hwregquery.c" "$HWREG_MIG/hwregUser.c" \
-   -llaunch -lsystem_kernel
+   -llaunch -lsystem_kernel -lxpc
 test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hwregquery" \
     || { echo "FAIL: hwregquery not built"; exit 1; }
 

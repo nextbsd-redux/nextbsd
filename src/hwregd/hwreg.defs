@@ -33,6 +33,11 @@ import "hwreg_mig_types.h";
 type hwreg_id_array_t	= array[*:128] of uint64_t;
 type hwreg_name_t	= c_string[32];
 type hwreg_path_t	= c_string[256];
+/* hwreg_byte_t — a raw byte with an explicit C type: MIG expands an
+ * inline array into `<element-ctype> field[N]` and has no C type for a
+ * bare MACH_MSG_TYPE_BYTE element (it emits `(null)`). */
+type hwreg_byte_t	= MACH_MSG_TYPE_BYTE ctype: uint8_t;
+type hwreg_blob_t	= array[*:2048] of hwreg_byte_t;
 
 /*
  * hwreg_get_root — registry id of the tree root (the newbus root
@@ -70,4 +75,28 @@ routine hwreg_get_node(
 	out classname	: hwreg_name_t;
 	out driver	: hwreg_name_t;
 	out path	: hwreg_path_t
+);
+
+/*
+ * hwreg_get_properties — node `id`'s full property bag, as a packed
+ * nvlist dictionary (id / parent-id / state / name / class / driver /
+ * description / pnpinfo / location / path). KERN_INVALID_ARGUMENT for
+ * an unknown id. iter 4's PCI/USB enrichment adds keys here.
+ */
+routine hwreg_get_properties(
+	server		: mach_port_t;
+	id		: uint64_t;
+	out props	: hwreg_blob_t
+);
+
+/*
+ * hwreg_lookup — registry ids of the nodes matching `criteria`, a
+ * packed nvlist dictionary of field constraints. iter 2b matches the
+ * string fields name / class / driver; a node matches when every
+ * constraint present equals its field. Empty criteria matches nothing.
+ */
+routine hwreg_lookup(
+	server		: mach_port_t;
+	criteria	: hwreg_blob_t;
+	out matches	: hwreg_id_array_t
 );

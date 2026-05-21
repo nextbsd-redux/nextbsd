@@ -175,7 +175,6 @@ nvlist_create_dictionary(int flags)
 	TAILQ_INIT(&nvl->nvl_head);
 	nvl->nvl_magic = NVLIST_MAGIC;
 
-	printf("1 nvl = %p\n", nvl);
 	return (nvl);
 }
 
