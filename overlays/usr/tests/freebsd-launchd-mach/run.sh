@@ -349,7 +349,7 @@ sleep 2
 # /var/log/<daemon>.stderr file. Dump those into the boot console
 # BEFORE the proc check so [T39-bs] / [T39-ll] traces (and any other
 # diagnostic output) survive the halt that follows a PROC-FAIL exit.
-for slog in /var/log/syslogd.stderr /var/log/notifyd.stderr /var/log/hwregd.stderr /var/log/aslmanager.stderr; do
+for slog in /var/log/syslogd.stderr /var/log/notifyd.stderr /var/log/hwregd.stderr /var/log/aslmanager.stderr /var/log/configd.stderr; do
     if [ -s "$slog" ]; then
         echo "=== begin $slog ==="
         cat "$slog" || true
