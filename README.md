@@ -475,65 +475,45 @@ hardware-registry daemon with an IOKit-shaped Mach-RPC API
 &mdash; closes that gap, and Apple's `IOKitUser` will sit on top
 as a thin facade (re-aimed at `hwregd` rather than a kernel
 IOService graph &mdash; there is no IOKit kernel here). Phase 0
-&mdash; skeleton daemon, plist, build wire-up &mdash; has
-landed; the structured registry, the Mach-RPC query/watch API,
-the launchd `HardwareMatch` key, and the IOKitUser facade
-(`ioreg`) follow. `configd` + `IPConfiguration` &mdash; Apple's
+(skeleton daemon, plist, `/dev/devctl` reader, Mach pub/sub) and
+Phase 1 (the structured registry + a 10-routine Mach-RPC
+query/watch/load API + PCI enrichment) have landed; the launchd
+`HardwareMatch` key and the IOKitUser facade (`ioreg`) follow.
+`configd` + `IPConfiguration` &mdash; Apple's
 network-config stack, the proper replacement for the interim
 `dhclient` setup &mdash; come after the hwregd/IOKit block.
 Full design: the
 [hardware registry + IOKit porting plan](https://pkgdemon.github.io/freebsd-hardware-registry-iokit-plan.html).
 
-### Phase K &mdash; HWREG-PUBSUB blocker (in progress, 2026-05-21)
+### Phase K &mdash; hwregd Phase 0 + Phase 1 complete (2026-05-21)
 
-iter 3b-ii gave `hwregd` a Mach pub/sub bus and an `hwregtest` client,
-but the `HWREG-PUBSUB` round-trip fails &mdash; the CI marker is
-de-gated. Investigation on the `bsd01` test VM root-caused it to a
-**stack of bugs**, each fix uncovering the next:
+`hwregd` is a working hardware-registry daemon. **Phase 0** (the
+`/dev/devctl` event reader, `kldload`-on-nomatch, and a Mach pub/sub
+bus) and **Phase 1** (the structured registry) have both landed:
 
-- **Bug A &mdash; IPC-space leak.** *Fixed, on `main`.*
-  `ipc_entry_sysinit`'s `process_exit`/`process_exec` cleanup handlers
-  (`ipc_entry_list_close`) were `#if 0`'d, so every process leaked its
-  whole IPC space on exit. Re-enabled (`51e4f9e`, briefly reverted,
-  re-applied as `09bcbf6`; CI-green). Residual: `mach_task` /
-  `ipc_space` structs themselves still leak &mdash; deferred.
-- **Bug C &mdash; `proc_pidinfo` stub.** *Fixed, on `main` (`8cb2981`).*
-  `freebsd-shims/libproc.h`'s `proc_pidinfo()` was an unimplemented
-  stub that always returned 0; launchd's `job_new_anonymous()` reads
-  that as "process gone" and returns NULL, so `bootstrap_look_up` from
-  any non-launchd process resolved `j==NULL` &rarr;
-  `BOOTSTRAP_NO_MEMORY` (`0x451`). Reimplemented via
-  `sysctl(KERN_PROC_PID)`.
-- **Bug D &mdash; anonymous-job-path reboot.** *Fixed &mdash; was not a
-  launchd bug.* With Bug C fixed, an anonymous `bootstrap_look_up`
-  reached launchd's `job_new_anonymous` &rarr; `job_new` path for the
-  first time, and launchd (PID 1) appeared to **cleanly reboot the
-  box**. A reboot-surviving trace root-caused it: `job_new()` returns
-  cleanly, then PID 1 takes a `SIGSEGV` at `0xfffffffffffffffe` &mdash;
-  which is `AUTO_PICK_ANONYMOUS_LABEL`, `(const char *)(~1)`. A debug
-  trace on the `wip/launchd-anon-lookup` branch (commit `82a671d`)
-  printed `job_new_anonymous`'s `whichlabel` &mdash; an `AUTO_PICK_*`
-  sentinel pointer, never a real string &mdash; with `%s`; `vfprintf`
-  dereferenced it and crashed PID 1, and launchd's own crash handler
-  did `reboot(0)`. The diagnostic trace was itself rebooting the box.
-  Fixed on the branch (`84c6734`); the anonymous path then runs
-  end-to-end (`look_up2` returns `org.freebsd.hwregd`, box stays up).
-- **Bug B &mdash; `MACH_SEND_INVALID_DEST` (`0x10000003`).** *Open
-  &mdash; now the top blocker.* The anonymous client's `bootstrap_port`
-  send right is invalid, so `bootstrap_look_up` fails client-side
-  before reaching launchd. Intermittent and leak-correlated; likely
-  recedes once the Bug A residual (`mach_task` / `ipc_space` struct
-  leak) is fixed.
-- *Separate:* an `ipc_kmsg_destroy` page-fault panic at multi-user
-  shutdown (a port destroyed with messages still queued) &mdash;
-  verified pre-existing and independent of Bug A.
+- a tree of `hw_node` records, one per newbus device, built at startup
+  from the `hw.bus.*` sysctls (the data `libdevinfo` exposes, read
+  directly so the daemon needs no `FreeBSD-devmatch` dependency) and
+  kept current by `/dev/devctl` attach/detach events;
+- a 10-routine MIG Mach-RPC API &mdash; `hwreg_get_root` /
+  `_get_children` / `_get_node` / `_get_properties` / `_lookup`
+  (query), `_watch` / `_unwatch` (criteria-filtered device-event
+  watch), `_load_driver`, `_retain` / `_release`;
+- PCI device-identity enrichment (vendor / device / subvendor / class,
+  via `/dev/pci` + `PCIOCGETCONF`).
 
-**To resume:** the next target is **Bug B**. The `[T39-mig]` /
-`[BUGD]` debug instrumentation used to root-cause Bug D lives on
-`wip/launchd-anon-lookup` (commits `82a671d`, `ff22891`, `22f32d9`,
-`84c6734`) and writes a reboot-surviving trace to
-`/root/launchd_bugd.log`. Build/test runs on the `bsd01` VirtualBox VM
-(interactive serial console reachable via the `joe-windows` host).
+The `HWREG-PUBSUB` round-trip that originally blocked this work was a
+client receive buffer sized with no room for the Mach message trailer
+(`MACH_RCV_TOO_LARGE`); the reported "segfault on startup" was a
+truncated install, not a code bug. The `HWREG-PUBSUB` and `HWREG-RPC`
+CI markers gate the pub/sub and query paths.
+
+**Next:** the launchd `HardwareMatch` plist key &mdash; launchd
+subscribes to hwregd's watch RPC and fires jobs on device arrival
+(plan §4) &mdash; then the IOKitUser facade (`ioreg`). Deferred:
+USB and thermal/CPU-sysctl property enrichment. Build/test runs on
+the `bsd01` VirtualBox VM (interactive serial console reachable via
+the `joe-windows` host).
 
 ## CoreFoundation for system services &mdash; swift-corelibs CF
 
