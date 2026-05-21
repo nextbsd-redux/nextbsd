@@ -492,3 +492,23 @@ hwreg_node_release(uint64_t id)
 	pthread_mutex_unlock(&reg_lock);
 	return rc;
 }
+
+int
+hwreg_set_pci(const char *name, uint32_t vendor, uint32_t device,
+    uint32_t subvendor, uint32_t class_code)
+{
+	struct hw_node *n;
+	int found;
+
+	pthread_mutex_lock(&reg_lock);
+	n = find_by_name(name);
+	if (n != NULL) {
+		n->pci_vendor = vendor;
+		n->pci_device = device;
+		n->pci_subvendor = subvendor;
+		n->pci_class = class_code;
+	}
+	found = (n != NULL);
+	pthread_mutex_unlock(&reg_lock);
+	return found;
+}
