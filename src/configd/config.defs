@@ -24,14 +24,16 @@
 /*
  * config.defs — the SCDynamicStore client<->configd Mach RPC protocol.
  *
- * freebsd-launchd-mach port (configd iter 1). Two changes from Apple's
+ * freebsd-launchd-mach port. Changes from Apple's
  * SystemConfiguration.fproj/config.defs:
  *   - `UseSpecialReplyPort 1;` dropped — special reply ports need
  *     kernel/runtime support this port does not have; plain reply
  *     ports work identically.
- *   - the `ServerAuditToken audit_token` out-of-band arg on configopen
- *     is dropped for iter 1 (the skeleton has no per-client identity
- *     yet); it is re-added with real session management in iter 2.
+ *   - the `ServerAuditToken audit_token` arg on configopen is dropped
+ *     for now (no per-client identity yet); re-add with real session
+ *     management when notifications land.
+ *   - the xmlData payloads are sent INLINE in a bounded array rather
+ *     than Apple's out-of-line (`^array[]`) — see the type comment.
  * The routine ORDER and the `skip;` slots are preserved exactly — a
  * routine's Mach msgh_id is its position from base 20000, and the
  * SystemConfiguration client must agree on every id.
@@ -46,16 +48,22 @@ serverprefix _;
 import "config_types.h";
 
 /*
- * serialized XML or UTF8 data (client->server)
+ * SCDynamicStore key / value payloads. Apple's config.defs sends
+ * these out-of-line (`^array[]`); this port sends them INLINE in a
+ * bounded array instead. Cross-process out-of-line Mach data is
+ * broken in this repo's kernel — the OOL copyout's mach_vm_allocate
+ * places the data at low addresses that collide with the receiving
+ * process's own memory — so hwregd likewise uses inline bounded
+ * arrays. The cost is the bound: a key or value larger than
+ * CONFIG_DATA_MAX (8 KiB) bytes cannot be carried.
+ *
+ * config_byte_t gives the array element an explicit C type — a bare
+ * MACH_MSG_TYPE_BYTE element makes MIG emit no ctype for the struct
+ * field (the gotcha hwreg.defs documents for hwreg_byte_t).
  */
-type xmlData    = ^ array [] of MACH_MSG_TYPE_BYTE
-	ctype : xmlData_t;
-
-/*
- * serialized XML or UTF8 data (server->client)
- */
-type xmlDataOut = ^ array [] of MACH_MSG_TYPE_BYTE
-	ctype : xmlDataOut_t;
+type config_byte_t = MACH_MSG_TYPE_BYTE ctype: uint8_t;
+type xmlData    = array[*:8192] of config_byte_t;
+type xmlDataOut = array[*:8192] of config_byte_t;
 
 /*
  * Connection management API's
@@ -83,7 +91,7 @@ routine configopen	(	server		: mach_port_t;
 routine configlist	(	server		: mach_port_t;
 				xmlData		: xmlData;
 				isRegex		: int;
-			 out	list		: xmlDataOut, dealloc;
+			 out	list		: xmlDataOut;
 			 out	status		: int);
 
 routine configadd	(	server		: mach_port_t;
@@ -94,7 +102,7 @@ routine configadd	(	server		: mach_port_t;
 
 routine configget	(	server		: mach_port_t;
 				key		: xmlData;
-			 out	data		: xmlDataOut, dealloc;
+			 out	data		: xmlDataOut;
 			 out	newInstance	: int;		// no longer used
 			 out	status		: int);
 
@@ -124,7 +132,7 @@ routine confignotify	(	server		: mach_port_t;
 routine configget_m	(	server		: mach_port_t;
 				keys		: xmlData;
 				patterns	: xmlData;
-			 out	data		: xmlDataOut, dealloc;
+			 out	data		: xmlDataOut;
 			 out	status		: int);
 
 routine configset_m	(	server		: mach_port_t;
@@ -148,7 +156,7 @@ routine notifyremove	(	server		: mach_port_t;
 			 out	status		: int);
 
 routine notifychanges	(	server		: mach_port_t;
-			 out	list		: xmlDataOut, dealloc;
+			 out	list		: xmlDataOut;
 			 out	status		: int);
 
 routine notifyviaport	(	server		: mach_port_t;

@@ -456,4 +456,15 @@ if [ ! -x "$hwregquery" ]; then
 fi
 "$hwregquery" || true	# marker (HWREG-RPC-OK/FAIL) gates in boot-test.sh
 
+# CONFIGD-STORE — configd SCDynamicStore round-trip: open a session
+# with configd, set a key, read it back, remove it, all over the
+# config.defs Mach RPC. Proves the configd daemon + its store work
+# end to end from a separate client process.
+configtest=/usr/tests/freebsd-launchd-mach/configtest
+if [ ! -x "$configtest" ]; then
+    echo "CONFIGD-STORE-FAIL: $configtest missing"
+    exit 1
+fi
+"$configtest" || true	# marker (CONFIGD-STORE-OK/FAIL) gates in boot-test.sh
+
 exit 0
