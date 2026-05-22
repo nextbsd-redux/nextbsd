@@ -24,8 +24,14 @@
  *   IOObjectGetClass, IOServiceMatching, IOServiceGetMatchingService,
  *   IOServiceGetMatchingServices.
  *
- * Later iterations add the `ioreg` tool (iter 3) and notifications
- * (iter 4, K2 of the plan).
+ * iter 3 — `ioreg(8)` introspection tool (the K1 success marker in
+ * the plan). Implemented entirely on top of iter 1 + iter 2; no new
+ * facade API.
+ *
+ * iter 4 — K2 notifications (device-arrival / departure callbacks):
+ *   IONotificationPortCreate, IONotificationPortDestroy,
+ *   IONotificationPortGetMachPort, IONotificationPortSetDispatchQueue,
+ *   IOServiceAddMatchingNotification.
  *
  * NOTE: there is also a separate Apple-API stub at
  * src/launchd/freebsd-shims/IOKit/IOKitLib.h covering the four IOKit
@@ -205,6 +211,92 @@ io_service_t	IOServiceGetMatchingService(mach_port_t mainPort,
 
 kern_return_t	IOServiceGetMatchingServices(mach_port_t mainPort,
 		    CFDictionaryRef matching, io_iterator_t *iterator);
+
+/*
+ * iter 4 ----------------------------------------------------------
+ *
+ * IONotificationPort — a Mach receive port plus a private receive
+ * thread that demuxes hwregd watch-event messages and fires the
+ * IOServiceMatchingCallback registered for each watcher. Each call
+ * to IOServiceAddMatchingNotification owns one hwreg_watch
+ * registration on the daemon side.
+ *
+ * Delivery: SetDispatchQueue routes callbacks via dispatch_async
+ * onto the caller's queue. If no queue is set, callbacks run on
+ * the internal receive thread — usable for simple consumers,
+ * fine for the iokitnotifytest test client. A CFRunLoopSource
+ * delivery option (Apple's IONotificationPortGetRunLoopSource) is
+ * deferred — SCDynamicStore's runloop-source path covers the same
+ * pattern when needed.
+ *
+ * NOTE: this facade uses a raw mach_msg(MACH_RCV_MSG|MACH_RCV_
+ * TIMEOUT,500ms) loop inside a pthread for delivery, NOT a
+ * libdispatch DISPATCH_SOURCE_TYPE_MACH_RECV source — task #41 +
+ * the libSC iter 2 / hwregd-phase0 notes record that those sources
+ * do not reliably deliver in this repo.
+ */
+#include <dispatch/dispatch.h>
+
+typedef struct IONotificationPort *IONotificationPortRef;
+
+/*
+ * Apple's well-known notification-type strings. The facade maps
+ * the three "device arrived" flavours to HWREG_EVT_ARRIVED and
+ * Terminate to HWREG_EVT_DEPARTED. They're aliases here because
+ * hwregd has no internal IOService-lifecycle distinction between
+ * Publish / FirstMatch / Matched.
+ */
+#define kIOPublishNotification		"IOServicePublish"
+#define kIOFirstMatchNotification	"IOServiceFirstMatch"
+#define kIOMatchedNotification		"IOServiceMatched"
+#define kIOTerminatedNotification	"IOServiceTerminate"
+
+/*
+ * IOServiceMatchingCallback — fired when a service matching the
+ * criteria arrives or departs. The iterator yields the new
+ * service(s); the callback is expected to drain it (each
+ * IOIteratorNext returns IO_OBJECT_NULL when done). The facade
+ * tears the iterator down when the callback returns; the caller
+ * MUST NOT IOObjectRelease it.
+ */
+typedef void (*IOServiceMatchingCallback)(void *refcon,
+		    io_iterator_t iterator);
+
+IONotificationPortRef	IONotificationPortCreate(mach_port_t mainPort);
+void			IONotificationPortDestroy(IONotificationPortRef
+			    notify);
+void			IONotificationPortSetDispatchQueue(
+			    IONotificationPortRef notify,
+			    dispatch_queue_t queue);
+mach_port_t		IONotificationPortGetMachPort(
+			    IONotificationPortRef notify);
+
+/*
+ * IOServiceAddMatchingNotification — register a callback that
+ * fires whenever a service matching `matching` arrives (Publish /
+ * FirstMatch / Matched) or departs (Terminate). On return the
+ * `notification` iterator carries the services that ALREADY
+ * match — Apple's "initial arming"; consumers iterate it to find
+ * existing devices and to arm the notification for future
+ * arrivals.
+ *
+ * One reference of `matching` is consumed (Apple contract).
+ *
+ * The returned iterator survives until released with
+ * IOObjectRelease — but releasing it does NOT cancel the watch;
+ * use IONotificationPortDestroy to tear the notification down
+ * (the facade has no IOObjectRelease-on-iterator → cancel path
+ * in iter 4; if a consumer needs per-notification cancellation
+ * later, an explicit IOServiceRemoveMatchingNotification will land
+ * in a follow-up iter).
+ */
+kern_return_t	IOServiceAddMatchingNotification(
+		    IONotificationPortRef notifyPort,
+		    const io_name_t notification_type,
+		    CFDictionaryRef matching,
+		    IOServiceMatchingCallback callback,
+		    void *refCon,
+		    io_iterator_t *notification);
 
 #ifdef __cplusplus
 }

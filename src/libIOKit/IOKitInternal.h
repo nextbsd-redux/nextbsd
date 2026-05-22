@@ -52,4 +52,39 @@ mach_port_t	__io_hwregd_port(void);
 io_object_t	__io_alloc_entry(uint64_t node_id);
 io_object_t	__io_alloc_iterator(uint64_t *ids, uint32_t count);
 
+/*
+ * The criteria fields hwregd accepts on hwreg_lookup / hwreg_watch
+ * — `name`, `class`, `driver` (empty string = wildcard). All three
+ * are c_string[32] in hwreg.defs.
+ */
+#define IO_CRITERIA_FIELD_MAX	32
+
+struct io_criteria {
+	char	name[IO_CRITERIA_FIELD_MAX];
+	char	klass[IO_CRITERIA_FIELD_MAX];	/* "class" — C++ keyword */
+	char	driver[IO_CRITERIA_FIELD_MAX];
+};
+
+/*
+ * Extract the hwregd-understood criterion strings from an Apple-
+ * shape matching CFDictionary. Unknown keys are silently ignored.
+ *
+ *  IOProviderClass / IOClass	-> out->klass
+ *  IONameMatch			-> out->name
+ *
+ * `matching` may carry other keys (IOPropertyMatch, IOBSDName,
+ * regex), all currently ignored.
+ */
+void	__io_extract_criteria(CFDictionaryRef matching,
+	    struct io_criteria *out);
+
+/*
+ * Pack a criteria struct into the hwregd wire format (a packed
+ * nvlist with the present non-empty fields). Returns KERN_SUCCESS
+ * on success. The blob bound (sizeof(hwreg_blob_t) = 2048) bounds
+ * the packed payload.
+ */
+kern_return_t	__io_pack_criteria(const struct io_criteria *c,
+		    uint8_t *blob, uint32_t *out_size);
+
 #endif /* _IOKIT_INTERNAL_H_ */

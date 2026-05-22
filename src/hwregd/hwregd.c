@@ -79,6 +79,7 @@
 #include <mach/mach.h>
 #include <servers/bootstrap.h>
 
+#include "hwreg_mig_types.h"	/* HWREG_MSG_*, struct hwreg_event_msg */
 #include "hwreg_registry.h"
 #include "hwregServer.h"		/* MIG: hwreg_server() demux + routine protos */
 #include "nv.h"			/* libxpc nvlist — property-bag (de)serialise */
@@ -102,9 +103,11 @@
  * Mach pub/sub wire protocol (iter 3b-ii). A client looks the service
  * up, sends a bare-header SUBSCRIBE (its own notify port travels as
  * the message's remote port), and then receives EVENT messages.
+ *
+ * HWREG_MSG_{SUBSCRIBE,EVENT} + struct hwreg_event_msg live in
+ * hwreg_mig_types.h so the IOKit facade (src/libIOKit/IOKitNotify.c)
+ * speaks the same protocol when demuxing watch events.
  */
-#define HWREG_MSG_SUBSCRIBE	0x48575201	/* client  -> hwregd */
-#define HWREG_MSG_EVENT		0x48575202	/* hwregd   -> subscriber */
 
 /*
  * Mach-RPC query API (iter 2a) — MIG subsystem 30000, demuxed by
@@ -116,13 +119,6 @@
 #define HWREG_RPC_BUFSZ		4096
 #define HWREG_RPC_MAX_CHILDREN	128
 #define HWREG_RPC_BLOBSZ	2048	/* hwreg_blob_t bound — matches hwreg.defs */
-
-/* The event message hwregd pushes to each subscriber. */
-struct hwreg_event_msg {
-	mach_msg_header_t	hdr;
-	char			kind;	/* '+' '-' '!' '?' or 'A' (sub ack) */
-	char			text[479];	/* formatted event, NUL-term */
-};
 
 #define HWREGD_MAX_SUBSCRIBERS	32
 #define HWREGD_MAX_WATCHERS	32
