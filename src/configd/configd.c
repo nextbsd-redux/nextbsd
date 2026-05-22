@@ -230,14 +230,36 @@ _configlist(mach_port_t server, xmlData key, mach_msg_type_number_t keyCnt,
 	return KERN_SUCCESS;
 }
 
+/*
+ * configadd (SCDynamicStoreAddValue) — store a key/value, but only if
+ * the key does not already exist. An existing key is left untouched
+ * and reported as kSCStatusKeyExists; this is what distinguishes add
+ * from set. Existence check via store_get, like _configget; the store
+ * + change-notification path is _configset's.
+ */
 kern_return_t
 _configadd(mach_port_t server, xmlData key, mach_msg_type_number_t keyCnt,
     xmlData data, mach_msg_type_number_t dataCnt, int *newInstance,
     int *status)
 {
-	(void)server; (void)key; (void)keyCnt; (void)data; (void)dataCnt;
+	const void	*val;
+	size_t		vlen;
+
+	(void)server;
 	*newInstance = 0;
-	*status = kSCStatusFailed;
+
+	if (keyCnt == 0) {
+		*status = kSCStatusInvalidArgument;
+	} else if (store_get(key, keyCnt, &val, &vlen) == 0) {
+		/* key already defined — add must not clobber it */
+		*status = kSCStatusKeyExists;
+	} else if (store_set(key, keyCnt, data, dataCnt) != 0) {
+		*status = kSCStatusFailed;
+	} else {
+		/* a new key is a change watching sessions must hear about */
+		session_key_changed(key, keyCnt);
+		*status = kSCStatusOK;
+	}
 	return KERN_SUCCESS;
 }
 
