@@ -577,4 +577,14 @@ if [ ! -x "$sclocktest" ]; then
 fi
 "$sclocktest" || true	# marker (SC-LOCK-OK/FAIL) gates in boot-test.sh
 
+# SC-PNOTIFY — SCPreferences change notifications: one session watches a
+# preferences file on a dispatch queue, another commits a change, and
+# the watcher's callback must fire.
+scprefsnotifytest=/usr/tests/freebsd-launchd-mach/scprefsnotifytest
+if [ ! -x "$scprefsnotifytest" ]; then
+    echo "SC-PNOTIFY-FAIL: $scprefsnotifytest missing"
+    exit 1
+fi
+"$scprefsnotifytest" || true	# marker (SC-PNOTIFY-OK/FAIL) gates in boot-test.sh
+
 exit 0

@@ -56,7 +56,15 @@ typedef struct __SCPreferences {
 	Boolean			locked;		/* this session holds the lock */
 	int			lockFD;		/* O_EXLOCK descriptor, or -1 */
 	char			*lockPath;	/* lock file path (malloc'd) */
+
+	/* change-notification delivery */
+	SCPreferencesCallBack	rlsFunction;	/* the client callout */
+	SCPreferencesContext	rlsContext;	/* the callout's context */
+	SCDynamicStoreRef	notifyStore;	/* internal store, or NULL */
 } SCPreferencesPrivate, *SCPreferencesPrivateRef;
+
+/* SCPreferencesCommitChanges posts a change here once the file is written */
+static void	__SCPreferencesPostCommit(SCPreferencesRef prefs);
 
 
 #pragma mark -
@@ -87,6 +95,15 @@ __SCPreferencesDeallocate(CFTypeRef cf)
 	}
 	if (prefsPrivate->lockPath != NULL) {
 		free(prefsPrivate->lockPath);
+	}
+	if (prefsPrivate->notifyStore != NULL) {
+		/* tear the internal change-notification store down */
+		(void) SCDynamicStoreSetDispatchQueue(prefsPrivate->notifyStore,
+						      NULL);
+		CFRelease(prefsPrivate->notifyStore);
+	}
+	if (prefsPrivate->rlsContext.release != NULL) {
+		prefsPrivate->rlsContext.release(prefsPrivate->rlsContext.info);
 	}
 }
 
@@ -218,6 +235,9 @@ __SCPreferencesCreatePrivate(CFAllocatorRef allocator)
 	prefsPrivate->locked	= FALSE;
 	prefsPrivate->lockFD	= -1;
 	prefsPrivate->lockPath	= NULL;
+	prefsPrivate->rlsFunction = NULL;
+	memset(&prefsPrivate->rlsContext, 0, sizeof(prefsPrivate->rlsContext));
+	prefsPrivate->notifyStore = NULL;
 	return prefsPrivate;
 }
 
@@ -582,6 +602,7 @@ SCPreferencesCommitChanges(SCPreferencesRef prefs)
 	SCPreferencesPrivateRef	prefsPrivate	= (SCPreferencesPrivateRef)prefs;
 	Boolean			wasLocked;
 	Boolean			ok;
+	int			status;
 
 	if (!isA_SCPreferences(prefs)) {
 		_SCErrorSet(kSCStatusNoPrefsSession);
@@ -604,13 +625,17 @@ SCPreferencesCommitChanges(SCPreferencesRef prefs)
 	}
 
 	ok = __SCPreferencesWriteFile(prefs);
+	status = SCError();		/* the write's status */
+
+	if (ok) {
+		/* post a change notification — best effort */
+		__SCPreferencesPostCommit(prefs);
+	}
 
 	if (!wasLocked) {
-		int	status	= SCError();	/* preserve across the unlock */
-
 		(void) SCPreferencesUnlock(prefs);
-		_SCErrorSet(status);
 	}
+	_SCErrorSet(status);		/* restore the write's status */
 	return ok;
 }
 
@@ -905,4 +930,192 @@ SCPreferencesPathRemoveValue(SCPreferencesRef prefs, CFStringRef path)
 		return FALSE;
 	}
 	return setPath(prefs, path, NULL);
+}
+
+
+#pragma mark -
+#pragma mark Change notifications
+
+/*
+ * The SCDynamicStore key a commit posts on / a watcher watches. It is
+ * derived from the preferences file path so every session for the same
+ * file agrees on it.
+ */
+static CFStringRef
+__SCPreferencesCommitKey(SCPreferencesRef prefs)
+{
+	SCPreferencesPrivateRef	prefsPrivate	= (SCPreferencesPrivateRef)prefs;
+	char			buf[PATH_MAX + 32];
+
+	(void) snprintf(buf, sizeof(buf), "SCPreferences:commit:%s",
+			prefsPrivate->path);
+	return CFStringCreateWithCString(NULL, buf, kCFStringEncodingUTF8);
+}
+
+/*
+ * Internal SCDynamicStore callback — a change on the commit key means
+ * the preferences were committed. Runs on the caller's dispatch queue.
+ */
+static void
+prefsNotify(SCDynamicStoreRef store, CFArrayRef changedKeys, void *info)
+{
+	SCPreferencesRef	prefs		= (SCPreferencesRef)info;
+	SCPreferencesPrivateRef	prefsPrivate	= (SCPreferencesPrivateRef)prefs;
+	SCPreferencesCallBack	callout;
+	void			*context_info;
+
+	(void)store;
+	(void)changedKeys;	/* the only watched key is our commit key */
+
+	callout      = prefsPrivate->rlsFunction;
+	context_info = prefsPrivate->rlsContext.info;
+	if (callout != NULL) {
+		(*callout)(prefs, kSCPreferencesNotificationCommit,
+			   context_info);
+	}
+}
+
+Boolean
+SCPreferencesSetCallback(SCPreferencesRef	prefs,
+			 SCPreferencesCallBack	callout,
+			 SCPreferencesContext	*context)
+{
+	SCPreferencesPrivateRef	prefsPrivate	= (SCPreferencesPrivateRef)prefs;
+
+	if (!isA_SCPreferences(prefs)) {
+		_SCErrorSet(kSCStatusNoPrefsSession);
+		return FALSE;
+	}
+
+	/* release any previous callback context */
+	if (prefsPrivate->rlsContext.release != NULL) {
+		prefsPrivate->rlsContext.release(prefsPrivate->rlsContext.info);
+	}
+
+	prefsPrivate->rlsFunction = callout;
+	memset(&prefsPrivate->rlsContext, 0, sizeof(prefsPrivate->rlsContext));
+	if (context != NULL) {
+		memcpy(&prefsPrivate->rlsContext, context,
+		       sizeof(SCPreferencesContext));
+		if (context->retain != NULL) {
+			prefsPrivate->rlsContext.info =
+				(void *)context->retain(context->info);
+		}
+	}
+	return TRUE;
+}
+
+Boolean
+SCPreferencesSetDispatchQueue(SCPreferencesRef prefs, dispatch_queue_t queue)
+{
+	SCPreferencesPrivateRef	prefsPrivate	= (SCPreferencesPrivateRef)prefs;
+	SCDynamicStoreContext	storeContext;
+	SCDynamicStoreRef	store;
+	CFStringRef		storeName;
+	CFStringRef		commitKey;
+	CFArrayRef		watchKeys;
+	Boolean			ok;
+
+	if (!isA_SCPreferences(prefs)) {
+		_SCErrorSet(kSCStatusNoPrefsSession);
+		return FALSE;
+	}
+
+	if (queue == NULL) {
+		/* unschedule */
+		if (prefsPrivate->notifyStore == NULL) {
+			_SCErrorSet(kSCStatusInvalidArgument);
+			return FALSE;
+		}
+		(void) SCDynamicStoreSetDispatchQueue(prefsPrivate->notifyStore,
+						      NULL);
+		CFRelease(prefsPrivate->notifyStore);
+		prefsPrivate->notifyStore = NULL;
+		return TRUE;
+	}
+
+	if (prefsPrivate->notifyStore != NULL) {
+		/* already scheduled */
+		_SCErrorSet(kSCStatusInvalidArgument);
+		return FALSE;
+	}
+
+	/*
+	 * Watch our commit key on an internal SCDynamicStore session. The
+	 * context does not retain `prefs`: the SCPreferences object owns
+	 * the store and tears it down in its finalizer (after which the
+	 * store delivers no further callouts).
+	 */
+	memset(&storeContext, 0, sizeof(storeContext));
+	storeContext.info = (void *)prefs;
+
+	storeName = CFStringCreateWithCString(NULL, "SCPreferences",
+					      kCFStringEncodingUTF8);
+	store = SCDynamicStoreCreate(NULL, storeName, prefsNotify,
+				     &storeContext);
+	if (storeName != NULL) {
+		CFRelease(storeName);
+	}
+	if (store == NULL) {
+		_SCErrorSet(kSCStatusFailed);
+		return FALSE;
+	}
+
+	commitKey = __SCPreferencesCommitKey(prefs);
+	if (commitKey == NULL) {
+		CFRelease(store);
+		_SCErrorSet(kSCStatusFailed);
+		return FALSE;
+	}
+	watchKeys = CFArrayCreate(NULL, (const void **)&commitKey, 1,
+				  &kCFTypeArrayCallBacks);
+	ok = (watchKeys != NULL) &&
+	     SCDynamicStoreSetNotificationKeys(store, watchKeys, NULL);
+	if (watchKeys != NULL) {
+		CFRelease(watchKeys);
+	}
+	CFRelease(commitKey);
+	if (!ok) {
+		CFRelease(store);
+		_SCErrorSet(kSCStatusFailed);
+		return FALSE;
+	}
+
+	if (!SCDynamicStoreSetDispatchQueue(store, queue)) {
+		CFRelease(store);
+		_SCErrorSet(kSCStatusFailed);
+		return FALSE;
+	}
+
+	prefsPrivate->notifyStore = store;
+	return TRUE;
+}
+
+/*
+ * Post a change on the commit key so watching sessions are notified.
+ * Best effort: if configd is unreachable the commit still succeeded.
+ */
+static void
+__SCPreferencesPostCommit(SCPreferencesRef prefs)
+{
+	SCDynamicStoreRef	store;
+	CFStringRef		storeName;
+	CFStringRef		commitKey;
+
+	storeName = CFStringCreateWithCString(NULL, "SCPreferences",
+					      kCFStringEncodingUTF8);
+	store = SCDynamicStoreCreate(NULL, storeName, NULL, NULL);
+	if (storeName != NULL) {
+		CFRelease(storeName);
+	}
+	if (store == NULL) {
+		return;
+	}
+
+	commitKey = __SCPreferencesCommitKey(prefs);
+	if (commitKey != NULL) {
+		(void) SCDynamicStoreNotifyValue(store, commitKey);
+		CFRelease(commitKey);
+	}
+	CFRelease(store);
 }
