@@ -607,4 +607,14 @@ if [ ! -x "$scnetiftest" ]; then
 fi
 "$scnetiftest" || true	# marker (SC-NETIF-OK/FAIL) gates in boot-test.sh
 
+# SC-NETSVC — SCNetworkConfiguration service + protocol: create a
+# network service on the e1000 interface, name it, attach + configure
+# an IPv4 protocol, commit, reopen and confirm it all persisted.
+scnetsvctest=/usr/tests/freebsd-launchd-mach/scnetsvctest
+if [ ! -x "$scnetsvctest" ]; then
+    echo "SC-NETSVC-FAIL: $scnetsvctest missing"
+    exit 1
+fi
+"$scnetsvctest" || true	# marker (SC-NETSVC-OK/FAIL) gates in boot-test.sh
+
 exit 0

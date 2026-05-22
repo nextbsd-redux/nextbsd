@@ -22,6 +22,7 @@ SHLIB_MAJOR=	1
 
 SRCS=		SCD.c SCDynamicStore.c SCNotify.c SCDMultiple.c SCPreferences.c
 SRCS+=		SCNetworkConfigurationInternal.c SCNetworkInterface.c
+SRCS+=		SCNetworkProtocol.c SCNetworkService.c
 
 # configUser.c — MIG-generated config.defs client stubs (same file
 # configd's test clients link). config_wire.c — configd's shared
