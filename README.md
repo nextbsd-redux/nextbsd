@@ -474,20 +474,21 @@ link-state events have no provider. `hwregd` &mdash; a native
 hardware-registry daemon with an IOKit-shaped Mach-RPC API
 &mdash; closes that gap, and Apple's `IOKitUser` will sit on top
 as a thin facade (re-aimed at `hwregd` rather than a kernel
-IOService graph &mdash; there is no IOKit kernel here). Phase 0
-(skeleton daemon, plist, `/dev/devctl` reader, Mach pub/sub) and
-Phase 1 (the structured registry + a 10-routine Mach-RPC
+IOService graph &mdash; there is no IOKit kernel here). hwregd
+Phase 0 (skeleton daemon, plist, `/dev/devctl` reader, Mach pub/sub)
+and Phase 1 (the structured registry + a 10-routine Mach-RPC
 query/watch/load API + PCI enrichment) have landed; the launchd
-`HardwareMatch` key and the IOKitUser facade (`ioreg`) follow.
-`configd` + `IPConfiguration` &mdash; Apple's
-network-config stack, the proper replacement for the interim
-`dhclient` setup &mdash; come after the hwregd/IOKit block.
+`HardwareMatch` key has begun. `configd` &mdash; Apple's
+SystemConfiguration daemon, hosting the `SCDynamicStore` key/value
+store &mdash; is up and serving over Mach IPC; the IOKitUser facade
+(`ioreg`) and `IPConfiguration` (network config, the proper
+replacement for the interim `dhclient` setup) follow.
 Full design: the
 [hardware registry + IOKit porting plan](https://pkgdemon.github.io/freebsd-hardware-registry-iokit-plan.html).
 
-### Phase K &mdash; hwregd Phase 0 + Phase 1 complete (2026-05-21)
+### Phase K &mdash; hwregd complete; configd SCDynamicStore working (2026-05-21)
 
-`hwregd` is a working hardware-registry daemon. **Phase 0** (the
+**hwregd** is a working hardware-registry daemon. **Phase 0** (the
 `/dev/devctl` event reader, `kldload`-on-nomatch, and a Mach pub/sub
 bus) and **Phase 1** (the structured registry) have both landed:
 
@@ -502,18 +503,38 @@ bus) and **Phase 1** (the structured registry) have both landed:
 - PCI device-identity enrichment (vendor / device / subvendor / class,
   via `/dev/pci` + `PCIOCGETCONF`).
 
-The `HWREG-PUBSUB` round-trip that originally blocked this work was a
-client receive buffer sized with no room for the Mach message trailer
-(`MACH_RCV_TOO_LARGE`); the reported "segfault on startup" was a
-truncated install, not a code bug. The `HWREG-PUBSUB` and `HWREG-RPC`
-CI markers gate the pub/sub and query paths.
+**launchd `HardwareMatch`** &mdash; a plist key that fires a job on a
+hwregd device event &mdash; has begun: the plist-key parsing has
+landed, and the hwregd-subscription wiring is implemented.
 
-**Next:** the launchd `HardwareMatch` plist key &mdash; launchd
-subscribes to hwregd's watch RPC and fires jobs on device arrival
-(plan §4) &mdash; then the IOKitUser facade (`ioreg`). Deferred:
-USB and thermal/CPU-sysctl property enrichment. Build/test runs on
-the `bsd01` VirtualBox VM (interactive serial console reachable via
-the `joe-windows` host).
+**configd** &mdash; Apple's SystemConfiguration daemon, hosting the
+**SCDynamicStore** key/value store over a MIG Mach protocol &mdash;
+is the current focus. It is ported on the *Mach-IPC track* (real Mach
+IPC + MIG `config.defs`), not the sockets / Distributed-Objects model
+of the companion `freebsd-launchd` repo. Landed:
+
+- the configd daemon &mdash; checks its
+  `com.apple.SystemConfiguration.configd` Mach service in and runs a
+  raw `mach_msg` MIG demux loop;
+- the SCDynamicStore key/value store &mdash; `configopen` /
+  `configget` / `configset` / `configremove`, exercised end-to-end
+  over Mach IPC by the `configtest` client (the `CONFIGD-STORE` CI
+  marker).
+
+`config.defs` carries its payloads in inline bounded arrays rather
+than Apple's out-of-line Mach data: cross-process out-of-line copyout
+is broken in this kernel (the `mach_vm_allocate` ANYWHERE allocator
+hands the receiver colliding low addresses), so configd and hwregd
+both use the inline-array workaround. The cost is an 8&nbsp;KiB cap on
+a key or value.
+
+**Next:** configd change notifications (per-session ports +
+`notifyadd` / a change fan-out), then pattern keys; then the IOKitUser
+facade (`ioreg`). Deferred: USB / thermal property enrichment in
+hwregd; lifting configd's 8&nbsp;KiB cap (needs the kernel's
+out-of-line allocator fixed). Build/test runs on the `bsd01`
+VirtualBox VM (interactive serial console reachable via the
+`joe-windows` host).
 
 ## CoreFoundation for system services &mdash; swift-corelibs CF
 
