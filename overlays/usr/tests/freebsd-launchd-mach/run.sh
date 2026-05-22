@@ -507,4 +507,15 @@ if [ ! -x "$multitest" ]; then
 fi
 "$multitest" || true	# marker (CONFIGD-MULTI-OK/FAIL) gates in boot-test.sh
 
+# SC-STORE — SCDynamicStore client framework: drive configd through the
+# CoreFoundation-typed SCDynamicStore* API (libSystemConfiguration)
+# instead of raw config.defs — open a session, set/get/add/remove
+# property-list values and list keys.
+sctest=/usr/tests/freebsd-launchd-mach/sctest
+if [ ! -x "$sctest" ]; then
+    echo "SC-STORE-FAIL: $sctest missing"
+    exit 1
+fi
+"$sctest" || true	# marker (SC-STORE-OK/FAIL) gates in boot-test.sh
+
 exit 0
