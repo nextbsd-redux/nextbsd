@@ -15,13 +15,12 @@
  *     arrives on (the MIG `server` argument) identifies the session.
  *   - a session can watch explicit store keys (SCDynamicStoreAddWatchedKey)
  *     and register one notification port (SCDynamicStoreNotifyMachPort).
+ *   - a session can also watch a POSIX regular expression (iter 5):
+ *     any store key matching the pattern triggers the same fan-out.
  *   - when a watched key changes, the key is appended to the watching
  *     session's pending-changes list and — on the 0->1 edge — an empty
  *     Mach message is sent to its notification port; the client then
  *     drains the list with notifychanges.
- *
- * Regex/pattern watches (Apple's pattern.c) are deferred to a later
- * iteration; iter 4 supports explicit keys only.
  *
  * Everything here runs on configd's single mach_msg receive thread, so
  * no locking is needed.
@@ -94,6 +93,18 @@ int session_clear_notify_port(mach_port_t port);
  */
 int session_watch_add(mach_port_t port, const void *key, size_t klen);
 int session_watch_remove(mach_port_t port, const void *key, size_t klen);
+
+/*
+ * session_pattern_add / session_pattern_remove — add or drop a regex
+ * watch for the session. The pattern bytes are a POSIX extended regular
+ * expression; configd anchors it (^...$) and compiles it. Any store key
+ * matching it triggers a change notification, exactly like an explicit
+ * watch. Adding a pattern already watched is a no-op success; an
+ * uncompilable pattern returns kSCStatusInvalidArgument. Returns a
+ * kSCStatus code.
+ */
+int session_pattern_add(mach_port_t port, const void *pat, size_t plen);
+int session_pattern_remove(mach_port_t port, const void *pat, size_t plen);
 
 /*
  * session_drain_changes — copy the session's pending changed-key list

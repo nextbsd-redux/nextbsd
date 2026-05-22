@@ -478,4 +478,14 @@ if [ ! -x "$notifytest" ]; then
 fi
 "$notifytest" || true	# marker (CONFIGD-NOTIFY-OK/FAIL) gates in boot-test.sh
 
+# CONFIGD-PATTERN — configd regex pattern watches: a session watches a
+# POSIX regex, another changes a matching and a non-matching key, and
+# configd must notify only for the match.
+patterntest=/usr/tests/freebsd-launchd-mach/patterntest
+if [ ! -x "$patterntest" ]; then
+    echo "CONFIGD-PATTERN-FAIL: $patterntest missing"
+    exit 1
+fi
+"$patterntest" || true	# marker (CONFIGD-PATTERN-OK/FAIL) gates in boot-test.sh
+
 exit 0

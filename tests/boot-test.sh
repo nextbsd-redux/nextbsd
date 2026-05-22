@@ -417,6 +417,18 @@ expect {
     "CONFIGD-NOTIFY-OK" { puts "\nOK: configd change notifications work" }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: CONFIGD-PATTERN marker not seen"
+        exit 1
+    }
+    "CONFIGD-PATTERN-FAIL" {
+        puts "\nFAIL: configd regex pattern watch failed"
+        exit 1
+    }
+    "CONFIGD-PATTERN-OK" { puts "\nOK: configd regex pattern watches work" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"
