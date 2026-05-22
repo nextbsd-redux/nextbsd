@@ -640,6 +640,102 @@ Boolean
 SCBondInterfaceSetOptions		(SCBondInterfaceRef		bond,
 					 CFDictionaryRef		newOptions);
 
+/* --------------------------------------------------------------------
+ * SCBridgeInterface — layer-2 bridging virtual interfaces
+ * ------------------------------------------------------------------ */
+
+/*!
+	@function SCBridgeInterfaceCopyAll
+	@discussion Returns every bridge interface stored in `prefs`.
+	@result a CFArray of SCBridgeInterfaceRef (caller releases).
+ */
+CFArrayRef
+SCBridgeInterfaceCopyAll		(SCPreferencesRef		prefs);
+
+/*!
+	@function SCBridgeInterfaceCopyAvailableMemberInterfaces
+	@discussion Returns the interfaces available to be bridge members
+		— hardware interfaces not already in a bridge.
+	@result a CFArray of SCNetworkInterfaceRef (caller releases).
+ */
+CFArrayRef
+SCBridgeInterfaceCopyAvailableMemberInterfaces
+					(SCPreferencesRef		prefs);
+
+/*!
+	@function SCBridgeInterfaceCreate
+	@discussion Creates a new, empty bridge interface in `prefs`.
+		Release the returned value.
+ */
+SCBridgeInterfaceRef
+SCBridgeInterfaceCreate			(SCPreferencesRef		prefs);
+
+/*!
+	@function SCBridgeInterfaceRemove
+	@discussion Removes the bridge interface from the preferences.
+ */
+Boolean
+SCBridgeInterfaceRemove			(SCBridgeInterfaceRef		bridge);
+
+/*!
+	@function SCBridgeInterfaceGetMemberInterfaces
+	@discussion Returns the bridge's member interfaces. Owned by the
+		bridge.
+ */
+CFArrayRef
+SCBridgeInterfaceGetMemberInterfaces	(SCBridgeInterfaceRef		bridge);
+
+/*!
+	@function SCBridgeInterfaceGetOptions
+	@discussion Returns the bridge's options dictionary, or NULL.
+ */
+CFDictionaryRef
+SCBridgeInterfaceGetOptions		(SCBridgeInterfaceRef		bridge);
+
+/*!
+	@function SCBridgeInterfaceSetMemberInterfaces
+	@discussion Sets the bridge's member interfaces.
+ */
+Boolean
+SCBridgeInterfaceSetMemberInterfaces	(SCBridgeInterfaceRef		bridge,
+					 CFArrayRef			members);
+
+/*!
+	@function SCBridgeInterfaceSetLocalizedDisplayName
+	@discussion Sets the bridge's display name.
+ */
+Boolean
+SCBridgeInterfaceSetLocalizedDisplayName
+					(SCBridgeInterfaceRef		bridge,
+					 CFStringRef			newName);
+
+/*!
+	@function SCBridgeInterfaceSetOptions
+	@discussion Sets the bridge's options dictionary.
+ */
+Boolean
+SCBridgeInterfaceSetOptions		(SCBridgeInterfaceRef		bridge,
+					 CFDictionaryRef		newOptions);
+
+/*!
+	@function SCBridgeInterfaceSetAllowConfiguredMembers
+	@discussion Sets whether a bridge member may itself carry a
+		configured network service.
+ */
+Boolean
+SCBridgeInterfaceSetAllowConfiguredMembers
+					(SCBridgeInterfaceRef		bridge,
+					 Boolean			allow);
+
+/*!
+	@function SCBridgeInterfaceGetAllowConfiguredMembers
+	@discussion Returns whether a bridge member may itself carry a
+		configured network service.
+ */
+Boolean
+SCBridgeInterfaceGetAllowConfiguredMembers
+					(SCBridgeInterfaceRef		bridge);
+
 __END_DECLS
 
 #endif	/* _SCNETWORKCONFIGURATION_H */

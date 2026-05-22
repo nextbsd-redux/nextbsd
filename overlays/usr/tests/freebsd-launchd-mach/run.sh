@@ -647,4 +647,15 @@ if [ ! -x "$scbondtest" ]; then
 fi
 "$scbondtest" || true	# marker (SC-BOND-OK/FAIL) gates in boot-test.sh
 
+# SC-BRIDGE — SCNetworkConfiguration bridge virtual interface: create a
+# bridge, add the e1000 interface as a member, check the member list /
+# name / options / AllowConfiguredMembers, commit, reopen and confirm
+# it persisted.
+scbridgetest=/usr/tests/freebsd-launchd-mach/scbridgetest
+if [ ! -x "$scbridgetest" ]; then
+    echo "SC-BRIDGE-FAIL: $scbridgetest missing"
+    exit 1
+fi
+"$scbridgetest" || true	# marker (SC-BRIDGE-OK/FAIL) gates in boot-test.sh
+
 exit 0

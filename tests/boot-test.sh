@@ -622,6 +622,18 @@ expect {
     "SC-BOND-OK" { puts "\nOK: SCBondInterface works" }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: SC-BRIDGE marker not seen"
+        exit 1
+    }
+    "SC-BRIDGE-FAIL" {
+        puts "\nFAIL: SCBridgeInterface failed"
+        exit 1
+    }
+    "SC-BRIDGE-OK" { puts "\nOK: SCBridgeInterface works" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"
