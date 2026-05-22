@@ -680,4 +680,27 @@ if [ ! -x "$iokitmatchtest" ]; then
 fi
 "$iokitmatchtest" || true	# marker (IOKIT-MATCH-OK/FAIL) gates in boot-test.sh
 
+# IOKIT-IOREG — libIOKit iter 3 ioreg(8) tool: the K1 success marker
+# in the IOKit-userland port plan ("ioreg -l works"). Runs the
+# installed /usr/sbin/ioreg with -l (tree + property bags) and with
+# -c CPU (class filter) and validates the output is non-trivial and
+# contains the expected class header line. Marker is emitted by this
+# shell, not by a C test binary — ioreg itself is the thing under
+# test.
+ioreg=/usr/sbin/ioreg
+if [ ! -x "$ioreg" ]; then
+    echo "IOKIT-IOREG-FAIL: $ioreg missing"
+    exit 1
+fi
+ioreg_log=/tmp/ioreg.out
+if ! "$ioreg" -l > "$ioreg_log" 2>&1; then
+    echo "IOKIT-IOREG-FAIL: ioreg -l exited non-zero"
+elif ! lines=$(wc -l < "$ioreg_log") || [ "$lines" -lt 20 ]; then
+    echo "IOKIT-IOREG-FAIL: ioreg -l produced too little output (lines=$lines)"
+elif ! "$ioreg" -c CPU 2>&1 | grep -q '<class CPU>'; then
+    echo "IOKIT-IOREG-FAIL: ioreg -c CPU did not surface a CPU node"
+else
+    echo "IOKIT-IOREG-OK: ioreg -l works (lines=$lines), -c CPU finds CPU nodes"
+fi
+
 exit 0
