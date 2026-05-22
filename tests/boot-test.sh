@@ -525,6 +525,18 @@ expect {
     "SC-PATH-OK" { puts "\nOK: SCPreferences path accessors work" }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: SC-LOCK marker not seen"
+        exit 1
+    }
+    "SC-LOCK-FAIL" {
+        puts "\nFAIL: SCPreferences lock failed"
+        exit 1
+    }
+    "SC-LOCK-OK" { puts "\nOK: SCPreferences lock works" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"

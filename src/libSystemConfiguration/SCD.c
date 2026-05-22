@@ -95,6 +95,10 @@ SCErrorString(int status)
 		return "Write attempted on stale version of object";
 	case kSCStatusAccessError :
 		return "Permission denied";
+	case kSCStatusLocked :
+		return "Preferences update currently in progress";
+	case kSCStatusNeedLock :
+		return "Lock not held";
 	default :
 		return "Unknown error";
 	}

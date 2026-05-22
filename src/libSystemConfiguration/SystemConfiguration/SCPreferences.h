@@ -114,6 +114,26 @@ Boolean
 SCPreferencesCommitChanges	(SCPreferencesRef		prefs);
 
 /*!
+	@function SCPreferencesLock
+	@discussion Takes exclusive access to the preferences. With
+		`wait` TRUE the call blocks until the lock is available;
+		with FALSE it fails immediately (kSCStatusPrefsBusy) if the
+		lock is held. SCPreferencesCommitChanges takes the lock
+		itself if the caller has not.
+ */
+Boolean
+SCPreferencesLock		(SCPreferencesRef		prefs,
+				 Boolean			wait);
+
+/*!
+	@function SCPreferencesUnlock
+	@discussion Releases the exclusive access taken by
+		SCPreferencesLock.
+ */
+Boolean
+SCPreferencesUnlock		(SCPreferencesRef		prefs);
+
+/*!
 	@function SCPreferencesPathGetValue
 	@discussion Returns the dictionary at a '/'-separated path within
 		the preferences. The dictionary is owned by the session.

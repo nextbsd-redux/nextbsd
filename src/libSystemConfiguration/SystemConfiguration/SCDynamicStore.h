@@ -87,7 +87,9 @@ enum {
 	kSCStatusPrefsBusy		= 5002,	/* preferences update in progress */
 	kSCStatusNoConfigFile		= 5003,	/* no configuration file */
 	kSCStatusStale			= 5005,	/* write attempted on stale prefs */
-	kSCStatusAccessError		= 5006	/* permission/authorization failure */
+	kSCStatusAccessError		= 5006,	/* permission/authorization failure */
+	kSCStatusLocked			= 5007,	/* preferences already locked */
+	kSCStatusNeedLock		= 5008	/* preferences not locked */
 };
 #endif	/* !_CONFIG_TYPES_H */
 

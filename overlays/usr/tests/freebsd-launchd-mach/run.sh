@@ -568,4 +568,13 @@ if [ ! -x "$scpathtest" ]; then
 fi
 "$scpathtest" || true	# marker (SC-PATH-OK/FAIL) gates in boot-test.sh
 
+# SC-LOCK — SCPreferences lock: two sessions on one preferences file
+# contend for the exclusive lock; commit takes the lock itself.
+sclocktest=/usr/tests/freebsd-launchd-mach/sclocktest
+if [ ! -x "$sclocktest" ]; then
+    echo "SC-LOCK-FAIL: $sclocktest missing"
+    exit 1
+fi
+"$sclocktest" || true	# marker (SC-LOCK-OK/FAIL) gates in boot-test.sh
+
 exit 0

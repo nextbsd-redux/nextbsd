@@ -1192,6 +1192,22 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scpathtest" \
     || { echo "FAIL: scpathtest not built"; exit 1; }
 echo "==> scpathtest built"
 
+# sclocktest — libSystemConfiguration SCPreferences lock test client.
+# Exercises SCPreferencesLock / SCPreferencesUnlock contention between
+# two sessions, plus commit's internal auto-lock. run.sh runs it and
+# checks for the SC-LOCK-OK marker.
+echo "==> building sclocktest"
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/sclocktest" \
+   "$ROOT/src/libSystemConfiguration/sclocktest.c" \
+   -lSystemConfiguration -lCoreFoundation -lsystem_kernel -llaunch -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/sclocktest" \
+    || { echo "FAIL: sclocktest not built"; exit 1; }
+echo "==> sclocktest built"
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at
