@@ -37,6 +37,9 @@ __SCDynamicStoreDeallocate(CFTypeRef cf)
 {
 	SCDynamicStorePrivateRef	storePrivate	= (SCDynamicStorePrivateRef)cf;
 
+	/* tear down any active dispatch-queue notification */
+	__SCDynamicStoreNotifyCancel((SCDynamicStoreRef)cf);
+
 	/*
 	 * Drop our send right to the per-session port. configd has
 	 * MACH_NOTIFY_NO_SENDERS armed on it, so this closes the
@@ -94,12 +97,7 @@ SCDynamicStoreGetTypeID(void)
 	return __kSCDynamicStoreTypeID;
 }
 
-static Boolean
-isA_SCDynamicStore(SCDynamicStoreRef store)
-{
-	return ((store != NULL) &&
-		(CFGetTypeID(store) == SCDynamicStoreGetTypeID()));
-}
+/* isA_SCDynamicStore() is a static inline in SCInternal.h */
 
 
 #pragma mark -
@@ -129,6 +127,10 @@ __SCDynamicStoreCreatePrivate(CFAllocatorRef		allocator,
 	storePrivate->name	= (name != NULL) ? (CFStringRef)CFRetain(name) : NULL;
 	storePrivate->options	= NULL;
 	storePrivate->server	= MACH_PORT_NULL;
+	storePrivate->notifyStatus	= NotifierNotRegistered;
+	storePrivate->notifyPort	= MACH_PORT_NULL;
+	storePrivate->dispatchQueue	= NULL;
+	storePrivate->notifyStop	= 0;
 	storePrivate->rlsFunction = callout;
 	memset(&storePrivate->rlsContext, 0, sizeof(storePrivate->rlsContext));
 	if (context != NULL) {

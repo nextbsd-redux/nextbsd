@@ -20,7 +20,7 @@
 LIB=		SystemConfiguration
 SHLIB_MAJOR=	1
 
-SRCS=		SCD.c SCDynamicStore.c
+SRCS=		SCD.c SCDynamicStore.c SCNotify.c
 
 # configUser.c — MIG-generated config.defs client stubs (same file
 # configd's test clients link). config_wire.c — configd's shared
@@ -75,7 +75,11 @@ LIBDIR=		${PREFIX}/lib/system
 # -lCoreFoundation: the CF object model + property-list serialization.
 # -lsystem_kernel: mach_msg and the Mach port syscalls behind the MIG
 # client stubs. -llaunch: bootstrap_look_up + bootstrap_port.
-LDADD+=		-lCoreFoundation -lsystem_kernel -llaunch -lpthread
+# -ldispatch: the DISPATCH_SOURCE_TYPE_MACH_RECV source behind
+# SCDynamicStoreSetDispatchQueue. -lBlocksRuntime: the dispatch source
+# handlers are blocks (-fblocks).
+LDADD+=		-lCoreFoundation -ldispatch -lBlocksRuntime
+LDADD+=		-lsystem_kernel -llaunch -lpthread
 LDADD+=		-Wl,--allow-shlib-undefined
 LDADD+=		-Wl,-rpath,${PREFIX}/lib/system
 

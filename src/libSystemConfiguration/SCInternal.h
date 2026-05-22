@@ -19,6 +19,8 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreFoundation/CFRuntime.h>
 #include <mach/mach.h>
+#include <dispatch/dispatch.h>
+#include <pthread.h>
 
 #include <SystemConfiguration/SCDynamicStore.h>
 
@@ -32,6 +34,12 @@
 #ifndef kSCStatusNoStoreServer
 #define kSCStatusNoStoreServer	2002
 #endif
+
+/* Notification delivery status (SCNotify.c). */
+enum {
+	NotifierNotRegistered = 0,
+	Using_NotifierInformViaDispatch
+};
 
 /*
  * The SCDynamicStore session object. A CoreFoundation runtime type:
@@ -49,16 +57,47 @@ typedef struct __SCDynamicStore {
 	mach_port_t		server;
 
 	/*
-	 * Notification callout + context. Stored at create time; unused
-	 * until the notification iteration. Kept here so adding
-	 * notifications does not change the object layout.
+	 * Notification callout + context, set at create time. The callout
+	 * fires (on the dispatch queue) when a watched key changes.
 	 */
 	SCDynamicStoreCallBack	rlsFunction;
 	SCDynamicStoreContext	rlsContext;
+
+	/*
+	 * Notification delivery state (SCNotify.c). configd notifies the
+	 * session by sending a bare Mach message to notifyPort; a private
+	 * thread runs a raw mach_msg receive loop on it (a dispatch
+	 * DISPATCH_SOURCE_TYPE_MACH_RECV source does not reliably deliver
+	 * in this repo — task #41 — so hwregd and this both use a thread).
+	 * The callout still runs on the caller's dispatchQueue.
+	 */
+	int			notifyStatus;	/* Notifier* enum above */
+	mach_port_t		notifyPort;	/* receive right configd notifies */
+	dispatch_queue_t	dispatchQueue;	/* caller's callout queue (retained) */
+	pthread_t		notifyThread;	/* raw mach_msg receive loop */
+	volatile int		notifyStop;	/* asks notifyThread to exit */
 } SCDynamicStorePrivate, *SCDynamicStorePrivateRef;
+
+/* TRUE iff obj is a live SCDynamicStore. */
+static inline Boolean
+isA_SCDynamicStore(SCDynamicStoreRef store)
+{
+	return ((store != NULL) &&
+		(CFGetTypeID(store) == SCDynamicStoreGetTypeID()));
+}
 
 /* SCD.c — per-thread SCError() state. */
 void	_SCErrorSet(int error);
+
+/*
+ * SCNotify.c — notify-port setup and teardown, shared with the object
+ * finalizer. __SCDynamicStoreAddNotificationPort allocates a receive
+ * right and registers it with configd (notifyviaport); it returns the
+ * port or MACH_PORT_NULL with SCError() set. __SCDynamicStoreNotify
+ * Cancel tears an active dispatch-queue notification back down.
+ */
+mach_port_t	__SCDynamicStoreAddNotificationPort(SCDynamicStoreRef store);
+void		__SCDynamicStoreNotifyCancel(SCDynamicStoreRef store);
 
 /*
  * SCD.c — property-list <-> wire-byte serialization. configd stores

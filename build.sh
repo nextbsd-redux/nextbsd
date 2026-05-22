@@ -1109,6 +1109,23 @@ chroot "$WORK/rootfs" ldd /usr/tests/freebsd-launchd-mach/sctest \
     || { echo "FAIL: ldd doesn't resolve sctest to /usr/lib/system/libSystemConfiguration.so"; exit 1; }
 echo "==> sctest built + ldd verified"
 
+# scnotifytest — libSystemConfiguration iter 2 change-notification test
+# client. One session watches a key + registers an SCDynamicStore
+# callback on a dispatch queue; another writes the key; the callback
+# must fire. run.sh runs it and checks for the SC-NOTIFY-OK marker.
+echo "==> building scnotifytest"
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scnotifytest" \
+   "$ROOT/src/libSystemConfiguration/scnotifytest.c" \
+   -lSystemConfiguration -lCoreFoundation -ldispatch -lBlocksRuntime \
+   -lsystem_kernel -llaunch -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scnotifytest" \
+    || { echo "FAIL: scnotifytest not built"; exit 1; }
+echo "==> scnotifytest built"
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at
