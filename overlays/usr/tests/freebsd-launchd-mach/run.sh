@@ -558,4 +558,14 @@ if [ ! -x "$scprefstest" ]; then
 fi
 "$scprefstest" || true	# marker (SC-PREFS-OK/FAIL) gates in boot-test.sh
 
+# SC-PATH — SCPreferences path accessors: set a dictionary at a nested
+# '/'-separated path, read it (and an intermediate level) back, commit,
+# re-open to confirm it persisted, then remove.
+scpathtest=/usr/tests/freebsd-launchd-mach/scpathtest
+if [ ! -x "$scpathtest" ]; then
+    echo "SC-PATH-FAIL: $scpathtest missing"
+    exit 1
+fi
+"$scpathtest" || true	# marker (SC-PATH-OK/FAIL) gates in boot-test.sh
+
 exit 0

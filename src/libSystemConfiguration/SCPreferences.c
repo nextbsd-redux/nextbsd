@@ -486,3 +486,296 @@ SCPreferencesCommitChanges(SCPreferencesRef prefs)
 	_SCErrorSet(kSCStatusOK);
 	return TRUE;
 }
+
+
+#pragma mark -
+#pragma mark Path-based access
+
+/*
+ * Split a '/'-rooted path into its non-empty components. Returns a
+ * retained CFArray of CFString (caller releases), or NULL.
+ */
+static CFMutableArrayRef
+normalizePath(CFStringRef path)
+{
+	CFStringRef		slash;
+	CFArrayRef		split;
+	CFMutableArrayRef	elements;
+	CFIndex			n;
+
+	if ((path == NULL) || (CFGetTypeID(path) != CFStringGetTypeID())) {
+		_SCErrorSet(kSCStatusInvalidArgument);
+		return NULL;
+	}
+
+	slash = CFStringCreateWithCString(NULL, "/", kCFStringEncodingUTF8);
+	if (slash == NULL) {
+		return NULL;
+	}
+	if (!CFStringHasPrefix(path, slash)) {
+		/* a path must be rooted at "/" */
+		CFRelease(slash);
+		return NULL;
+	}
+
+	split = CFStringCreateArrayBySeparatingStrings(NULL, path, slash);
+	CFRelease(slash);
+	if (split == NULL) {
+		return NULL;
+	}
+	elements = CFArrayCreateMutableCopy(NULL, 0, split);
+	CFRelease(split);
+	if (elements == NULL) {
+		return NULL;
+	}
+
+	/* drop the empty components the leading/trailing/doubled "/" leave */
+	n = CFArrayGetCount(elements);
+	while (n-- > 0) {
+		CFStringRef	element = CFArrayGetValueAtIndex(elements, n);
+
+		if (CFStringGetLength(element) == 0) {
+			CFArrayRemoveValueAtIndex(elements, n);
+		}
+	}
+	return elements;
+}
+
+/*
+ * Walk `path` through the nested preferences dictionaries; on success
+ * *entity is the dictionary found there (owned by the session).
+ */
+static Boolean
+getPath(SCPreferencesRef prefs, CFStringRef path, CFDictionaryRef *entity)
+{
+	SCPreferencesPrivateRef	prefsPrivate	= (SCPreferencesPrivateRef)prefs;
+	CFMutableArrayRef	elements;
+	CFIndex			i;
+	CFIndex			n;
+	CFTypeRef		value		= NULL;
+
+	elements = normalizePath(path);
+	if (elements == NULL) {
+		_SCErrorSet(kSCStatusNoKey);
+		return FALSE;
+	}
+
+	n = CFArrayGetCount(elements);
+	if (n < 1) {
+		/* the root path — the whole preferences dictionary */
+		__SCPreferencesAccess(prefs);
+		*entity = prefsPrivate->prefs;
+		CFRelease(elements);
+		return TRUE;
+	}
+
+	for (i = 0; i < n; i++) {
+		CFStringRef	element = CFArrayGetValueAtIndex(elements, i);
+
+		if (i == 0) {
+			value = SCPreferencesGetValue(prefs, element);
+		} else {
+			value = CFDictionaryGetValue((CFDictionaryRef)value,
+						     element);
+		}
+		if ((value == NULL) ||
+		    (CFGetTypeID(value) != CFDictionaryGetTypeID())) {
+			_SCErrorSet(kSCStatusNoKey);
+			CFRelease(elements);
+			return FALSE;
+		}
+	}
+
+	*entity = (CFDictionaryRef)value;
+	CFRelease(elements);
+	return TRUE;
+}
+
+/*
+ * Store `entity` at `path` (NULL removes). Apple's algorithm: collect
+ * the existing dictionary at each parent level, then rebuild the
+ * affected dictionaries bottom-up — each level a mutable copy of the
+ * old one with the child replaced — and set the rebuilt top level back
+ * with SCPreferencesSetValue. Empty parents are pruned on removal.
+ */
+static Boolean
+setPath(SCPreferencesRef prefs, CFStringRef path, CFDictionaryRef entity)
+{
+	SCPreferencesPrivateRef	prefsPrivate	= (SCPreferencesPrivateRef)prefs;
+	CFMutableArrayRef	elements;
+	CFMutableArrayRef	nodes		= NULL;
+	CFStringRef		element;
+	CFTypeRef		node		= NULL;
+	CFTypeRef		newEntity	= NULL;
+	CFIndex			i;
+	CFIndex			n;
+	Boolean			ok		= FALSE;
+
+	if ((entity != NULL) &&
+	    (CFGetTypeID(entity) != CFDictionaryGetTypeID())) {
+		_SCErrorSet(kSCStatusInvalidArgument);
+		return FALSE;
+	}
+
+	elements = normalizePath(path);
+	if (elements == NULL) {
+		_SCErrorSet(kSCStatusNoKey);
+		return FALSE;
+	}
+
+	n = CFArrayGetCount(elements);
+	if (n < 1) {
+		/* the root path — replace the whole preferences dictionary */
+		__SCPreferencesAccess(prefs);
+		if (prefsPrivate->prefs != NULL) {
+			CFRelease(prefsPrivate->prefs);
+		}
+		if (entity == NULL) {
+			prefsPrivate->prefs =
+				CFDictionaryCreateMutable(NULL, 0,
+					&kCFTypeDictionaryKeyCallBacks,
+					&kCFTypeDictionaryValueCallBacks);
+		} else {
+			prefsPrivate->prefs =
+				CFDictionaryCreateMutableCopy(NULL, 0, entity);
+		}
+		prefsPrivate->changed = TRUE;
+		CFRelease(elements);
+		return TRUE;
+	}
+
+	/* collect the existing dictionary at each parent level */
+	nodes = CFArrayCreateMutable(NULL, n - 1, &kCFTypeArrayCallBacks);
+	for (i = 0; i < n - 1; i++) {
+		element = CFArrayGetValueAtIndex(elements, i);
+		if (i == 0) {
+			node = SCPreferencesGetValue(prefs, element);
+		} else {
+			node = CFDictionaryGetValue((CFDictionaryRef)node,
+						    element);
+		}
+		if (node != NULL) {
+			CFArrayAppendValue(nodes, node);
+		} else {
+			/* a missing parent — synthesize an empty dictionary */
+			CFDictionaryRef	empty;
+
+			empty = CFDictionaryCreate(NULL, NULL, NULL, 0,
+					&kCFTypeDictionaryKeyCallBacks,
+					&kCFTypeDictionaryValueCallBacks);
+			CFArrayAppendValue(nodes, empty);
+			node = empty;
+			CFRelease(empty);
+		}
+		if (CFGetTypeID(node) != CFDictionaryGetTypeID()) {
+			_SCErrorSet(kSCStatusNoKey);
+			goto done;
+		}
+	}
+
+	/* the leaf must not overwrite a non-dictionary component */
+	element = CFArrayGetValueAtIndex(elements, n - 1);
+	if (n > 1) {
+		node = CFArrayGetValueAtIndex(nodes, n - 2);
+		node = CFDictionaryGetValue((CFDictionaryRef)node, element);
+	} else {
+		node = SCPreferencesGetValue(prefs, element);
+	}
+	if ((node != NULL) &&
+	    (CFGetTypeID(node) != CFDictionaryGetTypeID())) {
+		_SCErrorSet(kSCStatusInvalidArgument);
+		goto done;
+	}
+
+	/* rebuild the affected dictionaries bottom-up */
+	if (entity != NULL) {
+		newEntity = CFRetain(entity);
+	}
+	for (i = n - 1; i >= 0; i--) {
+		element = CFArrayGetValueAtIndex(elements, i);
+		if (i == 0) {
+			if (newEntity != NULL) {
+				ok = SCPreferencesSetValue(prefs, element,
+							   newEntity);
+			} else {
+				ok = SCPreferencesRemoveValue(prefs, element);
+			}
+		} else {
+			CFMutableDictionaryRef	newNode;
+
+			node    = CFArrayGetValueAtIndex(nodes, i - 1);
+			newNode = CFDictionaryCreateMutableCopy(NULL, 0,
+					(CFDictionaryRef)node);
+			if (newEntity != NULL) {
+				CFDictionarySetValue(newNode, element,
+						     newEntity);
+				CFRelease(newEntity);
+			} else {
+				CFDictionaryRemoveValue(newNode, element);
+				if (CFDictionaryGetCount(newNode) == 0) {
+					/* prune the now-empty parent */
+					CFRelease(newNode);
+					newNode = NULL;
+				}
+			}
+			newEntity = newNode;
+		}
+	}
+	if (newEntity != NULL) {
+		CFRelease(newEntity);
+	}
+
+    done :
+	if (nodes != NULL) {
+		CFRelease(nodes);
+	}
+	CFRelease(elements);
+	return ok;
+}
+
+CFDictionaryRef
+SCPreferencesPathGetValue(SCPreferencesRef prefs, CFStringRef path)
+{
+	CFDictionaryRef	entity	= NULL;
+
+	if (!isA_SCPreferences(prefs)) {
+		_SCErrorSet(kSCStatusNoPrefsSession);
+		return NULL;
+	}
+	if (!getPath(prefs, path, &entity)) {
+		return NULL;
+	}
+	return entity;
+}
+
+Boolean
+SCPreferencesPathSetValue(SCPreferencesRef	prefs,
+			  CFStringRef		path,
+			  CFDictionaryRef	value)
+{
+	if (!isA_SCPreferences(prefs)) {
+		_SCErrorSet(kSCStatusNoPrefsSession);
+		return FALSE;
+	}
+	if (value == NULL) {
+		_SCErrorSet(kSCStatusInvalidArgument);
+		return FALSE;
+	}
+	return setPath(prefs, path, value);
+}
+
+Boolean
+SCPreferencesPathRemoveValue(SCPreferencesRef prefs, CFStringRef path)
+{
+	CFDictionaryRef	entity	= NULL;
+
+	if (!isA_SCPreferences(prefs)) {
+		_SCErrorSet(kSCStatusNoPrefsSession);
+		return FALSE;
+	}
+	if (!getPath(prefs, path, &entity)) {
+		/* nothing at that path to remove */
+		return FALSE;
+	}
+	return setPath(prefs, path, NULL);
+}

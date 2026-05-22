@@ -1176,6 +1176,22 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scprefstest" \
     || { echo "FAIL: scprefstest not built"; exit 1; }
 echo "==> scprefstest built"
 
+# scpathtest — libSystemConfiguration SCPreferences path-accessor test
+# client. Exercises SCPreferencesPathSetValue / PathGetValue /
+# PathRemoveValue (nested '/'-separated paths). run.sh runs it and
+# checks for the SC-PATH-OK marker.
+echo "==> building scpathtest"
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scpathtest" \
+   "$ROOT/src/libSystemConfiguration/scpathtest.c" \
+   -lSystemConfiguration -lCoreFoundation -lsystem_kernel -llaunch -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scpathtest" \
+    || { echo "FAIL: scpathtest not built"; exit 1; }
+echo "==> scpathtest built"
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at
