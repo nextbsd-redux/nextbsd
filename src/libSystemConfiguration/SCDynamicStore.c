@@ -130,7 +130,7 @@ __SCDynamicStoreCreatePrivate(CFAllocatorRef		allocator,
 	storePrivate->notifyStatus	= NotifierNotRegistered;
 	storePrivate->notifyPort	= MACH_PORT_NULL;
 	storePrivate->dispatchQueue	= NULL;
-	storePrivate->dispatchSource	= NULL;
+	storePrivate->notifyStop	= 0;
 	storePrivate->rlsFunction = callout;
 	memset(&storePrivate->rlsContext, 0, sizeof(storePrivate->rlsContext));
 	if (context != NULL) {

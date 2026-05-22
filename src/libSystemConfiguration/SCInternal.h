@@ -20,6 +20,7 @@
 #include <CoreFoundation/CFRuntime.h>
 #include <mach/mach.h>
 #include <dispatch/dispatch.h>
+#include <pthread.h>
 
 #include <SystemConfiguration/SCDynamicStore.h>
 
@@ -62,11 +63,19 @@ typedef struct __SCDynamicStore {
 	SCDynamicStoreCallBack	rlsFunction;
 	SCDynamicStoreContext	rlsContext;
 
-	/* notification delivery state (SCNotify.c) */
+	/*
+	 * Notification delivery state (SCNotify.c). configd notifies the
+	 * session by sending a bare Mach message to notifyPort; a private
+	 * thread runs a raw mach_msg receive loop on it (a dispatch
+	 * DISPATCH_SOURCE_TYPE_MACH_RECV source does not reliably deliver
+	 * in this repo — task #41 — so hwregd and this both use a thread).
+	 * The callout still runs on the caller's dispatchQueue.
+	 */
 	int			notifyStatus;	/* Notifier* enum above */
 	mach_port_t		notifyPort;	/* receive right configd notifies */
 	dispatch_queue_t	dispatchQueue;	/* caller's callout queue (retained) */
-	dispatch_source_t	dispatchSource;	/* MACH_RECV source on notifyPort */
+	pthread_t		notifyThread;	/* raw mach_msg receive loop */
+	volatile int		notifyStop;	/* asks notifyThread to exit */
 } SCDynamicStorePrivate, *SCDynamicStorePrivateRef;
 
 /* TRUE iff obj is a live SCDynamicStore. */
