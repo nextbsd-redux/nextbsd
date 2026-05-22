@@ -21,6 +21,7 @@ LIB=		SystemConfiguration
 SHLIB_MAJOR=	1
 
 SRCS=		SCD.c SCDynamicStore.c SCNotify.c SCDMultiple.c SCPreferences.c
+SRCS+=		SCNetworkConfigurationInternal.c SCNetworkInterface.c
 
 # configUser.c — MIG-generated config.defs client stubs (same file
 # configd's test clients link). config_wire.c — configd's shared
@@ -68,6 +69,7 @@ LDADD+=		-L${SYSROOT}/usr/lib/system
 .endif
 
 INCS=		SystemConfiguration/SCDynamicStore.h \
+		SystemConfiguration/SCNetworkConfiguration.h \
 		SystemConfiguration/SCPreferences.h \
 		SystemConfiguration/SystemConfiguration.h
 INCSDIR=	${PREFIX}/include/SystemConfiguration
