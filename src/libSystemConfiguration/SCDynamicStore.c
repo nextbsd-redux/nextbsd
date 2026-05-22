@@ -41,6 +41,18 @@ __SCDynamicStoreDeallocate(CFTypeRef cf)
 	__SCDynamicStoreNotifyCancel((SCDynamicStoreRef)cf);
 
 	/*
+	 * Drop the run-loop source. The notification thread is already
+	 * stopped (it held a store reference, so we could not get here
+	 * while it ran), hence the source is fully unscheduled and
+	 * invalidating it calls no further callbacks.
+	 */
+	if (storePrivate->rls != NULL) {
+		CFRunLoopSourceInvalidate(storePrivate->rls);
+		CFRelease(storePrivate->rls);
+		storePrivate->rls = NULL;
+	}
+
+	/*
 	 * Drop our send right to the per-session port. configd has
 	 * MACH_NOTIFY_NO_SENDERS armed on it, so this closes the
 	 * session server-side.
@@ -129,8 +141,11 @@ __SCDynamicStoreCreatePrivate(CFAllocatorRef		allocator,
 	storePrivate->server	= MACH_PORT_NULL;
 	storePrivate->notifyStatus	= NotifierNotRegistered;
 	storePrivate->notifyPort	= MACH_PORT_NULL;
-	storePrivate->dispatchQueue	= NULL;
 	storePrivate->notifyStop	= 0;
+	storePrivate->dispatchQueue	= NULL;
+	storePrivate->rls		= NULL;
+	storePrivate->rlsRunLoop	= NULL;
+	storePrivate->rlsScheduled	= 0;
 	storePrivate->rlsFunction = callout;
 	memset(&storePrivate->rlsContext, 0, sizeof(storePrivate->rlsContext));
 	if (context != NULL) {
