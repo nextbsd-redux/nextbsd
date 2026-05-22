@@ -634,6 +634,18 @@ expect {
     "SC-BRIDGE-OK" { puts "\nOK: SCBridgeInterface works" }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: IOKIT-WALK marker not seen"
+        exit 1
+    }
+    "IOKIT-WALK-FAIL" {
+        puts "\nFAIL: libIOKit registry walk failed"
+        exit 1
+    }
+    "IOKIT-WALK-OK" { puts "\nOK: libIOKit registry walk works" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"
