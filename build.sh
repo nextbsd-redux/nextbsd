@@ -1225,6 +1225,24 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scprefsnotifytest" \
     || { echo "FAIL: scprefsnotifytest not built"; exit 1; }
 echo "==> scprefsnotifytest built"
 
+# scplinktest — libSystemConfiguration SCNetworkConfiguration iter 1
+# test client. Exercises the SCPreferences path link accessors that
+# SCNetworkConfiguration is built on: SCPreferencesPathCreateUnique
+# Child, SCPreferencesPathSet/GetLink, and __LINK__ resolution (leaf
+# and mid-path) by SCPreferencesPathGetValue. run.sh runs it and checks
+# for the SC-PLINK-OK marker.
+echo "==> building scplinktest"
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scplinktest" \
+   "$ROOT/src/libSystemConfiguration/scplinktest.c" \
+   -lSystemConfiguration -lCoreFoundation -lsystem_kernel -llaunch -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scplinktest" \
+    || { echo "FAIL: scplinktest not built"; exit 1; }
+echo "==> scplinktest built"
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at

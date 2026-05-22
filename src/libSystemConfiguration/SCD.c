@@ -85,6 +85,8 @@ SCErrorString(int status)
 		return "Configuration daemon not (no longer) available";
 	case kSCStatusNotifierActive :
 		return "Notifier is currently active";
+	case kSCStatusMaxLink :
+		return "Maximum link count exceeded";
 	case kSCStatusNoPrefsSession :
 		return "Preferences session not active";
 	case kSCStatusPrefsBusy :
