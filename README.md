@@ -480,13 +480,15 @@ and Phase 1 (the structured registry + a 10-routine Mach-RPC
 query/watch/load API + PCI enrichment) have landed; the launchd
 `HardwareMatch` key has begun. `configd` &mdash; Apple's
 SystemConfiguration daemon, hosting the `SCDynamicStore` key/value
-store &mdash; is up and serving over Mach IPC; the IOKitUser facade
-(`ioreg`) and `IPConfiguration` (network config, the proper
-replacement for the interim `dhclient` setup) follow.
+store &mdash; has a feature-complete server over Mach IPC (the store,
+change notifications, regex watches, key listing and batch
+operations); the CF-typed `SystemConfiguration` client framework, the
+IOKitUser facade (`ioreg`) and `IPConfiguration` (network config, the
+proper replacement for the interim `dhclient` setup) follow.
 Full design: the
 [hardware registry + IOKit porting plan](https://pkgdemon.github.io/freebsd-hardware-registry-iokit-plan.html).
 
-### Phase K &mdash; hwregd complete; configd SCDynamicStore working (2026-05-21)
+### Phase K &mdash; hwregd complete; configd SCDynamicStore server complete (2026-05-21)
 
 **hwregd** is a working hardware-registry daemon. **Phase 0** (the
 `/dev/devctl` event reader, `kldload`-on-nomatch, and a Mach pub/sub
@@ -509,17 +511,32 @@ landed, and the hwregd-subscription wiring is implemented.
 
 **configd** &mdash; Apple's SystemConfiguration daemon, hosting the
 **SCDynamicStore** key/value store over a MIG Mach protocol &mdash;
-is the current focus. It is ported on the *Mach-IPC track* (real Mach
-IPC + MIG `config.defs`), not the sockets / Distributed-Objects model
-of the companion `freebsd-launchd` repo. Landed:
+has a feature-complete server. It is ported on the *Mach-IPC track*
+(real Mach IPC + MIG `config.defs`), not the sockets /
+Distributed-Objects model of the companion `freebsd-launchd` repo.
+Landed across seven iterations:
 
 - the configd daemon &mdash; checks its
   `com.apple.SystemConfiguration.configd` Mach service in and runs a
   raw `mach_msg` MIG demux loop;
 - the SCDynamicStore key/value store &mdash; `configopen` /
-  `configget` / `configset` / `configremove`, exercised end-to-end
-  over Mach IPC by the `configtest` client (the `CONFIGD-STORE` CI
-  marker).
+  `configget` / `configset` / `configremove` (`CONFIGD-STORE` CI
+  marker);
+- per-session Mach ports and change notifications &mdash; each client
+  gets its own session port (joined to a port set, torn down by a
+  no-senders notification when the client exits); `notifyadd` /
+  `notifyviaport` / `notifychanges` watch keys, register a
+  notification port and drain the changed-key list (`CONFIGD-NOTIFY`);
+- POSIX-regex pattern watches &mdash; a session can watch a regex, not
+  just an explicit key (`CONFIGD-PATTERN`);
+- key listing &mdash; `configlist` by prefix or regex (`CONFIGD-LIST`);
+- batch routines &mdash; `notifyset` (replace a whole watch set),
+  `configget_m` / `configset_m` (multi-key fetch and update)
+  (`CONFIGD-MULTI`).
+
+Each is exercised end-to-end over Mach IPC by a dedicated CI test
+client; `configd --selftest` additionally runs the whole protocol
+in-process.
 
 `config.defs` carries its payloads in inline bounded arrays rather
 than Apple's out-of-line Mach data: cross-process out-of-line copyout
@@ -528,13 +545,15 @@ hands the receiver colliding low addresses), so configd and hwregd
 both use the inline-array workaround. The cost is an 8&nbsp;KiB cap on
 a key or value.
 
-**Next:** configd change notifications (per-session ports +
-`notifyadd` / a change fan-out), then pattern keys; then the IOKitUser
+**Next:** the CF-typed `SystemConfiguration` client framework
+(`SCDynamicStoreCreate` / `CopyValue` / &hellip;), so real software can
+use configd instead of speaking MIG directly; then the IOKitUser
 facade (`ioreg`). Deferred: USB / thermal property enrichment in
 hwregd; lifting configd's 8&nbsp;KiB cap (needs the kernel's
-out-of-line allocator fixed). Build/test runs on the `bsd01`
-VirtualBox VM (interactive serial console reachable via the
-`joe-windows` host).
+out-of-line allocator fixed); configd's `notifyviafd` and `snapshot`
+routines (no consumer / fileport support needed). Build/test runs on
+the `bsd01` VirtualBox VM (interactive serial console reachable via
+the `joe-windows` host).
 
 ## CoreFoundation for system services &mdash; swift-corelibs CF
 
