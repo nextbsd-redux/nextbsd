@@ -465,6 +465,18 @@ expect {
     "SC-STORE-OK" { puts "\nOK: SCDynamicStore client framework works" }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: SC-NOTIFY marker not seen"
+        exit 1
+    }
+    "SC-NOTIFY-FAIL" {
+        puts "\nFAIL: SCDynamicStore change-notification delivery failed"
+        exit 1
+    }
+    "SC-NOTIFY-OK" { puts "\nOK: SCDynamicStore change notifications work" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"

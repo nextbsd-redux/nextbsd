@@ -518,4 +518,14 @@ if [ ! -x "$sctest" ]; then
 fi
 "$sctest" || true	# marker (SC-STORE-OK/FAIL) gates in boot-test.sh
 
+# SC-NOTIFY — SCDynamicStore change notifications: one session watches a
+# key and takes an SCDynamicStore callback on a dispatch queue, another
+# writes the key, and the callback must fire with the changed key.
+scnotifytest=/usr/tests/freebsd-launchd-mach/scnotifytest
+if [ ! -x "$scnotifytest" ]; then
+    echo "SC-NOTIFY-FAIL: $scnotifytest missing"
+    exit 1
+fi
+"$scnotifytest" || true	# marker (SC-NOTIFY-OK/FAIL) gates in boot-test.sh
+
 exit 0

@@ -33,6 +33,7 @@
 #define _SCDYNAMICSTORE_H
 
 #include <sys/cdefs.h>
+#include <dispatch/dispatch.h>
 #include <CoreFoundation/CoreFoundation.h>
 
 /*!
@@ -169,6 +170,38 @@ SCDynamicStoreSetValue		(SCDynamicStoreRef		store,
 Boolean
 SCDynamicStoreRemoveValue	(SCDynamicStoreRef		store,
 				 CFStringRef			key);
+
+/*!
+	@function SCDynamicStoreSetNotificationKeys
+	@discussion Specifies the keys and key patterns the session wants
+		change notifications for. Replaces any previous set.
+	@param keys     a CFArray of CFString keys to watch, or NULL.
+	@param patterns a CFArray of CFString POSIX-regex patterns, or NULL.
+ */
+Boolean
+SCDynamicStoreSetNotificationKeys (SCDynamicStoreRef		store,
+				   CFArrayRef			keys,
+				   CFArrayRef			patterns);
+
+/*!
+	@function SCDynamicStoreCopyNotifiedKeys
+	@discussion Returns the keys that have changed since the last call,
+		draining the session's pending-change list.
+	@result a CFArray of CFString keys (caller releases), or NULL.
+ */
+CFArrayRef
+SCDynamicStoreCopyNotifiedKeys	(SCDynamicStoreRef		store);
+
+/*!
+	@function SCDynamicStoreSetDispatchQueue
+	@discussion Schedules change-notification delivery onto a dispatch
+		queue: the SCDynamicStoreCallBack passed to SCDynamicStore
+		Create() runs on `queue` whenever a watched key changes.
+		Pass NULL to unschedule.
+ */
+Boolean
+SCDynamicStoreSetDispatchQueue	(SCDynamicStoreRef		store,
+				 dispatch_queue_t		queue);
 
 /*!
 	@function SCError
