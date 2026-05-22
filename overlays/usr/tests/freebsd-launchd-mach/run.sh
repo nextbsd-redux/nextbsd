@@ -658,4 +658,15 @@ if [ ! -x "$scbridgetest" ]; then
 fi
 "$scbridgetest" || true	# marker (SC-BRIDGE-OK/FAIL) gates in boot-test.sh
 
+# IOKIT-WALK — libIOKit iter 1 read-only registry walk: walk the
+# hwregd registry tree through the IOKit facade (IORegistryGetRoot
+# Entry / GetChildIterator / IOIteratorNext / GetName / GetPath),
+# exercise IOObject Retain+Release.
+iokittest=/usr/tests/freebsd-launchd-mach/iokittest
+if [ ! -x "$iokittest" ]; then
+    echo "IOKIT-WALK-FAIL: $iokittest missing"
+    exit 1
+fi
+"$iokittest" || true	# marker (IOKIT-WALK-OK/FAIL) gates in boot-test.sh
+
 exit 0

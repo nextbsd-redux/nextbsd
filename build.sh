@@ -1348,6 +1348,59 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scbridgetest" \
 echo "==> scbridgetest built"
 
 #
+# 3r4. build libIOKit (src/libIOKit/) — the IOKit userland facade,
+#      iter 1. Thin CF wrapper over hwregd's MIG hwreg.defs Mach RPC
+#      (K1 of the IOKit-userland port plan). iter 1 ships the read-
+#      only registry walk (IORegistryGetRootEntry, GetChildIterator,
+#      IOIteratorNext, GetName, GetPath, IOObject{Retain,Release}).
+#      Re-uses hwregd's MIG client stubs in $HWREG_MIG.
+#      Installs /usr/lib/system/libIOKit.so + /usr/include/IOKit/.
+#      Plan: pkgdemon.github.io/freebsd-hardware-registry-iokit-plan.html
+#
+echo "==> building libIOKit (src/libIOKit)"
+# bsd.incs.mk installs INCS into INCSDIR but does not create it —
+# match the same pre-mkdir libSystemConfiguration / libxpc use.
+mkdir -p "$WORK/rootfs/usr/include/IOKit"
+make -C "$ROOT/src/libIOKit" \
+    DESTDIR="$WORK/rootfs" \
+    SYSROOT="$WORK/rootfs" \
+    MIGOUT="$HWREG_MIG" \
+    all install
+# Re-prime ldconfig hints now that libIOKit is installed.
+chroot "$WORK/rootfs" ldconfig -m /usr/lib /usr/lib/system
+ls -lh "$WORK/rootfs/usr/lib/system/libIOKit.so"
+test -f "$WORK/rootfs/usr/lib/system/libIOKit.so.1" \
+    || { echo "FAIL: libIOKit.so.1 not installed"; exit 1; }
+test -L "$WORK/rootfs/usr/lib/system/libIOKit.so" \
+    || { echo "FAIL: libIOKit.so dev symlink missing"; exit 1; }
+test -f "$WORK/rootfs/usr/include/IOKit/IOKitLib.h" \
+    || { echo "FAIL: IOKit/IOKitLib.h header not installed"; exit 1; }
+chroot "$WORK/rootfs" ldconfig -r | grep -q libIOKit \
+    || { echo "FAIL: ldconfig hints missing libIOKit"; exit 1; }
+echo "==> libIOKit built + installed"
+
+# iokittest — libIOKit iter 1 walk test client. Walks the hwregd
+# registry through the IOKit facade and prints IOKIT-WALK-OK. run.sh
+# runs it and checks for the marker.
+# -fblocks: IOKitLib.h pulls CoreFoundation; CF headers carry block
+# typedefs that need -fblocks even when iokittest itself doesn't use
+# any. Same flag the libSystemConfiguration test clients carry.
+echo "==> building iokittest"
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/iokittest" \
+   "$ROOT/src/libIOKit/iokittest.c" \
+   -lIOKit -lCoreFoundation -lsystem_kernel -llaunch -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/iokittest" \
+    || { echo "FAIL: iokittest not built"; exit 1; }
+chroot "$WORK/rootfs" ldd /usr/tests/freebsd-launchd-mach/iokittest \
+    | grep -q "libIOKit.so.* => /usr/lib/system/" \
+    || { echo "FAIL: ldd doesn't resolve iokittest to /usr/lib/system/libIOKit.so"; exit 1; }
+echo "==> iokittest built + ldd verified"
+
+#
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at
 #     Phase J0 (commit 455a727). This step:
