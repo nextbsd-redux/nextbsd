@@ -45,6 +45,8 @@
 #define kSCStatusNoConfigFile	5003
 #define kSCStatusStale		5005
 #define kSCStatusAccessError	5006
+#define kSCStatusLocked		5007
+#define kSCStatusNeedLock	5008
 #endif
 
 /* Notification delivery status (SCNotify.c). */

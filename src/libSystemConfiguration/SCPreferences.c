@@ -21,6 +21,7 @@
 #include "SCInternal.h"
 #include <SystemConfiguration/SCPreferences.h>
 
+#include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <pthread.h>
@@ -51,6 +52,10 @@ typedef struct __SCPreferences {
 	CFMutableDictionaryRef	prefs;		/* the in-memory preferences */
 	Boolean			accessed;	/* prefs loaded from the file */
 	Boolean			changed;	/* prefs edited since the load */
+
+	Boolean			locked;		/* this session holds the lock */
+	int			lockFD;		/* O_EXLOCK descriptor, or -1 */
+	char			*lockPath;	/* lock file path (malloc'd) */
 } SCPreferencesPrivate, *SCPreferencesPrivateRef;
 
 
@@ -75,6 +80,13 @@ __SCPreferencesDeallocate(CFTypeRef cf)
 	}
 	if (prefsPrivate->path != NULL) {
 		free(prefsPrivate->path);
+	}
+	if (prefsPrivate->lockFD != -1) {
+		/* closing the descriptor releases any held O_EXLOCK lock */
+		(void) close(prefsPrivate->lockFD);
+	}
+	if (prefsPrivate->lockPath != NULL) {
+		free(prefsPrivate->lockPath);
 	}
 }
 
@@ -203,6 +215,9 @@ __SCPreferencesCreatePrivate(CFAllocatorRef allocator)
 	prefsPrivate->prefs	= NULL;
 	prefsPrivate->accessed	= FALSE;
 	prefsPrivate->changed	= FALSE;
+	prefsPrivate->locked	= FALSE;
+	prefsPrivate->lockFD	= -1;
+	prefsPrivate->lockPath	= NULL;
 	return prefsPrivate;
 }
 
@@ -403,8 +418,98 @@ SCPreferencesCopyKeyList(SCPreferencesRef prefs)
 #pragma mark -
 #pragma mark Commit
 
+#pragma mark -
+#pragma mark Lock
+
 Boolean
-SCPreferencesCommitChanges(SCPreferencesRef prefs)
+SCPreferencesLock(SCPreferencesRef prefs, Boolean wait)
+{
+	SCPreferencesPrivateRef	prefsPrivate	= (SCPreferencesPrivateRef)prefs;
+	size_t			len;
+	int			oflag;
+	int			fd;
+
+	if (!isA_SCPreferences(prefs)) {
+		_SCErrorSet(kSCStatusNoPrefsSession);
+		return FALSE;
+	}
+	if (prefsPrivate->locked) {
+		_SCErrorSet(kSCStatusLocked);
+		return FALSE;
+	}
+
+	/* the lock file sits beside the preferences file as "<path>-lock" */
+	if (prefsPrivate->lockPath == NULL) {
+		len = strlen(prefsPrivate->path) + sizeof("-lock");
+		prefsPrivate->lockPath = malloc(len);
+		if (prefsPrivate->lockPath == NULL) {
+			_SCErrorSet(kSCStatusFailed);
+			return FALSE;
+		}
+		(void) snprintf(prefsPrivate->lockPath, len, "%s-lock",
+				prefsPrivate->path);
+	}
+	__SCPreferencesMakeParents(prefsPrivate->lockPath);
+
+	/*
+	 * O_EXLOCK takes an exclusive advisory lock as part of the open;
+	 * the lock is released when the descriptor is closed. With
+	 * O_NONBLOCK a non-waiting request fails with EWOULDBLOCK if the
+	 * lock is already held.
+	 */
+	oflag = O_WRONLY | O_CREAT | O_EXLOCK;
+	if (!wait) {
+		oflag |= O_NONBLOCK;
+	}
+	fd = open(prefsPrivate->lockPath, oflag, 0644);
+	if (fd == -1) {
+		_SCErrorSet((errno == EWOULDBLOCK)
+				? kSCStatusPrefsBusy : kSCStatusFailed);
+		return FALSE;
+	}
+
+	prefsPrivate->lockFD = fd;
+	prefsPrivate->locked = TRUE;
+	_SCErrorSet(kSCStatusOK);
+	return TRUE;
+}
+
+Boolean
+SCPreferencesUnlock(SCPreferencesRef prefs)
+{
+	SCPreferencesPrivateRef	prefsPrivate	= (SCPreferencesPrivateRef)prefs;
+
+	if (!isA_SCPreferences(prefs)) {
+		_SCErrorSet(kSCStatusNoPrefsSession);
+		return FALSE;
+	}
+	if (!prefsPrivate->locked) {
+		_SCErrorSet(kSCStatusNeedLock);
+		return FALSE;
+	}
+
+	if (prefsPrivate->lockFD != -1) {
+		/* closing the descriptor releases the O_EXLOCK lock */
+		(void) close(prefsPrivate->lockFD);
+		prefsPrivate->lockFD = -1;
+	}
+	prefsPrivate->locked = FALSE;
+	_SCErrorSet(kSCStatusOK);
+	return TRUE;
+}
+
+
+#pragma mark -
+#pragma mark Commit
+
+/*
+ * Write the in-memory preferences out to the file: serialize, write a
+ * sibling "-new" file, and rename it over the target so the file is
+ * replaced atomically. Returns TRUE with SCError() OK, or FALSE with
+ * SCError() set.
+ */
+static Boolean
+__SCPreferencesWriteFile(SCPreferencesRef prefs)
 {
 	SCPreferencesPrivateRef	prefsPrivate	= (SCPreferencesPrivateRef)prefs;
 	CFDataRef		xmlData;
@@ -414,18 +519,6 @@ SCPreferencesCommitChanges(SCPreferencesRef prefs)
 	CFIndex			off;
 	int			fd;
 
-	if (!isA_SCPreferences(prefs)) {
-		_SCErrorSet(kSCStatusNoPrefsSession);
-		return FALSE;
-	}
-	__SCPreferencesAccess(prefs);
-
-	if (!prefsPrivate->changed) {
-		/* nothing to write */
-		_SCErrorSet(kSCStatusOK);
-		return TRUE;
-	}
-
 	xmlData = CFPropertyListCreateData(NULL, prefsPrivate->prefs,
 					   kCFPropertyListXMLFormat_v1_0, 0, NULL);
 	if (xmlData == NULL) {
@@ -433,10 +526,6 @@ SCPreferencesCommitChanges(SCPreferencesRef prefs)
 		return FALSE;
 	}
 
-	/*
-	 * Write to a sibling "-new" file and rename it over the target so
-	 * the preferences file is replaced atomically.
-	 */
 	__SCPreferencesMakeParents(prefsPrivate->path);
 	if (snprintf(newPath, sizeof(newPath), "%s-new",
 		     prefsPrivate->path) >= (int)sizeof(newPath)) {
@@ -485,6 +574,44 @@ SCPreferencesCommitChanges(SCPreferencesRef prefs)
 	prefsPrivate->changed = FALSE;
 	_SCErrorSet(kSCStatusOK);
 	return TRUE;
+}
+
+Boolean
+SCPreferencesCommitChanges(SCPreferencesRef prefs)
+{
+	SCPreferencesPrivateRef	prefsPrivate	= (SCPreferencesPrivateRef)prefs;
+	Boolean			wasLocked;
+	Boolean			ok;
+
+	if (!isA_SCPreferences(prefs)) {
+		_SCErrorSet(kSCStatusNoPrefsSession);
+		return FALSE;
+	}
+	__SCPreferencesAccess(prefs);
+
+	if (!prefsPrivate->changed) {
+		/* nothing to write */
+		_SCErrorSet(kSCStatusOK);
+		return TRUE;
+	}
+
+	/* hold the preferences lock for the duration of the write */
+	wasLocked = prefsPrivate->locked;
+	if (!wasLocked) {
+		if (!SCPreferencesLock(prefs, TRUE)) {
+			return FALSE;	/* SCError() set by SCPreferencesLock */
+		}
+	}
+
+	ok = __SCPreferencesWriteFile(prefs);
+
+	if (!wasLocked) {
+		int	status	= SCError();	/* preserve across the unlock */
+
+		(void) SCPreferencesUnlock(prefs);
+		_SCErrorSet(status);
+	}
+	return ok;
 }
 
 
