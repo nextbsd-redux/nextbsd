@@ -587,4 +587,14 @@ if [ ! -x "$scprefsnotifytest" ]; then
 fi
 "$scprefsnotifytest" || true	# marker (SC-PNOTIFY-OK/FAIL) gates in boot-test.sh
 
+# SC-PLINK — SCPreferences path links (the SCNetworkConfiguration
+# prerequisite): create a unique child entry, store + read a __LINK__,
+# resolve a path through the link, and confirm the link persists.
+scplinktest=/usr/tests/freebsd-launchd-mach/scplinktest
+if [ ! -x "$scplinktest" ]; then
+    echo "SC-PLINK-FAIL: $scplinktest missing"
+    exit 1
+fi
+"$scplinktest" || true	# marker (SC-PLINK-OK/FAIL) gates in boot-test.sh
+
 exit 0

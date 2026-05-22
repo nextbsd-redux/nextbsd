@@ -194,6 +194,39 @@ SCPreferencesPathRemoveValue	(SCPreferencesRef		prefs,
 				 CFStringRef			path);
 
 /*!
+	@function SCPreferencesPathCreateUniqueChild
+	@discussion Creates a uniquely-named empty child dictionary under
+		`prefix` and returns its full '/'-separated path (caller
+		releases). The child name is a fresh UUID, so a new entry
+		never collides with an existing one.
+ */
+CFStringRef
+SCPreferencesPathCreateUniqueChild
+				(SCPreferencesRef		prefs,
+				 CFStringRef			prefix);
+
+/*!
+	@function SCPreferencesPathGetLink
+	@discussion Returns the link target if the dictionary at `path` is
+		a link, or NULL. Unlike SCPreferencesPathGetValue this does
+		not follow the link.
+ */
+CFStringRef
+SCPreferencesPathGetLink	(SCPreferencesRef		prefs,
+				 CFStringRef			path);
+
+/*!
+	@function SCPreferencesPathSetLink
+	@discussion Stores a link at `path` pointing at `link`; subsequent
+		path walks through `path` continue from `link`. The link
+		target must already exist.
+ */
+Boolean
+SCPreferencesPathSetLink	(SCPreferencesRef		prefs,
+				 CFStringRef			path,
+				 CFStringRef			link);
+
+/*!
 	@function SCPreferencesSetCallback
 	@discussion Sets the callback invoked when the preferences change.
  */

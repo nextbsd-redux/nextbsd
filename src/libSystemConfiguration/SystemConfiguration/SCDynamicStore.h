@@ -83,6 +83,7 @@ enum {
 	kSCStatusNoStoreSession		= 2001,	/* no open store session */
 	kSCStatusNoStoreServer		= 2002,	/* configd not (no longer) available */
 	kSCStatusNotifierActive		= 2003,	/* notifier already active */
+	kSCStatusMaxLink		= 3006,	/* maximum link count exceeded */
 	kSCStatusNoPrefsSession		= 5001,	/* no open preferences session */
 	kSCStatusPrefsBusy		= 5002,	/* preferences update in progress */
 	kSCStatusNoConfigFile		= 5003,	/* no configuration file */

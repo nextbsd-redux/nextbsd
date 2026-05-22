@@ -549,6 +549,18 @@ expect {
     "SC-PNOTIFY-OK" { puts "\nOK: SCPreferences change notifications work" }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: SC-PLINK marker not seen"
+        exit 1
+    }
+    "SC-PLINK-FAIL" {
+        puts "\nFAIL: SCPreferences path links failed"
+        exit 1
+    }
+    "SC-PLINK-OK" { puts "\nOK: SCPreferences path links work" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"

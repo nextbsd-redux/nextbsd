@@ -37,9 +37,11 @@
 
 /*
  * SCPreferences status codes — likewise client-side, absent from
- * config_types.h. Guarded the same way.
+ * config_types.h. Guarded the same way. kSCStatusMaxLink is reported by
+ * the SCPreferencesPath* link walker when a __LINK__ chain loops.
  */
 #ifndef kSCStatusNoPrefsSession
+#define kSCStatusMaxLink	3006
 #define kSCStatusNoPrefsSession	5001
 #define kSCStatusPrefsBusy	5002
 #define kSCStatusNoConfigFile	5003
