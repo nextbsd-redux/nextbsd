@@ -669,4 +669,15 @@ if [ ! -x "$iokittest" ]; then
 fi
 "$iokittest" || true	# marker (IOKIT-WALK-OK/FAIL) gates in boot-test.sh
 
+# IOKIT-MATCH — libIOKit iter 2 properties + matching: pull a node's
+# property bag as a CFDictionary, fetch single CFString/CFNumber
+# properties, exercise IOServiceMatching + IOServiceGetMatching
+# Service(s) against PCIDevice (deterministic via PCI enrichment).
+iokitmatchtest=/usr/tests/freebsd-launchd-mach/iokitmatchtest
+if [ ! -x "$iokitmatchtest" ]; then
+    echo "IOKIT-MATCH-FAIL: $iokitmatchtest missing"
+    exit 1
+fi
+"$iokitmatchtest" || true	# marker (IOKIT-MATCH-OK/FAIL) gates in boot-test.sh
+
 exit 0

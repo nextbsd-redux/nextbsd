@@ -646,6 +646,18 @@ expect {
     "IOKIT-WALK-OK" { puts "\nOK: libIOKit registry walk works" }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: IOKIT-MATCH marker not seen"
+        exit 1
+    }
+    "IOKIT-MATCH-FAIL" {
+        puts "\nFAIL: libIOKit properties + matching failed"
+        exit 1
+    }
+    "IOKIT-MATCH-OK" { puts "\nOK: libIOKit properties + matching work" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"
