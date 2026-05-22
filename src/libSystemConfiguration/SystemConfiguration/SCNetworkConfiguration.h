@@ -345,6 +345,128 @@ Boolean
 SCNetworkServiceRemoveProtocolType	(SCNetworkServiceRef		service,
 					 CFStringRef			protocolType);
 
+/* --------------------------------------------------------------------
+ * SCNetworkSet
+ * ------------------------------------------------------------------ */
+
+/*!
+	@function SCNetworkSetGetTypeID
+	@discussion Returns the CoreFoundation type identifier of all
+		SCNetworkSet instances.
+ */
+CFTypeID
+SCNetworkSetGetTypeID			(void);
+
+/*!
+	@function SCNetworkSetCreate
+	@discussion Creates a new, empty network set in `prefs`. Release
+		the returned value.
+ */
+SCNetworkSetRef
+SCNetworkSetCreate			(SCPreferencesRef		prefs);
+
+/*!
+	@function SCNetworkSetCopy
+	@discussion Returns the existing network set `setID` in `prefs`,
+		or NULL. Release the returned value.
+ */
+SCNetworkSetRef
+SCNetworkSetCopy			(SCPreferencesRef		prefs,
+					 CFStringRef			setID);
+
+/*!
+	@function SCNetworkSetCopyAll
+	@discussion Returns every network set stored in `prefs`.
+	@result a CFArray of SCNetworkSetRef (caller releases).
+ */
+CFArrayRef
+SCNetworkSetCopyAll			(SCPreferencesRef		prefs);
+
+/*!
+	@function SCNetworkSetCopyCurrent
+	@discussion Returns the current (active) network set, or NULL.
+		Release the returned value.
+ */
+SCNetworkSetRef
+SCNetworkSetCopyCurrent			(SCPreferencesRef		prefs);
+
+/*!
+	@function SCNetworkSetSetCurrent
+	@discussion Makes `set` the current (active) network set.
+ */
+Boolean
+SCNetworkSetSetCurrent			(SCNetworkSetRef		set);
+
+/*!
+	@function SCNetworkSetGetSetID
+	@discussion Returns the set's identifier. Owned by the set.
+ */
+CFStringRef
+SCNetworkSetGetSetID			(SCNetworkSetRef		set);
+
+/*!
+	@function SCNetworkSetGetName
+	@discussion Returns the set's name, or NULL if it has none.
+ */
+CFStringRef
+SCNetworkSetGetName			(SCNetworkSetRef		set);
+
+/*!
+	@function SCNetworkSetSetName
+	@discussion Sets the set's name.
+ */
+Boolean
+SCNetworkSetSetName			(SCNetworkSetRef		set,
+					 CFStringRef			name);
+
+/*!
+	@function SCNetworkSetRemove
+	@discussion Removes the set from the preferences. The current
+		(active) set may not be removed.
+ */
+Boolean
+SCNetworkSetRemove			(SCNetworkSetRef		set);
+
+/*!
+	@function SCNetworkSetCopyServices
+	@discussion Returns the services that are members of the set.
+	@result a CFArray of SCNetworkServiceRef (caller releases).
+ */
+CFArrayRef
+SCNetworkSetCopyServices		(SCNetworkSetRef		set);
+
+/*!
+	@function SCNetworkSetAddService
+	@discussion Adds `service` to the set.
+ */
+Boolean
+SCNetworkSetAddService			(SCNetworkSetRef		set,
+					 SCNetworkServiceRef		service);
+
+/*!
+	@function SCNetworkSetRemoveService
+	@discussion Removes `service` from the set.
+ */
+Boolean
+SCNetworkSetRemoveService		(SCNetworkSetRef		set,
+					 SCNetworkServiceRef		service);
+
+/*!
+	@function SCNetworkSetGetServiceOrder
+	@discussion Returns the set's service order — a CFArray of
+		service identifiers — or NULL. Owned by the set.
+ */
+CFArrayRef
+SCNetworkSetGetServiceOrder		(SCNetworkSetRef		set);
+
+/*!
+	@function SCNetworkSetSetServiceOrder
+	@discussion Sets the set's service order.
+ */
+Boolean
+SCNetworkSetSetServiceOrder		(SCNetworkSetRef		set,
+					 CFArrayRef			newOrder);
+
 __END_DECLS
 
 #endif	/* _SCNETWORKCONFIGURATION_H */

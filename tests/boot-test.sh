@@ -586,6 +586,18 @@ expect {
     "SC-NETSVC-OK" { puts "\nOK: SCNetworkService + SCNetworkProtocol work" }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: SC-NETSET marker not seen"
+        exit 1
+    }
+    "SC-NETSET-FAIL" {
+        puts "\nFAIL: SCNetworkSet failed"
+        exit 1
+    }
+    "SC-NETSET-OK" { puts "\nOK: SCNetworkSet works" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"

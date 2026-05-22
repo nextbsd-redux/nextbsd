@@ -1278,6 +1278,23 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scnetsvctest" \
     || { echo "FAIL: scnetsvctest not built"; exit 1; }
 echo "==> scnetsvctest built"
 
+# scnetsettest — libSystemConfiguration SCNetworkConfiguration iter 4
+# test client. Creates an SCNetworkSet, names it, adds + removes a
+# service, sets a service order, makes the set current, commits,
+# reopens and confirms it persisted. run.sh runs it and checks for the
+# SC-NETSET-OK marker.
+echo "==> building scnetsettest"
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scnetsettest" \
+   "$ROOT/src/libSystemConfiguration/scnetsettest.c" \
+   -lSystemConfiguration -lCoreFoundation -lsystem_kernel -llaunch -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scnetsettest" \
+    || { echo "FAIL: scnetsettest not built"; exit 1; }
+echo "==> scnetsettest built"
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at
