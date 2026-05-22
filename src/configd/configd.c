@@ -22,10 +22,11 @@
  *     the port a request arrives on (the MIG `server` argument) names
  *     the session.
  *   - notifyadd / notifyviaport / notifychanges let a session watch
- *     explicit keys, register a notification port, and drain the keys
- *     that changed. configset / configremove / confignotify fan a
- *     change out to every watching session.
- * Regex/pattern watches and the multi-get/set variants remain stubs.
+ *     explicit keys or POSIX-regex patterns (iter 5), register a
+ *     notification port, and drain the keys that changed. configset /
+ *     configremove / confignotify fan a change out to every watching
+ *     session.
+ * configlist, the multi-get/set variants and snapshot remain stubs.
  *
  * config.defs carries the key/value payloads INLINE in bounded arrays
  * — out-of-line Mach data is broken cross-process in this port's
@@ -273,9 +274,8 @@ _configset_m(mach_port_t server, xmlData data, mach_msg_type_number_t dataCnt,
 }
 
 /*
- * notifyadd (SCDynamicStoreAddWatchedKey) — add an explicit key to the
- * session's watch list. Regex/pattern watches (isRegex != 0) are
- * deferred to a later iteration.
+ * notifyadd (SCDynamicStoreAddWatchedKey) — add a watch to the session.
+ * isRegex selects an explicit-key watch or a POSIX-regex pattern watch.
  */
 kern_return_t
 _notifyadd(mach_port_t server, xmlData key, mach_msg_type_number_t keyCnt,
@@ -284,15 +284,15 @@ _notifyadd(mach_port_t server, xmlData key, mach_msg_type_number_t keyCnt,
 	if (keyCnt == 0)
 		*status = kSCStatusInvalidArgument;
 	else if (isRegex != 0)
-		*status = kSCStatusFailed;	/* pattern watches: later iter */
+		*status = session_pattern_add(server, key, keyCnt);
 	else
 		*status = session_watch_add(server, key, keyCnt);
 	return KERN_SUCCESS;
 }
 
 /*
- * notifyremove (SCDynamicStoreRemoveWatchedKey) — drop an explicit key
- * from the session's watch list.
+ * notifyremove (SCDynamicStoreRemoveWatchedKey) — drop a watch from the
+ * session; isRegex picks the explicit-key or the pattern watch list.
  */
 kern_return_t
 _notifyremove(mach_port_t server, xmlData key, mach_msg_type_number_t keyCnt,
@@ -301,7 +301,7 @@ _notifyremove(mach_port_t server, xmlData key, mach_msg_type_number_t keyCnt,
 	if (keyCnt == 0)
 		*status = kSCStatusInvalidArgument;
 	else if (isRegex != 0)
-		*status = kSCStatusFailed;	/* pattern watches: later iter */
+		*status = session_pattern_remove(server, key, keyCnt);
 	else
 		*status = session_watch_remove(server, key, keyCnt);
 	return KERN_SUCCESS;
@@ -523,6 +523,8 @@ run_selftest(void)
 	uint8_t			name[] = "selftest";
 	uint8_t			empty[1] = { 0 };
 	uint8_t			key[] = "selftest:key";
+	uint8_t			pat[] = "selftest:pat[0-9]+";
+	uint8_t			patkey[] = "selftest:pat42";
 	uint8_t			val[] = "configd selftest value blob";
 	uint8_t			val2[] = "configd selftest changed value";
 	xmlDataOut		got;
@@ -679,8 +681,62 @@ run_selftest(void)
 		return 1;
 	}
 
+	/* Drain the change left pending by the notify-port step. */
+	gotCnt = 0;
+	kr = notifychanges(session, got, &gotCnt, &status);
+	if (kr != KERN_SUCCESS || status != kSCStatusOK) {
+		clog("selftest: notifychanges(drain) kr=0x%x status=%d",
+		    (unsigned)kr, status);
+		return 1;
+	}
+
+	/*
+	 * Pattern watch: register a POSIX regex, change a key that
+	 * matches it, and confirm notifychanges reports that key.
+	 */
+	kr = notifyadd(session, pat, (mach_msg_type_number_t)(sizeof(pat) - 1),
+	    1, &status);
+	if (kr != KERN_SUCCESS || status != kSCStatusOK) {
+		clog("selftest: notifyadd(regex) kr=0x%x status=%d",
+		    (unsigned)kr, status);
+		return 1;
+	}
+	kr = configset(session, patkey,
+	    (mach_msg_type_number_t)(sizeof(patkey) - 1), val,
+	    (mach_msg_type_number_t)(sizeof(val) - 1), 0, &newInstance,
+	    &status);
+	if (kr != KERN_SUCCESS || status != kSCStatusOK) {
+		clog("selftest: configset(regex) kr=0x%x status=%d",
+		    (unsigned)kr, status);
+		return 1;
+	}
+	gotCnt = 0;
+	kr = notifychanges(session, got, &gotCnt, &status);
+	if (kr != KERN_SUCCESS || status != kSCStatusOK) {
+		clog("selftest: notifychanges(regex) kr=0x%x status=%d",
+		    (unsigned)kr, status);
+		return 1;
+	}
+	{
+		/* One [uint32 len][key bytes] record — the matched key. */
+		uint32_t	klen2;
+		size_t		want2 = sizeof(patkey) - 1;
+
+		if (gotCnt != (mach_msg_type_number_t)(sizeof(klen2) + want2)) {
+			clog("selftest: regex change list size %u (want %zu)",
+			    (unsigned)gotCnt, sizeof(klen2) + want2);
+			return 1;
+		}
+		memcpy(&klen2, got, sizeof(klen2));
+		if (klen2 != want2 ||
+		    memcmp(got + sizeof(klen2), patkey, want2) != 0) {
+			clog("selftest: regex change key MISMATCH");
+			return 1;
+		}
+	}
+
 	clog("CONFIGD-SELFTEST-OK: in-process config.defs round-trip + "
-	    "change notification + notify port works");
+	    "change notification + notify port + regex watch works");
 	return 0;
 }
 

@@ -1012,6 +1012,22 @@ cc -I"$CONFIGD_MIG" -I"$ROOT/src/configd" \
 test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/notifytest" \
     || { echo "FAIL: notifytest not built"; exit 1; }
 
+# patterntest — configd iter 5 regex pattern-watch test client. Opens
+# two sessions, watches a POSIX regex, changes a matching and a
+# non-matching key from the other session and confirms configd
+# notifies only for the match. run.sh runs it and checks for the
+# CONFIGD-PATTERN-OK marker.
+echo "==> building patterntest"
+cc -I"$CONFIGD_MIG" -I"$ROOT/src/configd" \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/patterntest" \
+   "$ROOT/src/configd/patterntest.c" "$CONFIGD_MIG/configUser.c" \
+   -llaunch -lsystem_kernel
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/patterntest" \
+    || { echo "FAIL: patterntest not built"; exit 1; }
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at

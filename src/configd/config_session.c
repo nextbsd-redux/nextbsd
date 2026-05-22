@@ -14,6 +14,7 @@
 
 #include <mach/notify.h>		/* MACH_NOTIFY_NO_SENDERS */
 
+#include <regex.h>			/* regcomp / regexec — pattern watches */
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,6 +25,18 @@ struct keyref {
 	size_t	 klen;
 };
 
+/*
+ * One regex watch. `src` keeps the client's original (un-anchored)
+ * pattern bytes so session_pattern_remove can match by value; `preg`
+ * is the compiled, anchored expression. preg is heap-allocated so the
+ * pattern array can be realloc'd without relocating compiled state.
+ */
+struct pattern {
+	void	*src;
+	size_t	 slen;
+	regex_t	*preg;
+};
+
 struct session {
 	int		in_use;
 	mach_port_t	port;		/* per-session receive right */
@@ -31,6 +44,9 @@ struct session {
 	struct keyref	*watch;		/* explicit watched keys */
 	size_t		n_watch;
 	size_t		watch_cap;
+	struct pattern	*patterns;	/* regex watches */
+	size_t		n_patterns;
+	size_t		patterns_cap;
 	struct keyref	*changed;	/* keys changed since the last drain */
 	size_t		n_changed;
 	size_t		changed_cap;
@@ -113,6 +129,20 @@ keylist_free(struct keyref *list, size_t n)
 
 	for (i = 0; i < n; i++)
 		free(list[i].key);
+	free(list);
+}
+
+/* patternlist_free — free every regex watch and the backing array. */
+static void
+patternlist_free(struct pattern *list, size_t n)
+{
+	size_t i;
+
+	for (i = 0; i < n; i++) {
+		regfree(list[i].preg);
+		free(list[i].preg);
+		free(list[i].src);
+	}
 	free(list);
 }
 
@@ -248,6 +278,7 @@ session_close(mach_port_t port)
 
 	keylist_free(s->watch, s->n_watch);
 	keylist_free(s->changed, s->n_changed);
+	patternlist_free(s->patterns, s->n_patterns);
 	if (s->notify_port != MACH_PORT_NULL)
 		(void)mach_port_deallocate(mach_task_self(), s->notify_port);
 	/*
@@ -325,6 +356,100 @@ session_watch_remove(mach_port_t port, const void *key, size_t klen)
 	return kSCStatusOK;
 }
 
+int
+session_pattern_add(mach_port_t port, const void *pat, size_t plen)
+{
+	struct session	*s = session_find(port);
+	const char	*p = pat;
+	struct pattern	*entry;
+	regex_t		*preg;
+	void		*scopy;
+	char		buf[CONFIG_DATA_MAX + 3];	/* ^ + pattern + $ + NUL */
+	size_t		off = 0;
+	size_t		i;
+
+	if (s == NULL)
+		return kSCStatusNoStoreSession;
+	if (plen > CONFIG_DATA_MAX)
+		return kSCStatusInvalidArgument;
+
+	/* Already watching this exact pattern — idempotent success. */
+	for (i = 0; i < s->n_patterns; i++) {
+		if (s->patterns[i].slen == plen &&
+		    memcmp(s->patterns[i].src, pat, plen) == 0)
+			return kSCStatusOK;
+	}
+
+	/*
+	 * Anchor the expression to a full-key match: prepend '^' unless
+	 * it is already there, append '$' unless the pattern already
+	 * ends in an unescaped '$' (mirrors Apple's pattern.c).
+	 */
+	if (plen == 0 || p[0] != '^')
+		buf[off++] = '^';
+	memcpy(buf + off, p, plen);
+	off += plen;
+	if (plen == 0 || p[plen - 1] != '$' ||
+	    (plen >= 2 && p[plen - 2] == '\\'))
+		buf[off++] = '$';
+	buf[off] = '\0';
+
+	if (s->n_patterns == s->patterns_cap) {
+		size_t		ncap = (s->patterns_cap != 0)
+		    ? s->patterns_cap * 2 : 4;
+		struct pattern	*np = realloc(s->patterns,
+		    ncap * sizeof(*np));
+
+		if (np == NULL)
+			return kSCStatusFailed;
+		s->patterns = np;
+		s->patterns_cap = ncap;
+	}
+
+	preg = malloc(sizeof(*preg));
+	if (preg == NULL)
+		return kSCStatusFailed;
+	if (regcomp(preg, buf, REG_EXTENDED) != 0) {
+		free(preg);
+		return kSCStatusInvalidArgument;	/* uncompilable regex */
+	}
+	scopy = malloc(plen != 0 ? plen : 1);
+	if (scopy == NULL) {
+		regfree(preg);
+		free(preg);
+		return kSCStatusFailed;
+	}
+	if (plen != 0)
+		memcpy(scopy, pat, plen);
+
+	entry = &s->patterns[s->n_patterns++];
+	entry->src = scopy;
+	entry->slen = plen;
+	entry->preg = preg;
+	return kSCStatusOK;
+}
+
+int
+session_pattern_remove(mach_port_t port, const void *pat, size_t plen)
+{
+	struct session	*s = session_find(port);
+	size_t		i;
+
+	if (s == NULL)
+		return kSCStatusNoStoreSession;
+	for (i = 0; i < s->n_patterns; i++) {
+		if (s->patterns[i].slen == plen &&
+		    memcmp(s->patterns[i].src, pat, plen) == 0) {
+			regfree(s->patterns[i].preg);
+			free(s->patterns[i].preg);
+			free(s->patterns[i].src);
+			s->patterns[i] = s->patterns[--s->n_patterns];
+			return kSCStatusOK;
+		}
+	}
+	return kSCStatusNoKey;
+}
+
 ssize_t
 session_drain_changes(mach_port_t port, void *buf, size_t cap)
 {
@@ -359,23 +484,47 @@ session_drain_changes(mach_port_t port, void *buf, size_t cap)
 void
 session_key_changed(const void *key, size_t klen)
 {
-	size_t i, w;
+	char	keystr[CONFIG_DATA_MAX + 1];	/* NUL-terminated for regexec */
+	int	have_keystr = 0;
+	size_t	i, w;
 
 	for (i = 0; i < n_sessions; i++) {
 		struct session	*s = &sessions[i];
-		int		watched = 0;
+		int		interested = 0;
 		int		was_empty;
 
 		if (!s->in_use)
 			continue;
 
+		/* explicit-key watch? */
 		for (w = 0; w < s->n_watch; w++) {
 			if (keyref_eq(&s->watch[w], key, klen)) {
-				watched = 1;
+				interested = 1;
 				break;
 			}
 		}
-		if (!watched)
+
+		/*
+		 * regex watch? Build the NUL-terminated key string once,
+		 * lazily — only if some session has a pattern to test.
+		 */
+		if (!interested && s->n_patterns != 0 &&
+		    klen < sizeof(keystr)) {
+			if (!have_keystr) {
+				memcpy(keystr, key, klen);
+				keystr[klen] = '\0';
+				have_keystr = 1;
+			}
+			for (w = 0; w < s->n_patterns; w++) {
+				if (regexec(s->patterns[w].preg, keystr,
+				    0, NULL, 0) == 0) {
+					interested = 1;
+					break;
+				}
+			}
+		}
+
+		if (!interested)
 			continue;
 
 		/*
