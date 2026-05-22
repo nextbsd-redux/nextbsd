@@ -113,6 +113,34 @@ SCPreferencesCopyKeyList	(SCPreferencesRef		prefs);
 Boolean
 SCPreferencesCommitChanges	(SCPreferencesRef		prefs);
 
+/*!
+	@function SCPreferencesPathGetValue
+	@discussion Returns the dictionary at a '/'-separated path within
+		the preferences. The dictionary is owned by the session.
+ */
+CFDictionaryRef
+SCPreferencesPathGetValue	(SCPreferencesRef		prefs,
+				 CFStringRef			path);
+
+/*!
+	@function SCPreferencesPathSetValue
+	@discussion Stores a dictionary at a '/'-separated path, creating
+		any intermediate dictionaries.
+ */
+Boolean
+SCPreferencesPathSetValue	(SCPreferencesRef		prefs,
+				 CFStringRef			path,
+				 CFDictionaryRef		value);
+
+/*!
+	@function SCPreferencesPathRemoveValue
+	@discussion Removes the dictionary at a '/'-separated path; any
+		intermediate dictionaries left empty are pruned.
+ */
+Boolean
+SCPreferencesPathRemoveValue	(SCPreferencesRef		prefs,
+				 CFStringRef			path);
+
 __END_DECLS
 
 #endif	/* _SCPREFERENCES_H */
