@@ -497,4 +497,14 @@ if [ ! -x "$listtest" ]; then
 fi
 "$listtest" || true	# marker (CONFIGD-LIST-OK/FAIL) gates in boot-test.sh
 
+# CONFIGD-MULTI — configd batch routines: set/remove several keys with
+# configset_m, fetch several with configget_m (by key and by regex),
+# and replace a session's whole watch set with notifyset.
+multitest=/usr/tests/freebsd-launchd-mach/multitest
+if [ ! -x "$multitest" ]; then
+    echo "CONFIGD-MULTI-FAIL: $multitest missing"
+    exit 1
+fi
+"$multitest" || true	# marker (CONFIGD-MULTI-OK/FAIL) gates in boot-test.sh
+
 exit 0

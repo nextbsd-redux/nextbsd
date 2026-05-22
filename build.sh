@@ -1042,6 +1042,22 @@ cc -I"$CONFIGD_MIG" -I"$ROOT/src/configd" \
 test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/listtest" \
     || { echo "FAIL: listtest not built"; exit 1; }
 
+# multitest — configd iter 7 batch-routine test client. Exercises
+# configset_m / configget_m / notifyset; links config_wire.c for the
+# key-list / key-value payload encodings. run.sh runs it and checks
+# for the CONFIGD-MULTI-OK marker.
+echo "==> building multitest"
+cc -I"$CONFIGD_MIG" -I"$ROOT/src/configd" \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/multitest" \
+   "$ROOT/src/configd/multitest.c" "$ROOT/src/configd/config_wire.c" \
+   "$CONFIGD_MIG/configUser.c" \
+   -llaunch -lsystem_kernel
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/multitest" \
+    || { echo "FAIL: multitest not built"; exit 1; }
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at

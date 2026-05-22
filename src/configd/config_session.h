@@ -95,6 +95,14 @@ int session_watch_add(mach_port_t port, const void *key, size_t klen);
 int session_watch_remove(mach_port_t port, const void *key, size_t klen);
 
 /*
+ * session_watch_clear — drop every watch the session holds, both
+ * explicit keys and regex patterns. notifyset uses this to replace a
+ * session's whole notification key set in one call. Returns a
+ * kSCStatus code.
+ */
+int session_watch_clear(mach_port_t port);
+
+/*
  * session_pattern_add / session_pattern_remove — add or drop a regex
  * watch for the session. The pattern bytes are a POSIX extended regular
  * expression; configd anchors it (^...$) and compiles it. Any store key

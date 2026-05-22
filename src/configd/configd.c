@@ -27,7 +27,9 @@
  *     configremove / confignotify fan a change out to every watching
  *     session.
  *   - configlist (iter 6) lists store keys by prefix or POSIX regex.
- * notifyset, the multi-get/set variants and snapshot remain stubs.
+ *   - notifyset / configget_m / configset_m (iter 7) do batch watch
+ *     registration, multi-key fetch and multi-key update.
+ * notifyviafd and snapshot remain stubs (see their handlers).
  *
  * config.defs carries the key/value payloads INLINE in bounded arrays
  * — out-of-line Mach data is broken cross-process in this port's
@@ -59,6 +61,7 @@
 #include "config_types.h"		/* SCD_SERVER, kSCStatus*, CONFIG_DATA_MAX */
 #include "config_store.h"
 #include "config_session.h"
+#include "config_wire.h"	/* keylist / kvmap batch encodings */
 #include "configServer.h"	/* MIG: config_server() demux + _config* protos */
 
 /*
@@ -98,24 +101,25 @@ clog(const char *fmt, ...)
 }
 
 /*
- * keylist_append — append one [uint32 little-endian length][bytes]
- * record to `buf` at offset *off (capacity cap), advancing *off.
- * Returns 0, or -1 if the record would not fit. configlist emits its
- * key list in this encoding — the same one session_drain_changes uses
- * for notifychanges.
+ * kvmap_has — 1 if the wire_kvmap-encoded buffer `buf` (of `len`
+ * bytes) already holds a record for key/klen. configget_m uses it to
+ * keep its reply a set: a key matched by several patterns, or both
+ * requested and matched, is emitted once.
  */
 static int
-keylist_append(uint8_t *buf, size_t cap, size_t *off,
-    const void *rec, size_t rlen)
+kvmap_has(const uint8_t *buf, size_t len, const void *key, size_t klen)
 {
-	uint32_t l32 = (uint32_t)rlen;
+	const uint8_t	*cur = buf;
+	const uint8_t	*end = buf + len;
+	const void	*k;
+	const void	*v;
+	size_t		kl;
+	size_t		vl;
 
-	if (*off + sizeof(l32) + rlen > cap)
-		return -1;
-	memcpy(buf + *off, &l32, sizeof(l32));
-	*off += sizeof(l32);
-	memcpy(buf + *off, rec, rlen);
-	*off += rlen;
+	while (wire_kvmap_next(&cur, end, &k, &kl, &v, &vl)) {
+		if (kl == klen && memcmp(k, key, klen) == 0)
+			return 1;
+	}
 	return 0;
 }
 
@@ -208,7 +212,7 @@ _configlist(mach_port_t server, xmlData key, mach_msg_type_number_t keyCnt,
 			     memcmp(skey, key, keyCnt) == 0);
 		}
 
-		if (match && keylist_append(list, CONFIG_DATA_MAX, &off,
+		if (match && wire_keylist_put(list, CONFIG_DATA_MAX, &off,
 		    skey, sklen) != 0) {
 			/* the packed list overflowed the inline reply */
 			if (have_re)
@@ -334,26 +338,141 @@ _confignotify(mach_port_t server, xmlData key, mach_msg_type_number_t keyCnt,
 	return KERN_SUCCESS;
 }
 
+/*
+ * configget_m (SCDynamicStoreCopyMultiple) — fetch several store
+ * values at once: the values for the requested `keys` that exist,
+ * plus the value of every store key matching one of the `patterns`.
+ * keys and patterns are wire_keylist payloads; the reply `data` is a
+ * wire_kvmap payload. Each key is emitted at most once.
+ */
 kern_return_t
 _configget_m(mach_port_t server, xmlData keys, mach_msg_type_number_t keysCnt,
     xmlData patterns, mach_msg_type_number_t patternsCnt, xmlDataOut data,
     mach_msg_type_number_t *dataCnt, int *status)
 {
-	(void)server; (void)keys; (void)keysCnt;
-	(void)patterns; (void)patternsCnt; (void)data;
+	const uint8_t	*cur, *end;
+	const void	*item;
+	size_t		ilen, off = 0;
+
+	(void)server;
 	*dataCnt = 0;
-	*status = kSCStatusFailed;
+
+	/* Requested explicit keys: emit the value of each that exists. */
+	cur = keys;
+	end = keys + keysCnt;
+	while (wire_keylist_next(&cur, end, &item, &ilen)) {
+		const void	*val;
+		size_t		vlen;
+
+		if (store_get(item, ilen, &val, &vlen) != 0)
+			continue;	/* no such key — skip it */
+		if (kvmap_has(data, off, item, ilen))
+			continue;	/* already emitted */
+		if (wire_kvmap_put(data, CONFIG_DATA_MAX, &off, item, ilen,
+		    val, vlen) != 0) {
+			*dataCnt = 0;
+			*status = kSCStatusFailed;	/* reply overflowed */
+			return KERN_SUCCESS;
+		}
+	}
+
+	/* Pattern keys: emit the value of every store key that matches. */
+	cur = patterns;
+	end = patterns + patternsCnt;
+	while (wire_keylist_next(&cur, end, &item, &ilen)) {
+		char	abuf[CONFIG_DATA_MAX + 3];	/* ^ + pattern + $ + NUL */
+		regex_t	re;
+		size_t	i, count;
+
+		if (config_pattern_anchor(item, ilen, abuf, sizeof(abuf)) != 0 ||
+		    regcomp(&re, abuf, REG_EXTENDED) != 0) {
+			*dataCnt = 0;
+			*status = kSCStatusInvalidArgument;
+			return KERN_SUCCESS;
+		}
+
+		count = store_count();
+		for (i = 0; i < count; i++) {
+			const void	*skey, *val;
+			size_t		sklen, vlen;
+			char		keystr[CONFIG_DATA_MAX + 1];
+
+			if (store_key_at(i, &skey, &sklen) != 0)
+				continue;
+			if (sklen >= sizeof(keystr))
+				continue;	/* too long to match */
+			memcpy(keystr, skey, sklen);
+			keystr[sklen] = '\0';
+			if (regexec(&re, keystr, 0, NULL, 0) != 0)
+				continue;	/* no match */
+			if (kvmap_has(data, off, skey, sklen))
+				continue;	/* already emitted */
+			if (store_get(skey, sklen, &val, &vlen) != 0)
+				continue;
+			if (wire_kvmap_put(data, CONFIG_DATA_MAX, &off, skey,
+			    sklen, val, vlen) != 0) {
+				regfree(&re);
+				*dataCnt = 0;
+				*status = kSCStatusFailed;
+				return KERN_SUCCESS;
+			}
+		}
+		regfree(&re);
+	}
+
+	*dataCnt = (mach_msg_type_number_t)off;
+	*status = kSCStatusOK;
 	return KERN_SUCCESS;
 }
 
+/*
+ * configset_m (SCDynamicStoreSetMultiple) — apply a batch of store
+ * changes in one call: set every key/value pair in `data` (a
+ * wire_kvmap payload), remove every key in `removeData`, and force a
+ * change notification for every key in `notify` (both wire_keylist
+ * payloads). Each set / remove / notify fans out to watching sessions.
+ */
 kern_return_t
 _configset_m(mach_port_t server, xmlData data, mach_msg_type_number_t dataCnt,
     xmlData removeData, mach_msg_type_number_t removeCnt,
     xmlData notify, mach_msg_type_number_t notifyCnt, int *status)
 {
-	(void)server; (void)data; (void)dataCnt;
-	(void)removeData; (void)removeCnt; (void)notify; (void)notifyCnt;
-	*status = kSCStatusFailed;
+	const uint8_t	*cur, *end;
+	const void	*k, *v;
+	size_t		kl, vl;
+
+	(void)server;
+
+	/* Set each key/value pair. */
+	cur = data;
+	end = data + dataCnt;
+	while (wire_kvmap_next(&cur, end, &k, &kl, &v, &vl)) {
+		if (kl == 0)
+			continue;	/* skip an empty key */
+		if (store_set(k, kl, v, vl) != 0) {
+			*status = kSCStatusFailed;
+			return KERN_SUCCESS;
+		}
+		session_key_changed(k, kl);
+	}
+
+	/* Remove each key, notifying watchers of the ones that existed. */
+	cur = removeData;
+	end = removeData + removeCnt;
+	while (wire_keylist_next(&cur, end, &k, &kl)) {
+		if (kl != 0 && store_remove(k, kl) == 0)
+			session_key_changed(k, kl);
+	}
+
+	/* Force a change notification for each notify key. */
+	cur = notify;
+	end = notify + notifyCnt;
+	while (wire_keylist_next(&cur, end, &k, &kl)) {
+		if (kl != 0)
+			session_key_changed(k, kl);
+	}
+
+	*status = kSCStatusOK;
 	return KERN_SUCCESS;
 }
 
@@ -451,25 +570,75 @@ _notifycancel(mach_port_t server, int *status)
 	return KERN_SUCCESS;
 }
 
+/*
+ * notifyset (SCDynamicStoreSetNotificationKeys) — replace the
+ * session's entire notification key set: after this call it watches
+ * exactly the explicit `keys` and the regex `patterns` given (both
+ * wire_keylist payloads).
+ */
 kern_return_t
 _notifyset(mach_port_t server, xmlData keys, mach_msg_type_number_t keysCnt,
     xmlData patterns, mach_msg_type_number_t patternsCnt, int *status)
 {
-	(void)server; (void)keys; (void)keysCnt;
-	(void)patterns; (void)patternsCnt;
-	*status = kSCStatusFailed;
+	const uint8_t	*cur, *end;
+	const void	*item;
+	size_t		ilen;
+	int		rc;
+
+	if (!session_valid(server)) {
+		*status = kSCStatusNoStoreSession;
+		return KERN_SUCCESS;
+	}
+
+	/* Drop the old watch set, then install the new one. */
+	(void)session_watch_clear(server);
+
+	cur = keys;
+	end = keys + keysCnt;
+	while (wire_keylist_next(&cur, end, &item, &ilen)) {
+		rc = session_watch_add(server, item, ilen);
+		if (rc != kSCStatusOK) {
+			*status = rc;
+			return KERN_SUCCESS;
+		}
+	}
+
+	cur = patterns;
+	end = patterns + patternsCnt;
+	while (wire_keylist_next(&cur, end, &item, &ilen)) {
+		rc = session_pattern_add(server, item, ilen);
+		if (rc != kSCStatusOK) {
+			*status = rc;
+			return KERN_SUCCESS;
+		}
+	}
+
+	*status = kSCStatusOK;
 	return KERN_SUCCESS;
 }
 
+/*
+ * notifyviafd (SCDynamicStoreNotifyFileDescriptor) — stubbed. It would
+ * deliver notifications by writing to a client file descriptor passed
+ * as a Mach fileport, but this port has no fileport->fd support; the
+ * Mach-port path (notifyviaport) is the supported notification route.
+ */
 kern_return_t
 _notifyviafd(mach_port_t server, mach_port_t fileport, int identifier,
     int *status)
 {
-	(void)server; (void)fileport; (void)identifier;
+	(void)server; (void)identifier;
+	if (fileport != MACH_PORT_NULL)
+		(void)mach_port_deallocate(mach_task_self(), fileport);
 	*status = kSCStatusFailed;
 	return KERN_SUCCESS;
 }
 
+/*
+ * snapshot — stubbed. Apple's configd writes a debug dump of the whole
+ * store and session table to a file; it is a root-gated diagnostic
+ * with no consumer in this port.
+ */
 kern_return_t
 _snapshot(mach_port_t server, int *status)
 {
@@ -578,6 +747,12 @@ extern kern_return_t configget(mach_port_t, xmlData,
 extern kern_return_t configlist(mach_port_t, xmlData,
     mach_msg_type_number_t, int, xmlDataOut, mach_msg_type_number_t *,
     int *);
+extern kern_return_t configget_m(mach_port_t, xmlData,
+    mach_msg_type_number_t, xmlData, mach_msg_type_number_t, xmlDataOut,
+    mach_msg_type_number_t *, int *);
+extern kern_return_t configset_m(mach_port_t, xmlData,
+    mach_msg_type_number_t, xmlData, mach_msg_type_number_t, xmlData,
+    mach_msg_type_number_t, int *);
 extern kern_return_t notifyadd(mach_port_t, xmlData,
     mach_msg_type_number_t, int, int *);
 extern kern_return_t notifyviaport(mach_port_t, mach_port_t,
@@ -864,8 +1039,73 @@ run_selftest(void)
 		return 1;
 	}
 
+	/*
+	 * configset_m / configget_m: set a key through a batch update,
+	 * fetch it back through a batch query, and confirm the value
+	 * round-trips through the wire_kvmap encoding.
+	 */
+	{
+		uint8_t		mkey[] = "selftest:multi";
+		uint8_t		mval[] = "configd selftest multi value";
+		uint8_t		reqbuf[256];
+		size_t		reqoff;
+		const uint8_t	*cur, *end;
+		const void	*gk, *gv;
+		size_t		gkl, gvl;
+		int		found = 0;
+
+		reqoff = 0;
+		if (wire_kvmap_put(reqbuf, sizeof(reqbuf), &reqoff, mkey,
+		    sizeof(mkey) - 1, mval, sizeof(mval) - 1) != 0) {
+			clog("selftest: configset_m payload build failed");
+			return 1;
+		}
+		kr = configset_m(session, reqbuf, (mach_msg_type_number_t)reqoff,
+		    empty, 0, empty, 0, &status);
+		if (kr != KERN_SUCCESS || status != kSCStatusOK) {
+			clog("selftest: configset_m kr=0x%x status=%d",
+			    (unsigned)kr, status);
+			return 1;
+		}
+
+		reqoff = 0;
+		if (wire_keylist_put(reqbuf, sizeof(reqbuf), &reqoff, mkey,
+		    sizeof(mkey) - 1) != 0) {
+			clog("selftest: configget_m payload build failed");
+			return 1;
+		}
+		gotCnt = 0;
+		kr = configget_m(session, reqbuf,
+		    (mach_msg_type_number_t)reqoff, empty, 0, got, &gotCnt,
+		    &status);
+		if (kr != KERN_SUCCESS || status != kSCStatusOK) {
+			clog("selftest: configget_m kr=0x%x status=%d",
+			    (unsigned)kr, status);
+			return 1;
+		}
+
+		cur = got;
+		end = got + gotCnt;
+		while (wire_kvmap_next(&cur, end, &gk, &gkl, &gv, &gvl)) {
+			if (gkl != sizeof(mkey) - 1 ||
+			    memcmp(gk, mkey, gkl) != 0)
+				continue;
+			found = 1;
+			if (gvl != sizeof(mval) - 1 ||
+			    memcmp(gv, mval, gvl) != 0) {
+				clog("selftest: configget_m value MISMATCH");
+				return 1;
+			}
+		}
+		if (!found) {
+			clog("selftest: configget_m did not return the key");
+			return 1;
+		}
+	}
+
 	clog("CONFIGD-SELFTEST-OK: in-process config.defs round-trip + "
-	    "change notification + notify port + regex watch + list works");
+	    "change notification + notify port + regex watch + list + "
+	    "multi works");
 	return 0;
 }
 
