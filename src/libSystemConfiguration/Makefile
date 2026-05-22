@@ -20,7 +20,7 @@
 LIB=		SystemConfiguration
 SHLIB_MAJOR=	1
 
-SRCS=		SCD.c SCDynamicStore.c SCNotify.c
+SRCS=		SCD.c SCDynamicStore.c SCNotify.c SCDMultiple.c
 
 # configUser.c — MIG-generated config.defs client stubs (same file
 # configd's test clients link). config_wire.c — configd's shared

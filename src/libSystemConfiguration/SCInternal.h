@@ -123,6 +123,15 @@ CFDataRef		_SCSerialize(CFPropertyListRef obj);
 CFDataRef		_SCSerializeString(CFStringRef str);
 CFPropertyListRef	_SCUnserialize(const void *bytes, CFIndex len);
 
+/*
+ * SCD.c — encode a CFArray of CFString keys into configd's wire
+ * key-list form ([uint32 LE len][bytes] records). Returns 0 with the
+ * byte count in *outLen, or -1 on a bad element / buffer overflow.
+ * Shared by the notification watch-set and the multi-get key list.
+ */
+int	_SCEncodeKeyList(CFArrayRef array, uint8_t *buf, size_t cap,
+			 size_t *outLen);
+
 /* configd's inline config.defs payload bound (config_types.h). */
 #ifndef CONFIG_DATA_MAX
 #define CONFIG_DATA_MAX		8192

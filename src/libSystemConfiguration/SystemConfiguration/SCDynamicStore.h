@@ -135,6 +135,34 @@ SCDynamicStoreCopyKeyList	(SCDynamicStoreRef		store,
 				 CFStringRef			pattern);
 
 /*!
+	@function SCDynamicStoreCopyMultiple
+	@discussion Fetches the values for several keys in one call.
+	@param keys     a CFArray of CFString keys to fetch, or NULL.
+	@param patterns a CFArray of CFString POSIX-regex patterns whose
+		matching keys are also fetched, or NULL.
+	@result a CFDictionary of key -> value (caller releases), or NULL.
+ */
+CFDictionaryRef
+SCDynamicStoreCopyMultiple	(SCDynamicStoreRef		store,
+				 CFArrayRef			keys,
+				 CFArrayRef			patterns);
+
+/*!
+	@function SCDynamicStoreSetMultiple
+	@discussion Sets, removes and posts notifications for several keys
+		in one call.
+	@param keysToSet     a CFDictionary of key -> value to set, or NULL.
+	@param keysToRemove  a CFArray of CFString keys to remove, or NULL.
+	@param keysToNotify  a CFArray of CFString keys to flag changed
+		without altering their value, or NULL.
+ */
+Boolean
+SCDynamicStoreSetMultiple	(SCDynamicStoreRef		store,
+				 CFDictionaryRef		keysToSet,
+				 CFArrayRef			keysToRemove,
+				 CFArrayRef			keysToNotify);
+
+/*!
 	@function SCDynamicStoreCopyValue
 	@discussion Fetches the value associated with a key.
 	@result the value (caller releases), or NULL if no such key.

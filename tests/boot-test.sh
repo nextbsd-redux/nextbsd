@@ -489,6 +489,18 @@ expect {
     "SC-RUNLOOP-OK" { puts "\nOK: SCDynamicStore run-loop notifications work" }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: SC-MULTI marker not seen"
+        exit 1
+    }
+    "SC-MULTI-FAIL" {
+        puts "\nFAIL: SCDynamicStore batch get/set failed"
+        exit 1
+    }
+    "SC-MULTI-OK" { puts "\nOK: SCDynamicStore batch get/set works" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"

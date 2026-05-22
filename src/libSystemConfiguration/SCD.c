@@ -20,6 +20,7 @@
  */
 
 #include "SCInternal.h"
+#include "config_wire.h"		/* wire_keylist_put — _SCEncodeKeyList */
 
 #include <pthread.h>
 #include <stdlib.h>
@@ -176,4 +177,47 @@ _SCUnserialize(const void *bytes, CFIndex len)
 	}
 
 	return obj;
+}
+
+int
+_SCEncodeKeyList(CFArrayRef array, uint8_t *buf, size_t cap, size_t *outLen)
+{
+	CFIndex	i;
+	CFIndex	n;
+	size_t	off	= 0;
+
+	*outLen = 0;
+	if (array == NULL) {
+		return 0;
+	}
+	if (CFGetTypeID(array) != CFArrayGetTypeID()) {
+		return -1;
+	}
+
+	n = CFArrayGetCount(array);
+	for (i = 0; i < n; i++) {
+		CFStringRef	key	= CFArrayGetValueAtIndex(array, i);
+		CFDataRef	keyData;
+		int		rc;
+
+		if ((key == NULL) || (CFGetTypeID(key) != CFStringGetTypeID())) {
+			return -1;
+		}
+		keyData = CFStringCreateExternalRepresentation(NULL, key,
+							       kCFStringEncodingUTF8,
+							       0);
+		if (keyData == NULL) {
+			return -1;
+		}
+		rc = wire_keylist_put(buf, cap, &off,
+				      CFDataGetBytePtr(keyData),
+				      (size_t)CFDataGetLength(keyData));
+		CFRelease(keyData);
+		if (rc != 0) {
+			return -1;
+		}
+	}
+
+	*outLen = off;
+	return 0;
 }

@@ -539,4 +539,14 @@ if [ ! -x "$scrltest" ]; then
 fi
 "$scrltest" || true	# marker (SC-RUNLOOP-OK/FAIL) gates in boot-test.sh
 
+# SC-MULTI — SCDynamicStore batch get/set: SCDynamicStoreSetMultiple
+# sets several keys in one call, SCDynamicStoreCopyMultiple fetches
+# them back by key and by pattern, then one is removed.
+scmultitest=/usr/tests/freebsd-launchd-mach/scmultitest
+if [ ! -x "$scmultitest" ]; then
+    echo "SC-MULTI-FAIL: $scmultitest missing"
+    exit 1
+fi
+"$scmultitest" || true	# marker (SC-MULTI-OK/FAIL) gates in boot-test.sh
+
 exit 0
