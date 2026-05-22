@@ -617,4 +617,14 @@ if [ ! -x "$scnetsvctest" ]; then
 fi
 "$scnetsvctest" || true	# marker (SC-NETSVC-OK/FAIL) gates in boot-test.sh
 
+# SC-NETSET — SCNetworkConfiguration set ("location"): create a network
+# set, name it, add/remove a service, set a service order, make it
+# current, commit, reopen and confirm it all persisted.
+scnetsettest=/usr/tests/freebsd-launchd-mach/scnetsettest
+if [ ! -x "$scnetsettest" ]; then
+    echo "SC-NETSET-FAIL: $scnetsettest missing"
+    exit 1
+fi
+"$scnetsettest" || true	# marker (SC-NETSET-OK/FAIL) gates in boot-test.sh
+
 exit 0

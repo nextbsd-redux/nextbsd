@@ -24,8 +24,15 @@
  */
 #define kSCResvInactive			CFSTR("__INACTIVE__")
 #define kSCPrefNetworkServices		CFSTR("NetworkServices")
+#define kSCPrefSets			CFSTR("Sets")
+#define kSCPrefCurrentSet		CFSTR("CurrentSet")
+#define kSCCompNetwork			CFSTR("Network")
+#define kSCCompService			CFSTR("Service")
+#define kSCCompGlobal			CFSTR("Global")
 #define kSCEntNetInterface		CFSTR("Interface")
+#define kSCEntNetIPv4			CFSTR("IPv4")
 #define kSCPropUserDefinedName		CFSTR("UserDefinedName")
+#define kSCPropNetServiceOrder		CFSTR("ServiceOrder")
 #define kSCPropNetInterfaceType		CFSTR("Type")
 #define kSCPropNetInterfaceDeviceName	CFSTR("DeviceName")
 #define kSCPropNetInterfaceHardware	CFSTR("Hardware")
@@ -100,6 +107,24 @@ typedef struct __SCNetworkProtocol {
 
 
 #pragma mark -
+#pragma mark SCNetworkSet
+
+/*
+ * The SCNetworkSet object — see SCNetworkSet.c. A set ("location") is an
+ * ordered collection of network services; persisted at /Sets/<setID> in
+ * the preferences plist, with the active set named by the top-level
+ * "CurrentSet" key.
+ */
+typedef struct __SCNetworkSet {
+	CFRuntimeBase		cfBase;
+
+	CFStringRef		setID;
+	SCPreferencesRef	prefs;
+	CFStringRef		name;		/* cached UserDefinedName */
+} SCNetworkSetPrivate, *SCNetworkSetPrivateRef;
+
+
+#pragma mark -
 #pragma mark Type checks
 
 static inline Boolean
@@ -121,6 +146,13 @@ isA_SCNetworkProtocol(SCNetworkProtocolRef protocol)
 {
 	return ((protocol != NULL) &&
 		(CFGetTypeID(protocol) == SCNetworkProtocolGetTypeID()));
+}
+
+static inline Boolean
+isA_SCNetworkSet(SCNetworkSetRef set)
+{
+	return ((set != NULL) &&
+		(CFGetTypeID(set) == SCNetworkSetGetTypeID()));
 }
 
 
@@ -157,6 +189,12 @@ SCNetworkProtocolPrivateRef
 __SCNetworkProtocolCreatePrivate	(CFAllocatorRef		allocator,
 					 CFStringRef		entityID,
 					 SCNetworkServiceRef	service);
+
+/* SCNetworkSet.c — allocate a set object. */
+SCNetworkSetPrivateRef
+__SCNetworkSetCreatePrivate		(CFAllocatorRef		allocator,
+					 SCPreferencesRef	prefs,
+					 CFStringRef		setID);
 
 /* SCNetworkProtocol.c — TRUE iff `protocolType` is a known protocol. */
 Boolean
