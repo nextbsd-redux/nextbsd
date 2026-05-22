@@ -480,15 +480,17 @@ and Phase 1 (the structured registry + a 10-routine Mach-RPC
 query/watch/load API + PCI enrichment) have landed; the launchd
 `HardwareMatch` key has begun. `configd` &mdash; Apple's
 SystemConfiguration daemon, hosting the `SCDynamicStore` key/value
-store &mdash; has a feature-complete server over Mach IPC (the store,
-change notifications, regex watches, key listing and batch
-operations); the CF-typed `SystemConfiguration` client framework, the
+store &mdash; has a feature-complete server over Mach IPC, and the
+CF-typed `SystemConfiguration` client framework on top of it
+(`libSystemConfiguration`: the full `SCDynamicStore` client API and the
+`SCPreferences` persistent-configuration API) is complete. Apple's
+`SCNetworkConfiguration` (the network-service / interface model), the
 IOKitUser facade (`ioreg`) and `IPConfiguration` (network config, the
 proper replacement for the interim `dhclient` setup) follow.
 Full design: the
 [hardware registry + IOKit porting plan](https://pkgdemon.github.io/freebsd-hardware-registry-iokit-plan.html).
 
-### Phase K &mdash; hwregd complete; configd SCDynamicStore server complete (2026-05-21)
+### Phase K &mdash; configd + libSystemConfiguration (SCDynamicStore + SCPreferences) complete (2026-05-22)
 
 **hwregd** is a working hardware-registry daemon. **Phase 0** (the
 `/dev/devctl` event reader, `kldload`-on-nomatch, and a Mach pub/sub
@@ -545,15 +547,45 @@ hands the receiver colliding low addresses), so configd and hwregd
 both use the inline-array workaround. The cost is an 8&nbsp;KiB cap on
 a key or value.
 
-**Next:** the CF-typed `SystemConfiguration` client framework
-(`SCDynamicStoreCreate` / `CopyValue` / &hellip;), so real software can
-use configd instead of speaking MIG directly; then the IOKitUser
-facade (`ioreg`). Deferred: USB / thermal property enrichment in
-hwregd; lifting configd's 8&nbsp;KiB cap (needs the kernel's
-out-of-line allocator fixed); configd's `notifyviafd` and `snapshot`
-routines (no consumer / fileport support needed). Build/test runs on
-the `bsd01` VirtualBox VM (interactive serial console reachable via
-the `joe-windows` host).
+**libSystemConfiguration** &mdash; the CF-typed `SystemConfiguration`
+client framework &mdash; sits on top of configd, so real software links
+`-lSystemConfiguration` instead of hand-writing `config.defs` MIG. It
+installs `/usr/lib/system/libSystemConfiguration.so` and the public
+headers at `/usr/include/SystemConfiguration/`, and is complete across
+two API families:
+
+- the **SCDynamicStore** client API &mdash; `SCDynamicStoreCreate` plus
+  `CopyValue` / `SetValue` / `AddValue` / `RemoveValue` / `CopyKeyList`,
+  change notifications delivered on a dispatch queue
+  (`SCDynamicStoreSetDispatchQueue`) or a run loop
+  (`SCDynamicStoreCreateRunLoopSource`), and the batch `CopyMultiple` /
+  `SetMultiple` (`SC-STORE` / `SC-NOTIFY` / `SC-RUNLOOP` / `SC-MULTI`
+  CI markers);
+- the **SCPreferences** API &mdash; the persistent-configuration plist:
+  `SCPreferencesCreate` plus `GetValue` / `SetValue` / `RemoveValue` /
+  `CopyKeyList` / `CommitChanges`, the `/`-separated path accessors
+  (`SCPreferencesPathGetValue` / &hellip;), the exclusive
+  `SCPreferencesLock`, and commit notifications
+  (`SCPreferencesSetCallback`) (`SC-PREFS` / `SC-PATH` / `SC-LOCK` /
+  `SC-PNOTIFY`).
+
+The `SCDynamicStore` object is a CoreFoundation runtime type; values
+cross the wire as XML property lists. Apple builds the run-loop source
+and the notification delivery on `CFMachPort`, which this repo's
+CoreFoundation does not compile &mdash; and libdispatch's
+`MACH_RECV` sources do not reliably deliver here (the task&nbsp;#41
+limitation `hwregd` also hit) &mdash; so both run on a dedicated
+`mach_msg` receive thread instead. Every API is exercised end-to-end
+against the live configd by a dedicated CI test client.
+
+**Next:** Apple's `SCNetworkConfiguration` (the network-service /
+interface / protocol model, built on the `SCPreferences` path
+accessors); then the IOKitUser facade (`ioreg`) and `IPConfiguration`.
+Deferred: USB / thermal property enrichment in hwregd; lifting
+configd's 8&nbsp;KiB cap (needs the kernel's out-of-line allocator
+fixed); configd's `notifyviafd` and `snapshot` routines (no consumer /
+fileport support needed). Build/test runs on the `bsd01` VirtualBox VM
+(interactive serial console reachable via the `joe-windows` host).
 
 ## CoreFoundation for system services &mdash; swift-corelibs CF
 
