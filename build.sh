@@ -1295,6 +1295,23 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scnetsettest" \
     || { echo "FAIL: scnetsettest not built"; exit 1; }
 echo "==> scnetsettest built"
 
+# scvlantest — libSystemConfiguration SCNetworkConfiguration iter 5
+# test client. Creates an SCVLANInterface on the e1000 interface,
+# checks its physical interface / tag / name / options, commits,
+# reopens and confirms it persisted, then removes it. run.sh runs it
+# and checks for the SC-VLAN-OK marker.
+echo "==> building scvlantest"
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scvlantest" \
+   "$ROOT/src/libSystemConfiguration/scvlantest.c" \
+   -lSystemConfiguration -lCoreFoundation -lsystem_kernel -llaunch -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scvlantest" \
+    || { echo "FAIL: scvlantest not built"; exit 1; }
+echo "==> scvlantest built"
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at

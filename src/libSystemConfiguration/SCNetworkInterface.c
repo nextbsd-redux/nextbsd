@@ -66,6 +66,11 @@ __SCNetworkInterfaceDeallocate(CFTypeRef cf)
 		CFRelease(ip->supported_interface_types);
 	if (ip->supported_protocol_types != NULL)
 		CFRelease(ip->supported_protocol_types);
+	if (ip->member_interfaces != NULL)	CFRelease(ip->member_interfaces);
+	if (ip->vlan_physical != NULL)		CFRelease(ip->vlan_physical);
+	if (ip->vlan_tag != NULL)		CFRelease(ip->vlan_tag);
+	if (ip->bond_mode != NULL)		CFRelease(ip->bond_mode);
+	if (ip->virtual_options != NULL)	CFRelease(ip->virtual_options);
 }
 
 /*
@@ -172,6 +177,11 @@ __SCNetworkInterfaceCreatePrivate(CFAllocatorRef allocator)
 	ip->entity_subtype		= NULL;
 	ip->supported_interface_types	= NULL;
 	ip->supported_protocol_types	= NULL;
+	ip->member_interfaces		= NULL;
+	ip->vlan_physical		= NULL;
+	ip->vlan_tag			= NULL;
+	ip->bond_mode			= NULL;
+	ip->virtual_options		= NULL;
 	return ip;
 }
 
@@ -268,8 +278,8 @@ __SCNetworkInterfaceLocalizedName(CFStringRef type)
 	return CFStringCreateWithCString(NULL, s, kCFStringEncodingUTF8);
 }
 
-/* the protocol types configurable on a hardware network interface */
-static CFArrayRef
+/* the protocol types configurable on a network interface */
+CFArrayRef
 __SCNetworkInterfaceCopyProtocolTypes(void)
 {
 	const void	*protos[5];
@@ -536,5 +546,37 @@ _SCNetworkInterfaceCreateWithEntity(CFAllocatorRef allocator,
 			ip->serviceID = (CFStringRef)CFRetain(sp->serviceID);
 		}
 	}
+	return (SCNetworkInterfaceRef)ip;
+}
+
+/*
+ * Synthesize an Ethernet interface for a BSD name. A stored virtual
+ * interface records only the BSD name of its physical / member
+ * interfaces; this rebuilds an interface object for one. There is no
+ * hardware address — the synthetic interface is a configuration handle,
+ * matched against the live hardware by BSD name when needed.
+ */
+SCNetworkInterfaceRef
+__SCNetworkInterfaceCreateWithBSDName(CFAllocatorRef allocator,
+				      CFStringRef bsdName)
+{
+	SCNetworkInterfacePrivateRef	ip;
+
+	if ((bsdName == NULL) ||
+	    (CFGetTypeID(bsdName) != CFStringGetTypeID())) {
+		_SCErrorSet(kSCStatusInvalidArgument);
+		return NULL;
+	}
+	ip = __SCNetworkInterfaceCreatePrivate(allocator);
+	if (ip == NULL) {
+		return NULL;
+	}
+	ip->interface_type =
+		(CFStringRef)CFRetain(kSCNetworkInterfaceTypeEthernet);
+	ip->entity_device  = CFStringCreateCopy(NULL, bsdName);
+	ip->builtin        = TRUE;
+	ip->localized_name = __SCNetworkInterfaceLocalizedName(ip->interface_type);
+	ip->name           = (CFStringRef)CFRetain(ip->localized_name);
+	ip->supported_protocol_types = __SCNetworkInterfaceCopyProtocolTypes();
 	return (SCNetworkInterfaceRef)ip;
 }

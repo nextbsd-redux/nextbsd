@@ -37,6 +37,17 @@
 #define kSCPropNetInterfaceDeviceName	CFSTR("DeviceName")
 #define kSCPropNetInterfaceHardware	CFSTR("Hardware")
 
+/*
+ * Virtual-interface (Bond / Bridge / VLAN) storage. The virtual
+ * interfaces live under /VirtualNetworkInterfaces/<type>/<bsdName> in
+ * the preferences plist.
+ */
+#define kSCPrefVirtualNetworkInterfaces	CFSTR("VirtualNetworkInterfaces")
+#define kSCPropVLANInterface		CFSTR("Interface")
+#define kSCPropVLANTag			CFSTR("Tag")
+#define kSCPropVirtualInterfaces	CFSTR("Interfaces")
+#define kSCPropVirtualOptions		CFSTR("Options")
+
 
 #pragma mark -
 #pragma mark SCNetworkInterface
@@ -69,6 +80,13 @@ typedef struct __SCNetworkInterface {
 
 	CFArrayRef		supported_interface_types;
 	CFArrayRef		supported_protocol_types;
+
+	/* virtual-interface detail (Bond / Bridge / VLAN interface types) */
+	CFArrayRef		member_interfaces;	/* Bond / Bridge members */
+	SCNetworkInterfaceRef	vlan_physical;		/* VLAN physical interface */
+	CFNumberRef		vlan_tag;		/* VLAN tag (1..4094) */
+	CFStringRef		bond_mode;		/* Bond aggregation mode */
+	CFDictionaryRef		virtual_options;	/* Bond / Bridge / VLAN options */
 } SCNetworkInterfacePrivate, *SCNetworkInterfacePrivateRef;
 
 
@@ -162,6 +180,22 @@ isA_SCNetworkSet(SCNetworkSetRef set)
 /* SCNetworkInterface.c — allocate a bare interface (all fields NULL). */
 SCNetworkInterfacePrivateRef
 __SCNetworkInterfaceCreatePrivate	(CFAllocatorRef		allocator);
+
+/*
+ * SCNetworkInterface.c — a fresh CFArray of the protocol types that can
+ * be configured on a network interface (IPv4/IPv6/DNS/Proxies/SMB).
+ */
+CFArrayRef
+__SCNetworkInterfaceCopyProtocolTypes	(void);
+
+/*
+ * SCNetworkInterface.c — synthesize an Ethernet interface for a BSD
+ * name (no hardware address). Used to rebuild the physical interface a
+ * stored virtual interface references.
+ */
+SCNetworkInterfaceRef
+__SCNetworkInterfaceCreateWithBSDName	(CFAllocatorRef		allocator,
+					 CFStringRef		bsdName);
 
 /*
  * SCNetworkInterface.c — the interface <-> preferences-entity bridge.
