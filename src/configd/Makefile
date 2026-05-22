@@ -6,7 +6,10 @@
 # com.apple.SystemConfiguration.configd Mach service in and runs a raw
 # mach_msg loop over the MIG config.defs demux (config_server()).
 # iter 2 adds config_store.c — the SCDynamicStore key/value store
-# backing configopen / configget / configset / configremove.
+# backing configopen / configget / configset / configremove. iter 4
+# adds config_session.c — per-session ports, key watches and the
+# change-notification fan-out backing notifyadd / notifyviaport /
+# notifychanges.
 #
 # Build:   cd src/configd && make SYSROOT=/path/to/rootfs MIGOUT=...
 # Install: make DESTDIR=/path/to/rootfs install
@@ -14,7 +17,7 @@
 PROG=		configd
 MAN=
 
-SRCS=		configd.c config_store.c
+SRCS=		configd.c config_store.c config_session.c
 
 # configServer.c — MIG-generated server demux for config.defs.
 # configUser.c — MIG-generated client stubs, linked for the in-process
@@ -30,9 +33,10 @@ CFLAGS+=		-I${MIGOUT}
 CFLAGS+=		-I${.CURDIR}	# generated stubs #include "config_types.h"
 CFLAGS.configServer.c+=	-w
 CFLAGS.configUser.c+=	-w
-# The MIG stubs pull <mach/notify.h>, which redefines the MACH_NOTIFY_*
-# macros <mach/message.h> also defines (identical values, whitespace
-# differs) — a benign clash in the vendored mach headers.
+# <mach/notify.h> (pulled by the MIG stubs and, for the no-senders
+# notification, by configd.c / config_session.c) redefines the
+# MACH_NOTIFY_* macros <mach/message.h> also defines (identical values,
+# whitespace differs) — a benign clash in the vendored mach headers.
 CFLAGS+=		-Wno-macro-redefined
 .endif
 

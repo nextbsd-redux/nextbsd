@@ -7,58 +7,56 @@
  * (config.defs, base id 20000). This port keeps that real Mach IPC
  * design (see the configd-port memory / plan).
  *
- * The daemon checks the bootstrap service in with launchd and runs a
- * raw mach_msg receive loop that hands each message to the
- * MIG-generated config_server() demux. Apple's configd.tproj drives
- * IPC through libdispatch's dispatch_mach channel API; that API is
- * unfinished in this port, so configd uses a raw mach_msg loop
- * instead — the same proven pattern hwregd and launchd use here.
- * configd is a single-purpose server, so its main thread is the
- * receive loop (no worker thread needed).
+ * configd checks the bootstrap service in with launchd and runs a raw
+ * mach_msg receive loop that hands each message to the MIG-generated
+ * config_server() demux. Apple's configd.tproj drives IPC through
+ * libdispatch's dispatch_mach channel API; that API is unfinished in
+ * this port, so configd uses a raw mach_msg loop instead — the same
+ * proven pattern hwregd and launchd use here.
  *
- * configopen / configget / configset / configremove are implemented
- * against config_store.c; configlist, the add / multi variants, the
- * notify* routines and snapshot are still stubs (later iterations).
- * config.defs carries the key/value payloads INLINE in bounded
- * arrays — out-of-line Mach data is broken cross-process in this
- * repo's kernel (see config.defs) — so a handler's xmlData argument
- * is the byte buffer itself; there is no out-of-line memory to free.
+ * iter 4 adds per-session ports and change notifications:
+ *   - configopen allocates a fresh per-session Mach port (config_session.c),
+ *     hands the client a send right, and arms a no-senders notification
+ *     so the session is torn down when the client exits. Every session
+ *     port joins a port set, so the one receive loop serves them all;
+ *     the port a request arrives on (the MIG `server` argument) names
+ *     the session.
+ *   - notifyadd / notifyviaport / notifychanges let a session watch
+ *     explicit keys, register a notification port, and drain the keys
+ *     that changed. configset / configremove / confignotify fan a
+ *     change out to every watching session.
+ * Regex/pattern watches and the multi-get/set variants remain stubs.
+ *
+ * config.defs carries the key/value payloads INLINE in bounded arrays
+ * — out-of-line Mach data is broken cross-process in this port's
+ * kernel (see config.defs) — so a handler's xmlData argument is the
+ * byte buffer itself; there is no out-of-line memory to free.
  *
  * `configd --selftest` runs an in-process round trip (a server thread
  * plus the client stubs) — no launchd or bootstrap — as a quick
- * self-check of the config.defs RPC path.
+ * self-check of the config.defs RPC and notification path.
  */
 
 #include <sys/types.h>
 
 #include <mach/mach.h>
+#include <mach/notify.h>		/* MACH_NOTIFY_NO_SENDERS */
 #include <servers/bootstrap.h>
 
 #include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
 
-#include "config_types.h"
+#include "config_types.h"		/* SCD_SERVER, kSCStatus*, CONFIG_DATA_MAX */
 #include "config_store.h"
+#include "config_session.h"
 #include "configServer.h"	/* MIG: config_server() demux + _config* protos */
-
-/*
- * SCDynamicStore status codes — a subset of Apple's SCError.h. configd
- * and the SystemConfiguration client must agree on these values: they
- * cross the wire as the `status` reply field.
- */
-#define kSCStatusOK			0
-#define kSCStatusFailed			1001
-#define kSCStatusInvalidArgument	1002
-#define kSCStatusNoKey			1004
-
-/* Maximum key / value size — config.defs' array[*:8192] bound. */
-#define CONFIG_DATA_MAX			8192
 
 /*
  * Inline message buffer. config.defs carries the xmlData payloads
@@ -102,7 +100,7 @@ clog(const char *fmt, ...)
  * carries the payloads inline); the matching mach_msg_type_number_t
  * carries its length. Out-parameters are given a safe value first so
  * the MIG reply marshalling never ships an uninitialised port or
- * count. configlist, the add / multi variants and every notify* are
+ * count. The add / multi variants, the regex paths and snapshot are
  * still stubs returning kSCStatusFailed.
  */
 
@@ -112,23 +110,22 @@ _configopen(mach_port_t server, xmlData name, mach_msg_type_number_t nameCnt,
     mach_port_t *session, int *status)
 {
 	/*
-	 * iter 2 session model: hand the client a send right to this
-	 * same service port — per-session ports arrive with change
-	 * notifications. Insert a MAKE_SEND right onto the receive-right
-	 * name; MIG's mach_port_move_send_t moves it out in the reply.
+	 * Hand the client its own per-session port. session_open()
+	 * allocates the receive right, inserts a MAKE_SEND right (MIG's
+	 * mach_port_move_send_t moves it out in the reply), joins it to
+	 * configd's port set and arms the no-senders notification.
 	 */
+	(void)server;
 	(void)name;
 	(void)nameCnt;
 	(void)options;
 	(void)optionsCnt;
 
-	if (mach_port_insert_right(mach_task_self(), server, server,
-	    MACH_MSG_TYPE_MAKE_SEND) != KERN_SUCCESS) {
+	if (session_open(session) != 0) {
 		*session = MACH_PORT_NULL;
 		*status = kSCStatusFailed;
 		return KERN_SUCCESS;
 	}
-	*session = server;
 	*status = kSCStatusOK;
 	return KERN_SUCCESS;
 }
@@ -192,12 +189,15 @@ _configset(mach_port_t server, xmlData key, mach_msg_type_number_t keyCnt,
 	(void)instance;		/* the "instance" generation count is unused */
 	*newInstance = 0;
 
-	if (keyCnt == 0)
+	if (keyCnt == 0) {
 		*status = kSCStatusInvalidArgument;
-	else if (store_set(key, keyCnt, data, dataCnt) != 0)
+	} else if (store_set(key, keyCnt, data, dataCnt) != 0) {
 		*status = kSCStatusFailed;
-	else
+	} else {
+		/* fan the change out to every watching session */
+		session_key_changed(key, keyCnt);
 		*status = kSCStatusOK;
+	}
 	return KERN_SUCCESS;
 }
 
@@ -207,12 +207,15 @@ _configremove(mach_port_t server, xmlData key, mach_msg_type_number_t keyCnt,
 {
 	(void)server;
 
-	if (keyCnt == 0)
+	if (keyCnt == 0) {
 		*status = kSCStatusInvalidArgument;
-	else if (store_remove(key, keyCnt) != 0)
+	} else if (store_remove(key, keyCnt) != 0) {
 		*status = kSCStatusNoKey;
-	else
+	} else {
+		/* removing a key is a change watchers must hear about */
+		session_key_changed(key, keyCnt);
 		*status = kSCStatusOK;
+	}
 	return KERN_SUCCESS;
 }
 
@@ -227,12 +230,22 @@ _configadd_s(mach_port_t server, xmlData key, mach_msg_type_number_t keyCnt,
 	return KERN_SUCCESS;
 }
 
+/*
+ * confignotify (SCDynamicStoreNotifyValue) — force a change
+ * notification for a key without touching its value.
+ */
 kern_return_t
 _confignotify(mach_port_t server, xmlData key, mach_msg_type_number_t keyCnt,
     int *status)
 {
-	(void)server; (void)key; (void)keyCnt;
-	*status = kSCStatusFailed;
+	(void)server;
+
+	if (keyCnt == 0) {
+		*status = kSCStatusInvalidArgument;
+	} else {
+		session_key_changed(key, keyCnt);
+		*status = kSCStatusOK;
+	}
 	return KERN_SUCCESS;
 }
 
@@ -259,48 +272,98 @@ _configset_m(mach_port_t server, xmlData data, mach_msg_type_number_t dataCnt,
 	return KERN_SUCCESS;
 }
 
+/*
+ * notifyadd (SCDynamicStoreAddWatchedKey) — add an explicit key to the
+ * session's watch list. Regex/pattern watches (isRegex != 0) are
+ * deferred to a later iteration.
+ */
 kern_return_t
 _notifyadd(mach_port_t server, xmlData key, mach_msg_type_number_t keyCnt,
     int isRegex, int *status)
 {
-	(void)server; (void)key; (void)keyCnt; (void)isRegex;
-	*status = kSCStatusFailed;
+	if (keyCnt == 0)
+		*status = kSCStatusInvalidArgument;
+	else if (isRegex != 0)
+		*status = kSCStatusFailed;	/* pattern watches: later iter */
+	else
+		*status = session_watch_add(server, key, keyCnt);
 	return KERN_SUCCESS;
 }
 
+/*
+ * notifyremove (SCDynamicStoreRemoveWatchedKey) — drop an explicit key
+ * from the session's watch list.
+ */
 kern_return_t
 _notifyremove(mach_port_t server, xmlData key, mach_msg_type_number_t keyCnt,
     int isRegex, int *status)
 {
-	(void)server; (void)key; (void)keyCnt; (void)isRegex;
-	*status = kSCStatusFailed;
+	if (keyCnt == 0)
+		*status = kSCStatusInvalidArgument;
+	else if (isRegex != 0)
+		*status = kSCStatusFailed;	/* pattern watches: later iter */
+	else
+		*status = session_watch_remove(server, key, keyCnt);
 	return KERN_SUCCESS;
 }
 
+/*
+ * notifychanges (SCDynamicStoreCopyNotifiedKeys) — return and clear the
+ * session's list of keys that changed since the last call. The list is
+ * encoded as a run of [uint32 little-endian length][key bytes] records.
+ */
 kern_return_t
 _notifychanges(mach_port_t server, xmlDataOut list,
     mach_msg_type_number_t *listCnt, int *status)
 {
-	(void)server; (void)list;
+	ssize_t n;
+
 	*listCnt = 0;
-	*status = kSCStatusFailed;
+
+	if (!session_valid(server)) {
+		*status = kSCStatusNoStoreSession;
+		return KERN_SUCCESS;
+	}
+
+	n = session_drain_changes(server, list, CONFIG_DATA_MAX);
+	if (n < 0) {
+		/* the encoded change list overflowed the inline reply */
+		*status = kSCStatusFailed;
+		return KERN_SUCCESS;
+	}
+	*listCnt = (mach_msg_type_number_t)n;
+	*status = kSCStatusOK;
 	return KERN_SUCCESS;
 }
 
+/*
+ * notifyviaport (SCDynamicStoreNotifyMachPort) — register the Mach
+ * port configd messages when a watched key changes. `port` arrives as
+ * a moved-in send right configd takes ownership of.
+ */
 kern_return_t
 _notifyviaport(mach_port_t server, mach_port_t port, mach_msg_id_t msgid,
     int *status)
 {
-	(void)server; (void)port; (void)msgid;
-	*status = kSCStatusFailed;
+	if (msgid != 0) {
+		/* Apple's per-message identifier is obsolete; reject it. */
+		if (port != MACH_PORT_NULL)
+			(void)mach_port_deallocate(mach_task_self(), port);
+		*status = kSCStatusInvalidArgument;
+		return KERN_SUCCESS;
+	}
+	*status = session_set_notify_port(server, port);
 	return KERN_SUCCESS;
 }
 
+/*
+ * notifycancel (SCDynamicStoreNotifyCancel) — drop the session's
+ * notification port and watch list.
+ */
 kern_return_t
 _notifycancel(mach_port_t server, int *status)
 {
-	(void)server;
-	*status = kSCStatusFailed;
+	*status = session_clear_notify_port(server);
 	return KERN_SUCCESS;
 }
 
@@ -332,13 +395,17 @@ _snapshot(mach_port_t server, int *status)
 }
 
 /*
- * configd_serve — the raw mach_msg receive loop. config_server() is
- * the MIG demux for the config subsystem; it writes the routine's
- * reply (or a MIG error) into `rep`. The 1s receive timeout lets the
- * loop notice a SIGTERM for a clean shutdown.
+ * configd_serve — the raw mach_msg receive loop. It receives on a
+ * port set holding the bootstrap service port and every per-session
+ * port. config_server() is the MIG demux for the config subsystem; it
+ * writes the routine's reply (or a MIG error) into `rep`. A
+ * MACH_NOTIFY_NO_SENDERS message means a client exited — its session
+ * port's no-senders notification fired — so the session is closed.
+ * The 1s receive timeout lets the loop notice a SIGTERM for a clean
+ * shutdown.
  */
 static void
-configd_serve(mach_port_t service_port)
+configd_serve(mach_port_t port_set)
 {
 	while (!got_term) {
 		union {
@@ -349,13 +416,21 @@ configd_serve(mach_port_t service_port)
 
 		memset(&req, 0, sizeof(req));
 		mr = mach_msg(&req.hdr, MACH_RCV_MSG | MACH_RCV_TIMEOUT, 0,
-		    sizeof(req), service_port, 1000, MACH_PORT_NULL);
+		    sizeof(req), port_set, 1000, MACH_PORT_NULL);
 		if (mr == MACH_RCV_TIMED_OUT)
 			continue;
 		if (mr != MACH_MSG_SUCCESS) {
 			clog("mach_msg receive failed: 0x%x — exiting",
 			    (unsigned)mr);
 			break;
+		}
+
+		/* A client exited: tear its session down. */
+		if (req.hdr.msgh_id == MACH_NOTIFY_NO_SENDERS) {
+			if (session_close(req.hdr.msgh_local_port) == 0)
+				clog("session port 0x%x closed (client gone)",
+				    (unsigned)req.hdr.msgh_local_port);
+			continue;
 		}
 
 		memset(&rep, 0, sizeof(rep));
@@ -374,11 +449,38 @@ configd_serve(mach_port_t service_port)
 }
 
 /*
+ * configd_make_port_set — allocate the port set configd_serve()
+ * receives on and move `initial` (the bootstrap service port, or the
+ * selftest port) into it. The session layer adds new session ports to
+ * the same set. Returns 0 / -1.
+ */
+static int
+configd_make_port_set(mach_port_t initial, mach_port_t *port_set)
+{
+	kern_return_t kr;
+
+	kr = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_PORT_SET,
+	    port_set);
+	if (kr != KERN_SUCCESS) {
+		clog("port set allocate failed: 0x%x", (unsigned)kr);
+		return -1;
+	}
+	kr = mach_port_move_member(mach_task_self(), initial, *port_set);
+	if (kr != KERN_SUCCESS) {
+		clog("port set move_member failed: 0x%x", (unsigned)kr);
+		return -1;
+	}
+	session_layer_init(*port_set);
+	return 0;
+}
+
+/*
  * In-process self test (`configd --selftest`). A server thread runs
- * configd_serve() on a private port; the main thread drives the
+ * configd_serve() on a private port set; the main thread drives the
  * config.defs client stubs against it — configopen / configset /
- * configget — with no launchd or bootstrap in the loop. The client
- * stubs come from the MIG-generated configUser.c.
+ * configget, then notifyadd / configset / notifychanges — with no
+ * launchd or bootstrap in the loop. The client stubs come from the
+ * MIG-generated configUser.c.
  */
 extern kern_return_t configopen(mach_port_t, xmlData,
     mach_msg_type_number_t, xmlData, mach_msg_type_number_t,
@@ -389,14 +491,20 @@ extern kern_return_t configset(mach_port_t, xmlData,
 extern kern_return_t configget(mach_port_t, xmlData,
     mach_msg_type_number_t, xmlDataOut, mach_msg_type_number_t *,
     int *, int *);
+extern kern_return_t notifyadd(mach_port_t, xmlData,
+    mach_msg_type_number_t, int, int *);
+extern kern_return_t notifyviaport(mach_port_t, mach_port_t,
+    mach_msg_id_t, int *);
+extern kern_return_t notifychanges(mach_port_t, xmlDataOut,
+    mach_msg_type_number_t *, int *);
 
-static mach_port_t selftest_port;
+static mach_port_t selftest_pset;
 
 static void *
 selftest_server(void *arg)
 {
 	(void)arg;
-	configd_serve(selftest_port);
+	configd_serve(selftest_pset);
 	return NULL;
 }
 
@@ -405,7 +513,9 @@ run_selftest(void)
 {
 	pthread_t		th;
 	kern_return_t		kr;
+	mach_port_t		selftest_port = MACH_PORT_NULL;
 	mach_port_t		session = MACH_PORT_NULL;
+	mach_port_t		notify_port = MACH_PORT_NULL;
 	int			status = -1;
 	int			newInstance = 0;
 	/* Non-const uint8_t arrays — xmlData is uint8_t[], and a cast
@@ -414,8 +524,13 @@ run_selftest(void)
 	uint8_t			empty[1] = { 0 };
 	uint8_t			key[] = "selftest:key";
 	uint8_t			val[] = "configd selftest value blob";
+	uint8_t			val2[] = "configd selftest changed value";
 	xmlDataOut		got;
 	mach_msg_type_number_t	gotCnt = 0;
+	union {
+		mach_msg_header_t	hdr;
+		uint8_t			buf[256];	/* header + trailer */
+	} nmsg;
 
 	kr = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE,
 	    &selftest_port);
@@ -429,6 +544,8 @@ run_selftest(void)
 		clog("selftest: insert_right failed: 0x%x", (unsigned)kr);
 		return 1;
 	}
+	if (configd_make_port_set(selftest_port, &selftest_pset) != 0)
+		return 1;
 
 	if (pthread_create(&th, NULL, selftest_server, NULL) != 0) {
 		clog("selftest: pthread_create failed");
@@ -467,7 +584,103 @@ run_selftest(void)
 		return 1;
 	}
 
-	clog("CONFIGD-SELFTEST-OK: in-process config.defs round-trip works");
+	/*
+	 * Change-notification path: watch the key, change it, and
+	 * confirm notifychanges reports exactly that key.
+	 */
+	kr = notifyadd(session, key, (mach_msg_type_number_t)(sizeof(key) - 1),
+	    0, &status);
+	if (kr != KERN_SUCCESS || status != kSCStatusOK) {
+		clog("selftest: notifyadd kr=0x%x status=%d", (unsigned)kr,
+		    status);
+		return 1;
+	}
+
+	kr = configset(session, key, (mach_msg_type_number_t)(sizeof(key) - 1),
+	    val2, (mach_msg_type_number_t)(sizeof(val2) - 1), 0, &newInstance,
+	    &status);
+	if (kr != KERN_SUCCESS || status != kSCStatusOK) {
+		clog("selftest: configset(notify) kr=0x%x status=%d",
+		    (unsigned)kr, status);
+		return 1;
+	}
+
+	gotCnt = 0;
+	kr = notifychanges(session, got, &gotCnt, &status);
+	if (kr != KERN_SUCCESS || status != kSCStatusOK) {
+		clog("selftest: notifychanges kr=0x%x status=%d", (unsigned)kr,
+		    status);
+		return 1;
+	}
+	{
+		/* The list is one [uint32 len][key bytes] record. */
+		uint32_t	klen;
+		size_t		want = sizeof(key) - 1;
+
+		if (gotCnt != (mach_msg_type_number_t)(sizeof(klen) + want)) {
+			clog("selftest: notifychanges list size %u (want %zu)",
+			    (unsigned)gotCnt, sizeof(klen) + want);
+			return 1;
+		}
+		memcpy(&klen, got, sizeof(klen));
+		if (klen != want ||
+		    memcmp(got + sizeof(klen), key, want) != 0) {
+			clog("selftest: notifychanges key MISMATCH");
+			return 1;
+		}
+	}
+
+	/*
+	 * Notification-port path: register a Mach notification port,
+	 * change the watched key again, and confirm configd messages
+	 * the port.
+	 */
+	kr = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE,
+	    &notify_port);
+	if (kr != KERN_SUCCESS) {
+		clog("selftest: notify-port allocate failed: 0x%x",
+		    (unsigned)kr);
+		return 1;
+	}
+	kr = mach_port_insert_right(mach_task_self(), notify_port,
+	    notify_port, MACH_MSG_TYPE_MAKE_SEND);
+	if (kr != KERN_SUCCESS) {
+		clog("selftest: notify-port insert_right failed: 0x%x",
+		    (unsigned)kr);
+		return 1;
+	}
+	kr = notifyviaport(session, notify_port, 0, &status);
+	if (kr != KERN_SUCCESS || status != kSCStatusOK) {
+		clog("selftest: notifyviaport kr=0x%x status=%d", (unsigned)kr,
+		    status);
+		return 1;
+	}
+
+	kr = configset(session, key, (mach_msg_type_number_t)(sizeof(key) - 1),
+	    val, (mach_msg_type_number_t)(sizeof(val) - 1), 0, &newInstance,
+	    &status);
+	if (kr != KERN_SUCCESS || status != kSCStatusOK) {
+		clog("selftest: configset(viaport) kr=0x%x status=%d",
+		    (unsigned)kr, status);
+		return 1;
+	}
+
+	memset(&nmsg, 0, sizeof(nmsg));
+	kr = mach_msg(&nmsg.hdr, MACH_RCV_MSG | MACH_RCV_TIMEOUT, 0,
+	    sizeof(nmsg), notify_port, 5000, MACH_PORT_NULL);
+	if (kr != MACH_MSG_SUCCESS) {
+		clog("selftest: no notification message (mach_msg: 0x%x)",
+		    (unsigned)kr);
+		return 1;
+	}
+	if (nmsg.hdr.msgh_id != CONFIGD_NOTIFY_MSGID) {
+		clog("selftest: notification msgh_id 0x%x (expected 0x%x)",
+		    (unsigned)nmsg.hdr.msgh_id, (unsigned)CONFIGD_NOTIFY_MSGID);
+		return 1;
+	}
+
+	clog("CONFIGD-SELFTEST-OK: in-process config.defs round-trip + "
+	    "change notification + notify port works");
 	return 0;
 }
 
@@ -475,6 +688,7 @@ int
 main(int argc, char **argv)
 {
 	mach_port_t	service_port = MACH_PORT_NULL;
+	mach_port_t	port_set = MACH_PORT_NULL;
 	kern_return_t	kr;
 	const char	*service_name = SCD_SERVER;
 
@@ -498,7 +712,17 @@ main(int argc, char **argv)
 	clog("Mach service '%s' checked in (port=0x%x)",
 	    service_name, (unsigned)service_port);
 
-	configd_serve(service_port);
+	/*
+	 * configd serves the bootstrap service port and every
+	 * per-session port from one receive loop: a port set holds them
+	 * all, and configopen joins new session ports to it.
+	 */
+	if (configd_make_port_set(service_port, &port_set) != 0) {
+		clog("could not set up the configd port set — exiting");
+		return 1;
+	}
+
+	configd_serve(port_set);
 
 	clog("shutting down (signal %d)", (int)got_term);
 	return 0;

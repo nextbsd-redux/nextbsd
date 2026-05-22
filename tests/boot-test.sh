@@ -405,6 +405,18 @@ expect {
     "CONFIGD-STORE-OK" { puts "\nOK: configd SCDynamicStore round-trip works" }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: CONFIGD-NOTIFY marker not seen"
+        exit 1
+    }
+    "CONFIGD-NOTIFY-FAIL" {
+        puts "\nFAIL: configd change-notification round-trip failed"
+        exit 1
+    }
+    "CONFIGD-NOTIFY-OK" { puts "\nOK: configd change notifications work" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"
