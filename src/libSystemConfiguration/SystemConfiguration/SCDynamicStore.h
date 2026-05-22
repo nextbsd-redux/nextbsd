@@ -207,6 +207,15 @@ SCDynamicStoreRemoveValue	(SCDynamicStoreRef		store,
 				 CFStringRef			key);
 
 /*!
+	@function SCDynamicStoreNotifyValue
+	@discussion Posts a change notification for a key without altering
+		its value — sessions watching the key are notified.
+ */
+Boolean
+SCDynamicStoreNotifyValue	(SCDynamicStoreRef		store,
+				 CFStringRef			key);
+
+/*!
 	@function SCDynamicStoreSetNotificationKeys
 	@discussion Specifies the keys and key patterns the session wants
 		change notifications for. Replaces any previous set.

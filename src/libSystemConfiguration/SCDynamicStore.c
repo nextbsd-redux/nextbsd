@@ -471,6 +471,37 @@ SCDynamicStoreRemoveValue(SCDynamicStoreRef store, CFStringRef key)
 	return TRUE;
 }
 
+Boolean
+SCDynamicStoreNotifyValue(SCDynamicStoreRef store, CFStringRef key)
+{
+	SCDynamicStorePrivateRef	storePrivate	= (SCDynamicStorePrivateRef)store;
+	CFDataRef			keyData;
+	int				sc_status	= kSCStatusFailed;
+	kern_return_t			kr;
+
+	keyData = __SCStorePrepare(store, key);
+	if (keyData == NULL) {
+		return FALSE;
+	}
+
+	/* confignotify posts a change for the key without altering it */
+	kr = confignotify(storePrivate->server,
+			  (uint8_t *)CFDataGetBytePtr(keyData),
+			  (mach_msg_type_number_t)CFDataGetLength(keyData),
+			  &sc_status);
+	CFRelease(keyData);
+
+	if (kr != KERN_SUCCESS) {
+		_SCErrorSet(kSCStatusFailed);
+		return FALSE;
+	}
+	if (sc_status != kSCStatusOK) {
+		_SCErrorSet(sc_status);
+		return FALSE;
+	}
+	return TRUE;
+}
+
 CFArrayRef
 SCDynamicStoreCopyKeyList(SCDynamicStoreRef store, CFStringRef pattern)
 {

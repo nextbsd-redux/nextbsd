@@ -33,6 +33,7 @@
 #define _SCPREFERENCES_H
 
 #include <sys/cdefs.h>
+#include <dispatch/dispatch.h>
 #include <CoreFoundation/CoreFoundation.h>
 
 /*!
@@ -41,6 +42,37 @@
 		type (see SCPreferencesGetTypeID()) — release with CFRelease().
  */
 typedef const struct __SCPreferences *	SCPreferencesRef;
+
+/*!
+	@enum SCPreferencesNotification
+	@discussion The kinds of change an SCPreferencesCallBack reports.
+ */
+typedef CFOptionFlags	SCPreferencesNotification;
+enum {
+	kSCPreferencesNotificationCommit	= 1<<0,	/* prefs committed */
+	kSCPreferencesNotificationApply		= 1<<1	/* prefs should apply */
+};
+
+/*!
+	@typedef SCPreferencesContext
+	@discussion Client-supplied data + callbacks for an SCPreferences
+		callback.
+ */
+typedef struct {
+	CFIndex		version;
+	void *		info;
+	const void *	(*retain)(const void *info);
+	void		(*release)(const void *info);
+	CFStringRef	(*copyDescription)(const void *info);
+} SCPreferencesContext;
+
+/*!
+	@typedef SCPreferencesCallBack
+	@discussion Invoked when the watched preferences change.
+ */
+typedef void (*SCPreferencesCallBack)(SCPreferencesRef		prefs,
+				      SCPreferencesNotification	notificationType,
+				      void *			info);
 
 __BEGIN_DECLS
 
@@ -160,6 +192,25 @@ SCPreferencesPathSetValue	(SCPreferencesRef		prefs,
 Boolean
 SCPreferencesPathRemoveValue	(SCPreferencesRef		prefs,
 				 CFStringRef			path);
+
+/*!
+	@function SCPreferencesSetCallback
+	@discussion Sets the callback invoked when the preferences change.
+ */
+Boolean
+SCPreferencesSetCallback	(SCPreferencesRef		prefs,
+				 SCPreferencesCallBack		callout,
+				 SCPreferencesContext		*context);
+
+/*!
+	@function SCPreferencesSetDispatchQueue
+	@discussion Schedules change-notification delivery onto a dispatch
+		queue: the SCPreferencesCallBack runs on `queue` when the
+		preferences are committed. Pass NULL to unschedule.
+ */
+Boolean
+SCPreferencesSetDispatchQueue	(SCPreferencesRef		prefs,
+				 dispatch_queue_t		queue);
 
 __END_DECLS
 

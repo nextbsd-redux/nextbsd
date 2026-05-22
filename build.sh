@@ -1208,6 +1208,23 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/sclocktest" \
     || { echo "FAIL: sclocktest not built"; exit 1; }
 echo "==> sclocktest built"
 
+# scprefsnotifytest — libSystemConfiguration SCPreferences change-
+# notification test client. One session watches a preferences file on
+# a dispatch queue, another commits a change, and the callback must
+# fire. run.sh runs it and checks for the SC-PNOTIFY-OK marker.
+echo "==> building scprefsnotifytest"
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scprefsnotifytest" \
+   "$ROOT/src/libSystemConfiguration/scprefsnotifytest.c" \
+   -lSystemConfiguration -lCoreFoundation -ldispatch -lBlocksRuntime \
+   -lsystem_kernel -llaunch -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scprefsnotifytest" \
+    || { echo "FAIL: scprefsnotifytest not built"; exit 1; }
+echo "==> scprefsnotifytest built"
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at

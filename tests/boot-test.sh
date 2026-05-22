@@ -537,6 +537,18 @@ expect {
     "SC-LOCK-OK" { puts "\nOK: SCPreferences lock works" }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: SC-PNOTIFY marker not seen"
+        exit 1
+    }
+    "SC-PNOTIFY-FAIL" {
+        puts "\nFAIL: SCPreferences change-notification delivery failed"
+        exit 1
+    }
+    "SC-PNOTIFY-OK" { puts "\nOK: SCPreferences change notifications work" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"
