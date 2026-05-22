@@ -49,6 +49,17 @@
 typedef const struct __SCNetworkInterface *	SCNetworkInterfaceRef;
 
 /*!
+	@typedef SCBondInterfaceRef
+	@typedef SCBridgeInterfaceRef
+	@typedef SCVLANInterfaceRef
+	@discussion The virtual network interfaces — link aggregation,
+		bridging and 802.1Q VLANs — are each an SCNetworkInterface.
+ */
+typedef SCNetworkInterfaceRef			SCBondInterfaceRef;
+typedef SCNetworkInterfaceRef			SCBridgeInterfaceRef;
+typedef SCNetworkInterfaceRef			SCVLANInterfaceRef;
+
+/*!
 	@typedef SCNetworkProtocolRef
 	@discussion Handle to the configuration of one protocol (IPv4,
 		IPv6, DNS, Proxies, SMB) on a network service.
@@ -466,6 +477,92 @@ SCNetworkSetGetServiceOrder		(SCNetworkSetRef		set);
 Boolean
 SCNetworkSetSetServiceOrder		(SCNetworkSetRef		set,
 					 CFArrayRef			newOrder);
+
+/* --------------------------------------------------------------------
+ * SCVLANInterface — 802.1Q VLAN virtual interfaces
+ * ------------------------------------------------------------------ */
+
+/*!
+	@function SCVLANInterfaceCopyAll
+	@discussion Returns every VLAN interface stored in `prefs`.
+	@result a CFArray of SCVLANInterfaceRef (caller releases).
+ */
+CFArrayRef
+SCVLANInterfaceCopyAll			(SCPreferencesRef		prefs);
+
+/*!
+	@function SCVLANInterfaceCopyAvailablePhysicalInterfaces
+	@discussion Returns the interfaces a VLAN can be created on.
+	@result a CFArray of SCNetworkInterfaceRef (caller releases).
+ */
+CFArrayRef
+SCVLANInterfaceCopyAvailablePhysicalInterfaces
+					(void);
+
+/*!
+	@function SCVLANInterfaceCreate
+	@discussion Creates a new VLAN interface on `physical` with 802.1Q
+		tag `tag` (1..4094), stored in `prefs`. Release the result.
+ */
+SCVLANInterfaceRef
+SCVLANInterfaceCreate			(SCPreferencesRef		prefs,
+					 SCNetworkInterfaceRef		physical,
+					 CFNumberRef			tag);
+
+/*!
+	@function SCVLANInterfaceRemove
+	@discussion Removes the VLAN interface from the preferences.
+ */
+Boolean
+SCVLANInterfaceRemove			(SCVLANInterfaceRef		vlan);
+
+/*!
+	@function SCVLANInterfaceGetPhysicalInterface
+	@discussion Returns the VLAN's physical interface. Owned by the
+		VLAN.
+ */
+SCNetworkInterfaceRef
+SCVLANInterfaceGetPhysicalInterface	(SCVLANInterfaceRef		vlan);
+
+/*!
+	@function SCVLANInterfaceGetTag
+	@discussion Returns the VLAN's 802.1Q tag. Owned by the VLAN.
+ */
+CFNumberRef
+SCVLANInterfaceGetTag			(SCVLANInterfaceRef		vlan);
+
+/*!
+	@function SCVLANInterfaceGetOptions
+	@discussion Returns the VLAN's options dictionary, or NULL.
+ */
+CFDictionaryRef
+SCVLANInterfaceGetOptions		(SCVLANInterfaceRef		vlan);
+
+/*!
+	@function SCVLANInterfaceSetPhysicalInterfaceAndTag
+	@discussion Changes the VLAN's physical interface and tag.
+ */
+Boolean
+SCVLANInterfaceSetPhysicalInterfaceAndTag
+					(SCVLANInterfaceRef		vlan,
+					 SCNetworkInterfaceRef		physical,
+					 CFNumberRef			tag);
+
+/*!
+	@function SCVLANInterfaceSetLocalizedDisplayName
+	@discussion Sets the VLAN's display name.
+ */
+Boolean
+SCVLANInterfaceSetLocalizedDisplayName	(SCVLANInterfaceRef		vlan,
+					 CFStringRef			newName);
+
+/*!
+	@function SCVLANInterfaceSetOptions
+	@discussion Sets the VLAN's options dictionary.
+ */
+Boolean
+SCVLANInterfaceSetOptions		(SCVLANInterfaceRef		vlan,
+					 CFDictionaryRef		newOptions);
 
 __END_DECLS
 

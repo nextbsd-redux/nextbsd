@@ -627,4 +627,14 @@ if [ ! -x "$scnetsettest" ]; then
 fi
 "$scnetsettest" || true	# marker (SC-NETSET-OK/FAIL) gates in boot-test.sh
 
+# SC-VLAN — SCNetworkConfiguration VLAN virtual interface: create a
+# VLAN on the e1000 interface, check its physical interface / tag /
+# name / options, commit, reopen and confirm it persisted.
+scvlantest=/usr/tests/freebsd-launchd-mach/scvlantest
+if [ ! -x "$scvlantest" ]; then
+    echo "SC-VLAN-FAIL: $scvlantest missing"
+    exit 1
+fi
+"$scvlantest" || true	# marker (SC-VLAN-OK/FAIL) gates in boot-test.sh
+
 exit 0
