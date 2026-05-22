@@ -658,6 +658,18 @@ expect {
     "IOKIT-MATCH-OK" { puts "\nOK: libIOKit properties + matching work" }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: IOKIT-IOREG marker not seen"
+        exit 1
+    }
+    "IOKIT-IOREG-FAIL" {
+        puts "\nFAIL: ioreg(8) failed"
+        exit 1
+    }
+    "IOKIT-IOREG-OK" { puts "\nOK: ioreg(8) works (K1 success marker)" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"

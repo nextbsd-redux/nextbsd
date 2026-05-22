@@ -1418,6 +1418,26 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/iokitmatchtest" \
     || { echo "FAIL: iokitmatchtest not built"; exit 1; }
 echo "==> iokitmatchtest built"
 
+# ioreg(8) — libIOKit iter 3 registry introspection tool. Walks the
+# hwregd registry via the IOKit facade and prints the tree (+
+# properties with -l), modelled on macOS ioreg. The K1 success marker
+# in the IOKit-userland port plan ("ioreg -l works"). Installs to
+# /usr/sbin/ioreg. run.sh runs it and emits IOKIT-IOREG-OK/FAIL.
+echo "==> building ioreg(8)"
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/sbin/ioreg" \
+   "$ROOT/src/libIOKit/ioreg.c" \
+   -lIOKit -lCoreFoundation -lsystem_kernel -llaunch -lpthread
+test -x "$WORK/rootfs/usr/sbin/ioreg" \
+    || { echo "FAIL: /usr/sbin/ioreg not installed or not executable"; exit 1; }
+chroot "$WORK/rootfs" ldd /usr/sbin/ioreg \
+    | grep -q "libIOKit.so.* => /usr/lib/system/" \
+    || { echo "FAIL: ldd doesn't resolve ioreg to /usr/lib/system/libIOKit.so"; exit 1; }
+echo "==> ioreg(8) built + installed at /usr/sbin/ioreg"
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at
