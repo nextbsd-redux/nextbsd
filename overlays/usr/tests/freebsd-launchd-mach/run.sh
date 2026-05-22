@@ -549,4 +549,13 @@ if [ ! -x "$scmultitest" ]; then
 fi
 "$scmultitest" || true	# marker (SC-MULTI-OK/FAIL) gates in boot-test.sh
 
+# SC-PREFS — SCPreferences read/edit/commit: open a preferences file,
+# set values, commit, re-open and confirm they persisted, then remove.
+scprefstest=/usr/tests/freebsd-launchd-mach/scprefstest
+if [ ! -x "$scprefstest" ]; then
+    echo "SC-PREFS-FAIL: $scprefstest missing"
+    exit 1
+fi
+"$scprefstest" || true	# marker (SC-PREFS-OK/FAIL) gates in boot-test.sh
+
 exit 0

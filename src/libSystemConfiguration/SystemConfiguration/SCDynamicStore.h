@@ -82,7 +82,12 @@ enum {
 	kSCStatusKeyExists		= 1005,	/* key already defined */
 	kSCStatusNoStoreSession		= 2001,	/* no open store session */
 	kSCStatusNoStoreServer		= 2002,	/* configd not (no longer) available */
-	kSCStatusNotifierActive		= 2003	/* notifier already active */
+	kSCStatusNotifierActive		= 2003,	/* notifier already active */
+	kSCStatusNoPrefsSession		= 5001,	/* no open preferences session */
+	kSCStatusPrefsBusy		= 5002,	/* preferences update in progress */
+	kSCStatusNoConfigFile		= 5003,	/* no configuration file */
+	kSCStatusStale			= 5005,	/* write attempted on stale prefs */
+	kSCStatusAccessError		= 5006	/* permission/authorization failure */
 };
 #endif	/* !_CONFIG_TYPES_H */
 

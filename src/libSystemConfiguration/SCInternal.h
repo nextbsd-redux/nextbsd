@@ -35,6 +35,18 @@
 #define kSCStatusNoStoreServer	2002
 #endif
 
+/*
+ * SCPreferences status codes — likewise client-side, absent from
+ * config_types.h. Guarded the same way.
+ */
+#ifndef kSCStatusNoPrefsSession
+#define kSCStatusNoPrefsSession	5001
+#define kSCStatusPrefsBusy	5002
+#define kSCStatusNoConfigFile	5003
+#define kSCStatusStale		5005
+#define kSCStatusAccessError	5006
+#endif
+
 /* Notification delivery status (SCNotify.c). */
 enum {
 	NotifierNotRegistered = 0,
