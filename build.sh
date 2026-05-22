@@ -1329,6 +1329,24 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scbondtest" \
     || { echo "FAIL: scbondtest not built"; exit 1; }
 echo "==> scbondtest built"
 
+# scbridgetest — libSystemConfiguration SCNetworkConfiguration iter 7
+# test client. Creates an SCBridgeInterface, adds the e1000 interface
+# as a member, checks the member list / name / options / the
+# AllowConfiguredMembers flag, commits, reopens and confirms it
+# persisted, then removes it. run.sh runs it and checks for the
+# SC-BRIDGE-OK marker.
+echo "==> building scbridgetest"
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scbridgetest" \
+   "$ROOT/src/libSystemConfiguration/scbridgetest.c" \
+   -lSystemConfiguration -lCoreFoundation -lsystem_kernel -llaunch -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scbridgetest" \
+    || { echo "FAIL: scbridgetest not built"; exit 1; }
+echo "==> scbridgetest built"
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at
