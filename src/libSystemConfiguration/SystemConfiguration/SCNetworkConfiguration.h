@@ -564,6 +564,82 @@ Boolean
 SCVLANInterfaceSetOptions		(SCVLANInterfaceRef		vlan,
 					 CFDictionaryRef		newOptions);
 
+/* --------------------------------------------------------------------
+ * SCBondInterface — link-aggregation virtual interfaces
+ * ------------------------------------------------------------------ */
+
+/*!
+	@function SCBondInterfaceCopyAll
+	@discussion Returns every bond interface stored in `prefs`.
+	@result a CFArray of SCBondInterfaceRef (caller releases).
+ */
+CFArrayRef
+SCBondInterfaceCopyAll			(SCPreferencesRef		prefs);
+
+/*!
+	@function SCBondInterfaceCopyAvailableMemberInterfaces
+	@discussion Returns the interfaces available to be bond members
+		— hardware interfaces not already in a bond.
+	@result a CFArray of SCNetworkInterfaceRef (caller releases).
+ */
+CFArrayRef
+SCBondInterfaceCopyAvailableMemberInterfaces
+					(SCPreferencesRef		prefs);
+
+/*!
+	@function SCBondInterfaceCreate
+	@discussion Creates a new, empty bond interface in `prefs`.
+		Release the returned value.
+ */
+SCBondInterfaceRef
+SCBondInterfaceCreate			(SCPreferencesRef		prefs);
+
+/*!
+	@function SCBondInterfaceRemove
+	@discussion Removes the bond interface from the preferences.
+ */
+Boolean
+SCBondInterfaceRemove			(SCBondInterfaceRef		bond);
+
+/*!
+	@function SCBondInterfaceGetMemberInterfaces
+	@discussion Returns the bond's member interfaces. Owned by the
+		bond.
+ */
+CFArrayRef
+SCBondInterfaceGetMemberInterfaces	(SCBondInterfaceRef		bond);
+
+/*!
+	@function SCBondInterfaceGetOptions
+	@discussion Returns the bond's options dictionary, or NULL.
+ */
+CFDictionaryRef
+SCBondInterfaceGetOptions		(SCBondInterfaceRef		bond);
+
+/*!
+	@function SCBondInterfaceSetMemberInterfaces
+	@discussion Sets the bond's member interfaces.
+ */
+Boolean
+SCBondInterfaceSetMemberInterfaces	(SCBondInterfaceRef		bond,
+					 CFArrayRef			members);
+
+/*!
+	@function SCBondInterfaceSetLocalizedDisplayName
+	@discussion Sets the bond's display name.
+ */
+Boolean
+SCBondInterfaceSetLocalizedDisplayName	(SCBondInterfaceRef		bond,
+					 CFStringRef			newName);
+
+/*!
+	@function SCBondInterfaceSetOptions
+	@discussion Sets the bond's options dictionary.
+ */
+Boolean
+SCBondInterfaceSetOptions		(SCBondInterfaceRef		bond,
+					 CFDictionaryRef		newOptions);
+
 __END_DECLS
 
 #endif	/* _SCNETWORKCONFIGURATION_H */

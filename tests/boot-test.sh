@@ -610,6 +610,18 @@ expect {
     "SC-VLAN-OK" { puts "\nOK: SCVLANInterface works" }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: SC-BOND marker not seen"
+        exit 1
+    }
+    "SC-BOND-FAIL" {
+        puts "\nFAIL: SCBondInterface failed"
+        exit 1
+    }
+    "SC-BOND-OK" { puts "\nOK: SCBondInterface works" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"

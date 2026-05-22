@@ -1312,6 +1312,23 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scvlantest" \
     || { echo "FAIL: scvlantest not built"; exit 1; }
 echo "==> scvlantest built"
 
+# scbondtest — libSystemConfiguration SCNetworkConfiguration iter 6
+# test client. Creates an SCBondInterface, adds the e1000 interface as
+# a member, checks the member list / name / options / availability,
+# commits, reopens and confirms it persisted, then removes it. run.sh
+# runs it and checks for the SC-BOND-OK marker.
+echo "==> building scbondtest"
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scbondtest" \
+   "$ROOT/src/libSystemConfiguration/scbondtest.c" \
+   -lSystemConfiguration -lCoreFoundation -lsystem_kernel -llaunch -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scbondtest" \
+    || { echo "FAIL: scbondtest not built"; exit 1; }
+echo "==> scbondtest built"
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at

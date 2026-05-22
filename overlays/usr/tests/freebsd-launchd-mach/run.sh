@@ -637,4 +637,14 @@ if [ ! -x "$scvlantest" ]; then
 fi
 "$scvlantest" || true	# marker (SC-VLAN-OK/FAIL) gates in boot-test.sh
 
+# SC-BOND — SCNetworkConfiguration bond virtual interface: create a
+# bond, add the e1000 interface as a member, check the member list /
+# name / options, commit, reopen and confirm it persisted.
+scbondtest=/usr/tests/freebsd-launchd-mach/scbondtest
+if [ ! -x "$scbondtest" ]; then
+    echo "SC-BOND-FAIL: $scbondtest missing"
+    exit 1
+fi
+"$scbondtest" || true	# marker (SC-BOND-OK/FAIL) gates in boot-test.sh
+
 exit 0
