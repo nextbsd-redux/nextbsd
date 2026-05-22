@@ -1144,6 +1144,22 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scrltest" \
     || { echo "FAIL: scrltest not built"; exit 1; }
 echo "==> scrltest built"
 
+# scmultitest — libSystemConfiguration iter 4 batch get/set test client.
+# Exercises SCDynamicStoreSetMultiple / SCDynamicStoreCopyMultiple
+# against the live configd. run.sh runs it and checks for the
+# SC-MULTI-OK marker.
+echo "==> building scmultitest"
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scmultitest" \
+   "$ROOT/src/libSystemConfiguration/scmultitest.c" \
+   -lSystemConfiguration -lCoreFoundation -lsystem_kernel -llaunch -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scmultitest" \
+    || { echo "FAIL: scmultitest not built"; exit 1; }
+echo "==> scmultitest built"
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at

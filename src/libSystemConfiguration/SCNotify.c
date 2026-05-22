@@ -32,55 +32,6 @@
 #pragma mark -
 #pragma mark Watch set / changed-key list
 
-/*
- * Encode a CFArray of CFString keys into configd's wire key-list form
- * ([uint32 LE len][bytes] records). Writes into buf (capacity cap) and
- * stores the byte count in *outLen. Returns 0, or -1 on a bad array
- * element or if the records do not fit.
- */
-static int
-encode_keylist(CFArrayRef array, uint8_t *buf, size_t cap, size_t *outLen)
-{
-	CFIndex	i;
-	CFIndex	n;
-	size_t	off	= 0;
-
-	*outLen = 0;
-	if (array == NULL) {
-		return 0;
-	}
-	if (CFGetTypeID(array) != CFArrayGetTypeID()) {
-		return -1;
-	}
-
-	n = CFArrayGetCount(array);
-	for (i = 0; i < n; i++) {
-		CFStringRef	key	= CFArrayGetValueAtIndex(array, i);
-		CFDataRef	keyData;
-		int		rc;
-
-		if ((key == NULL) || (CFGetTypeID(key) != CFStringGetTypeID())) {
-			return -1;
-		}
-		keyData = CFStringCreateExternalRepresentation(NULL, key,
-							       kCFStringEncodingUTF8,
-							       0);
-		if (keyData == NULL) {
-			return -1;
-		}
-		rc = wire_keylist_put(buf, cap, &off,
-				      CFDataGetBytePtr(keyData),
-				      (size_t)CFDataGetLength(keyData));
-		CFRelease(keyData);
-		if (rc != 0) {
-			return -1;
-		}
-	}
-
-	*outLen = off;
-	return 0;
-}
-
 Boolean
 SCDynamicStoreSetNotificationKeys(SCDynamicStoreRef	store,
 				  CFArrayRef		keys,
@@ -103,8 +54,8 @@ SCDynamicStoreSetNotificationKeys(SCDynamicStoreRef	store,
 		return FALSE;
 	}
 
-	if ((encode_keylist(keys, keyBuf, sizeof(keyBuf), &keyLen) != 0) ||
-	    (encode_keylist(patterns, patternBuf, sizeof(patternBuf), &patternLen) != 0)) {
+	if ((_SCEncodeKeyList(keys, keyBuf, sizeof(keyBuf), &keyLen) != 0) ||
+	    (_SCEncodeKeyList(patterns, patternBuf, sizeof(patternBuf), &patternLen) != 0)) {
 		_SCErrorSet(kSCStatusInvalidArgument);
 		return FALSE;
 	}
