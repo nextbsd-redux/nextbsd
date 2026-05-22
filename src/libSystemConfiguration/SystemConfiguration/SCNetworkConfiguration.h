@@ -39,6 +39,7 @@
 
 #include <sys/cdefs.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <SystemConfiguration/SCPreferences.h>
 
 /*!
 	@typedef SCNetworkInterfaceRef
@@ -180,6 +181,169 @@ SCNetworkInterfaceGetSupportedInterfaceTypes
 CFArrayRef
 SCNetworkInterfaceGetSupportedProtocolTypes
 					(SCNetworkInterfaceRef		interface);
+
+/* --------------------------------------------------------------------
+ * SCNetworkProtocol
+ * ------------------------------------------------------------------ */
+
+/*!
+	@function SCNetworkProtocolGetTypeID
+	@discussion Returns the CoreFoundation type identifier of all
+		SCNetworkProtocol instances.
+ */
+CFTypeID
+SCNetworkProtocolGetTypeID		(void);
+
+/*!
+	@function SCNetworkProtocolGetProtocolType
+	@discussion Returns the protocol type — one of the
+		kSCNetworkProtocolType* constants. Owned by the protocol.
+ */
+CFStringRef
+SCNetworkProtocolGetProtocolType	(SCNetworkProtocolRef		protocol);
+
+/*!
+	@function SCNetworkProtocolGetConfiguration
+	@discussion Returns the protocol's configuration dictionary, or
+		NULL if it has none. Owned by the protocol.
+ */
+CFDictionaryRef
+SCNetworkProtocolGetConfiguration	(SCNetworkProtocolRef		protocol);
+
+/*!
+	@function SCNetworkProtocolSetConfiguration
+	@discussion Stores the protocol's configuration dictionary. The
+		protocol's enabled/disabled state is preserved.
+ */
+Boolean
+SCNetworkProtocolSetConfiguration	(SCNetworkProtocolRef		protocol,
+					 CFDictionaryRef		config);
+
+/*!
+	@function SCNetworkProtocolGetEnabled
+	@discussion Returns whether the protocol is enabled.
+ */
+Boolean
+SCNetworkProtocolGetEnabled		(SCNetworkProtocolRef		protocol);
+
+/*!
+	@function SCNetworkProtocolSetEnabled
+	@discussion Enables or disables the protocol.
+ */
+Boolean
+SCNetworkProtocolSetEnabled		(SCNetworkProtocolRef		protocol,
+					 Boolean			enabled);
+
+/* --------------------------------------------------------------------
+ * SCNetworkService
+ * ------------------------------------------------------------------ */
+
+/*!
+	@function SCNetworkServiceGetTypeID
+	@discussion Returns the CoreFoundation type identifier of all
+		SCNetworkService instances.
+ */
+CFTypeID
+SCNetworkServiceGetTypeID		(void);
+
+/*!
+	@function SCNetworkServiceCreate
+	@discussion Creates a new network service bound to `interface`,
+		stored in `prefs`. Release the returned value.
+ */
+SCNetworkServiceRef
+SCNetworkServiceCreate			(SCPreferencesRef		prefs,
+					 SCNetworkInterfaceRef		interface);
+
+/*!
+	@function SCNetworkServiceCopy
+	@discussion Returns the existing network service `serviceID` in
+		`prefs`, or NULL. Release the returned value.
+ */
+SCNetworkServiceRef
+SCNetworkServiceCopy			(SCPreferencesRef		prefs,
+					 CFStringRef			serviceID);
+
+/*!
+	@function SCNetworkServiceCopyAll
+	@discussion Returns every network service stored in `prefs`.
+	@result a CFArray of SCNetworkServiceRef (caller releases).
+ */
+CFArrayRef
+SCNetworkServiceCopyAll			(SCPreferencesRef		prefs);
+
+/*!
+	@function SCNetworkServiceGetServiceID
+	@discussion Returns the service's identifier. Owned by the service.
+ */
+CFStringRef
+SCNetworkServiceGetServiceID		(SCNetworkServiceRef		service);
+
+/*!
+	@function SCNetworkServiceGetName
+	@discussion Returns the service's name — the stored name, or the
+		associated interface's name if none has been set.
+ */
+CFStringRef
+SCNetworkServiceGetName			(SCNetworkServiceRef		service);
+
+/*!
+	@function SCNetworkServiceSetName
+	@discussion Sets the service's name.
+ */
+Boolean
+SCNetworkServiceSetName			(SCNetworkServiceRef		service,
+					 CFStringRef			name);
+
+/*!
+	@function SCNetworkServiceGetInterface
+	@discussion Returns the interface the service is bound to. Owned
+		by the service.
+ */
+SCNetworkInterfaceRef
+SCNetworkServiceGetInterface		(SCNetworkServiceRef		service);
+
+/*!
+	@function SCNetworkServiceRemove
+	@discussion Removes the service from the preferences.
+ */
+Boolean
+SCNetworkServiceRemove			(SCNetworkServiceRef		service);
+
+/*!
+	@function SCNetworkServiceCopyProtocol
+	@discussion Returns the service's configured protocol of type
+		`protocolType`, or NULL. Release the returned value.
+ */
+SCNetworkProtocolRef
+SCNetworkServiceCopyProtocol		(SCNetworkServiceRef		service,
+					 CFStringRef			protocolType);
+
+/*!
+	@function SCNetworkServiceCopyProtocols
+	@discussion Returns every protocol configured on the service.
+	@result a CFArray of SCNetworkProtocolRef (caller releases).
+ */
+CFArrayRef
+SCNetworkServiceCopyProtocols		(SCNetworkServiceRef		service);
+
+/*!
+	@function SCNetworkServiceAddProtocolType
+	@discussion Adds an (empty) protocol of type `protocolType` to the
+		service; configure it via SCNetworkProtocolSetConfiguration.
+ */
+Boolean
+SCNetworkServiceAddProtocolType		(SCNetworkServiceRef		service,
+					 CFStringRef			protocolType);
+
+/*!
+	@function SCNetworkServiceRemoveProtocolType
+	@discussion Removes the protocol of type `protocolType` from the
+		service.
+ */
+Boolean
+SCNetworkServiceRemoveProtocolType	(SCNetworkServiceRef		service,
+					 CFStringRef			protocolType);
 
 __END_DECLS
 

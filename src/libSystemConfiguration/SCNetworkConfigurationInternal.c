@@ -10,6 +10,8 @@
  * plist, so they match Apple's exactly.
  */
 
+#include "SCNetworkConfigurationInternal.h"
+
 #include <CoreFoundation/CoreFoundation.h>
 #include <SystemConfiguration/SCNetworkConfiguration.h>
 
@@ -35,3 +37,17 @@ const CFStringRef kSCNetworkProtocolTypeIPv4		= CFSTR("IPv4");
 const CFStringRef kSCNetworkProtocolTypeIPv6		= CFSTR("IPv6");
 const CFStringRef kSCNetworkProtocolTypeProxies		= CFSTR("Proxies");
 const CFStringRef kSCNetworkProtocolTypeSMB		= CFSTR("SMB");
+
+
+CFStringRef
+__SCNetworkServiceEntityPath(CFStringRef serviceID, CFStringRef entity)
+{
+	if (entity == NULL) {
+		return CFStringCreateWithFormat(NULL, NULL, CFSTR("/%@/%@"),
+						kSCPrefNetworkServices,
+						serviceID);
+	}
+	return CFStringCreateWithFormat(NULL, NULL, CFSTR("/%@/%@/%@"),
+					kSCPrefNetworkServices,
+					serviceID, entity);
+}

@@ -140,12 +140,7 @@ SCNetworkInterfaceGetTypeID(void)
 	return __kSCNetworkInterfaceTypeID;
 }
 
-static Boolean
-isA_SCNetworkInterface(SCNetworkInterfaceRef interface)
-{
-	return ((interface != NULL) &&
-		(CFGetTypeID(interface) == SCNetworkInterfaceGetTypeID()));
-}
+/* isA_SCNetworkInterface() is a shared inline in the internal header. */
 
 SCNetworkInterfacePrivateRef
 __SCNetworkInterfaceCreatePrivate(CFAllocatorRef allocator)
@@ -273,6 +268,20 @@ __SCNetworkInterfaceLocalizedName(CFStringRef type)
 	return CFStringCreateWithCString(NULL, s, kCFStringEncodingUTF8);
 }
 
+/* the protocol types configurable on a hardware network interface */
+static CFArrayRef
+__SCNetworkInterfaceCopyProtocolTypes(void)
+{
+	const void	*protos[5];
+
+	protos[0] = kSCNetworkProtocolTypeIPv4;
+	protos[1] = kSCNetworkProtocolTypeIPv6;
+	protos[2] = kSCNetworkProtocolTypeDNS;
+	protos[3] = kSCNetworkProtocolTypeProxies;
+	protos[4] = kSCNetworkProtocolTypeSMB;
+	return CFArrayCreate(NULL, protos, 5, &kCFTypeArrayCallBacks);
+}
+
 /* build an interface object from one getifaddrs AF_LINK record */
 static SCNetworkInterfaceRef
 __SCNetworkInterfaceCreateForLink(const char *name,
@@ -280,7 +289,6 @@ __SCNetworkInterfaceCreateForLink(const char *name,
 {
 	CFStringRef			type;
 	SCNetworkInterfacePrivateRef	ip;
-	const void			*protos[5];
 
 	type = __SCNetworkInterfaceTypeForLink(name, sdl->sdl_type);
 	if (type == NULL) {
@@ -312,13 +320,7 @@ __SCNetworkInterfaceCreateForLink(const char *name,
 	ip->name           = (CFStringRef)CFRetain(ip->localized_name);
 
 	/* the protocols configurable on a hardware interface */
-	protos[0] = kSCNetworkProtocolTypeIPv4;
-	protos[1] = kSCNetworkProtocolTypeIPv6;
-	protos[2] = kSCNetworkProtocolTypeDNS;
-	protos[3] = kSCNetworkProtocolTypeProxies;
-	protos[4] = kSCNetworkProtocolTypeSMB;
-	ip->supported_protocol_types =
-		CFArrayCreate(NULL, protos, 5, &kCFTypeArrayCallBacks);
+	ip->supported_protocol_types = __SCNetworkInterfaceCopyProtocolTypes();
 
 	return (SCNetworkInterfaceRef)ip;
 }
@@ -441,4 +443,98 @@ SCNetworkInterfaceGetSupportedProtocolTypes(SCNetworkInterfaceRef interface)
 		return NULL;
 	}
 	return ((SCNetworkInterfacePrivateRef)interface)->supported_protocol_types;
+}
+
+
+#pragma mark -
+#pragma mark Preferences entity bridge
+
+/*
+ * Serialize an interface into the dictionary stored at a service's
+ * "Interface" path. A hardware interface needs only its type and BSD
+ * device name; the localized name is kept so a removed interface still
+ * has a readable label. (Apple's entity also carries IORegistry detail
+ * — irrelevant without IOKit.)
+ */
+CFDictionaryRef
+__SCNetworkInterfaceCopyInterfaceEntity(SCNetworkInterfaceRef interface)
+{
+	SCNetworkInterfacePrivateRef	ip	= (SCNetworkInterfacePrivateRef)interface;
+	CFMutableDictionaryRef		entity;
+
+	entity = CFDictionaryCreateMutable(NULL, 0,
+					   &kCFTypeDictionaryKeyCallBacks,
+					   &kCFTypeDictionaryValueCallBacks);
+	if (ip->interface_type != NULL) {
+		CFDictionarySetValue(entity, kSCPropNetInterfaceType,
+				     ip->interface_type);
+		CFDictionarySetValue(entity, kSCPropNetInterfaceHardware,
+				     ip->interface_type);
+	}
+	if (ip->entity_device != NULL) {
+		CFDictionarySetValue(entity, kSCPropNetInterfaceDeviceName,
+				     ip->entity_device);
+	}
+	if (ip->localized_name != NULL) {
+		CFDictionarySetValue(entity, kSCPropUserDefinedName,
+				     ip->localized_name);
+	}
+	return entity;
+}
+
+/*
+ * Rebuild an interface from the dictionary stored at a service's
+ * "Interface" path. The reconstructed interface has no hardware address
+ * (the entity does not store one — it is matched live against the
+ * enumerated hardware). `service`, when non-NULL, binds the interface
+ * to its preferences session.
+ */
+SCNetworkInterfaceRef
+_SCNetworkInterfaceCreateWithEntity(CFAllocatorRef allocator,
+				    CFDictionaryRef entity,
+				    SCNetworkServiceRef service)
+{
+	SCNetworkInterfacePrivateRef	ip;
+	CFStringRef			type;
+	CFStringRef			device;
+
+	if ((entity == NULL) ||
+	    (CFGetTypeID(entity) != CFDictionaryGetTypeID())) {
+		_SCErrorSet(kSCStatusInvalidArgument);
+		return NULL;
+	}
+	type   = CFDictionaryGetValue(entity, kSCPropNetInterfaceType);
+	device = CFDictionaryGetValue(entity, kSCPropNetInterfaceDeviceName);
+
+	ip = __SCNetworkInterfaceCreatePrivate(allocator);
+	if (ip == NULL) {
+		return NULL;
+	}
+
+	if ((type != NULL) && (CFGetTypeID(type) == CFStringGetTypeID())) {
+		ip->interface_type = (CFStringRef)CFRetain(type);
+	} else {
+		ip->interface_type =
+			(CFStringRef)CFRetain(kSCNetworkInterfaceTypeEthernet);
+	}
+	if ((device != NULL) && (CFGetTypeID(device) == CFStringGetTypeID())) {
+		ip->entity_device = (CFStringRef)CFRetain(device);
+	}
+	ip->builtin		= TRUE;
+	ip->localized_name	= __SCNetworkInterfaceLocalizedName(ip->interface_type);
+	ip->name		= (CFStringRef)CFRetain(ip->localized_name);
+	ip->supported_protocol_types = __SCNetworkInterfaceCopyProtocolTypes();
+
+	if (service != NULL) {
+		SCNetworkServicePrivateRef	sp =
+			(SCNetworkServicePrivateRef)service;
+
+		if (sp->prefs != NULL) {
+			ip->prefs = (SCPreferencesRef)CFRetain(sp->prefs);
+		}
+		if (sp->serviceID != NULL) {
+			ip->serviceID = (CFStringRef)CFRetain(sp->serviceID);
+		}
+	}
+	return (SCNetworkInterfaceRef)ip;
 }
