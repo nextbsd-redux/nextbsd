@@ -1059,6 +1059,57 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/multitest" \
     || { echo "FAIL: multitest not built"; exit 1; }
 
 #
+# 3r3. build libSystemConfiguration (src/libSystemConfiguration/) —
+#      the SystemConfiguration client framework, iter 1. Wraps configd's
+#      config.defs MIG RPC in the CoreFoundation-typed SCDynamicStore*
+#      API. Builds after configd (it reuses the configUser.c MIG client
+#      stubs in $CONFIGD_MIG and configd's config_wire.c) and after
+#      libCoreFoundation + liblaunch, the libraries it links against.
+#      Installs /usr/lib/system/libSystemConfiguration.so + the public
+#      headers at /usr/include/SystemConfiguration/.
+#
+echo "==> building libSystemConfiguration (src/libSystemConfiguration)"
+# bsd.incs.mk installs INCS into INCSDIR but does not create it — make
+# the header subdir first (build.sh does the same for libxpc's xpc/).
+mkdir -p "$WORK/rootfs/usr/include/SystemConfiguration"
+make -C "$ROOT/src/libSystemConfiguration" \
+    DESTDIR="$WORK/rootfs" \
+    SYSROOT="$WORK/rootfs" \
+    MIGOUT="$CONFIGD_MIG" \
+    all install
+# Re-prime ldconfig hints now that libSystemConfiguration is installed.
+chroot "$WORK/rootfs" ldconfig -m /usr/lib /usr/lib/system
+ls -lh "$WORK/rootfs/usr/lib/system/libSystemConfiguration.so"
+test -f "$WORK/rootfs/usr/lib/system/libSystemConfiguration.so.1" \
+    || { echo "FAIL: libSystemConfiguration.so.1 not installed"; exit 1; }
+test -L "$WORK/rootfs/usr/lib/system/libSystemConfiguration.so" \
+    || { echo "FAIL: libSystemConfiguration.so dev symlink missing"; exit 1; }
+test -f "$WORK/rootfs/usr/include/SystemConfiguration/SCDynamicStore.h" \
+    || { echo "FAIL: SCDynamicStore.h header not installed"; exit 1; }
+chroot "$WORK/rootfs" ldconfig -r | grep -q libSystemConfiguration \
+    || { echo "FAIL: ldconfig hints missing libSystemConfiguration"; exit 1; }
+echo "==> libSystemConfiguration built + installed"
+
+# sctest — libSystemConfiguration iter 1 round-trip test client.
+# Exercises the SCDynamicStore* CF API (create / set / get / add /
+# remove / list) against the live configd. run.sh runs it and checks
+# for the SC-STORE-OK marker.
+echo "==> building sctest"
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/sctest" \
+   "$ROOT/src/libSystemConfiguration/sctest.c" \
+   -lSystemConfiguration -lCoreFoundation -lsystem_kernel -llaunch -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/sctest" \
+    || { echo "FAIL: sctest not built"; exit 1; }
+chroot "$WORK/rootfs" ldd /usr/tests/freebsd-launchd-mach/sctest \
+    | grep -q "libSystemConfiguration.so.* => /usr/lib/system/" \
+    || { echo "FAIL: ldd doesn't resolve sctest to /usr/lib/system/libSystemConfiguration.so"; exit 1; }
+echo "==> sctest built + ldd verified"
+
+#
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at
 #     Phase J0 (commit 455a727). This step:

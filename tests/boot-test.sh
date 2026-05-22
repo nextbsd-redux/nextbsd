@@ -453,6 +453,18 @@ expect {
     "CONFIGD-MULTI-OK" { puts "\nOK: configd batch routines work" }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: SC-STORE marker not seen"
+        exit 1
+    }
+    "SC-STORE-FAIL" {
+        puts "\nFAIL: SCDynamicStore client framework round-trip failed"
+        exit 1
+    }
+    "SC-STORE-OK" { puts "\nOK: SCDynamicStore client framework works" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"
