@@ -501,6 +501,18 @@ expect {
     "SC-MULTI-OK" { puts "\nOK: SCDynamicStore batch get/set works" }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: SC-PREFS marker not seen"
+        exit 1
+    }
+    "SC-PREFS-FAIL" {
+        puts "\nFAIL: SCPreferences read/edit/commit failed"
+        exit 1
+    }
+    "SC-PREFS-OK" { puts "\nOK: SCPreferences read/edit/commit works" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"

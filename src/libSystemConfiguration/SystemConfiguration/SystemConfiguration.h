@@ -17,8 +17,8 @@
  * SystemConfiguration.h — umbrella header for the SystemConfiguration
  * client framework (freebsd-launchd-mach port).
  *
- * iter 1 exposes only the SCDynamicStore API. The schema-definition
- * keys, SCPreferences, and the network-configuration APIs are later
+ * Exposes the SCDynamicStore and SCPreferences APIs. The schema-
+ * definition keys and the network-configuration APIs are later
  * iterations and will be added here as they land.
  */
 
@@ -26,5 +26,6 @@
 #define _SYSTEMCONFIGURATION_H
 
 #include <SystemConfiguration/SCDynamicStore.h>
+#include <SystemConfiguration/SCPreferences.h>
 
 #endif	/* _SYSTEMCONFIGURATION_H */

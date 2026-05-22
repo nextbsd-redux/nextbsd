@@ -85,6 +85,16 @@ SCErrorString(int status)
 		return "Configuration daemon not (no longer) available";
 	case kSCStatusNotifierActive :
 		return "Notifier is currently active";
+	case kSCStatusNoPrefsSession :
+		return "Preferences session not active";
+	case kSCStatusPrefsBusy :
+		return "Preferences update currently in progress";
+	case kSCStatusNoConfigFile :
+		return "Configuration file not found";
+	case kSCStatusStale :
+		return "Write attempted on stale version of object";
+	case kSCStatusAccessError :
+		return "Permission denied";
 	default :
 		return "Unknown error";
 	}

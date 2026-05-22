@@ -1160,6 +1160,22 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scmultitest" \
     || { echo "FAIL: scmultitest not built"; exit 1; }
 echo "==> scmultitest built"
 
+# scprefstest — libSystemConfiguration SCPreferences test client.
+# Exercises the SCPreferences read / edit / commit cycle: set values,
+# commit, re-open and confirm they persisted, list keys, remove. run.sh
+# runs it and checks for the SC-PREFS-OK marker.
+echo "==> building scprefstest"
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scprefstest" \
+   "$ROOT/src/libSystemConfiguration/scprefstest.c" \
+   -lSystemConfiguration -lCoreFoundation -lsystem_kernel -llaunch -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scprefstest" \
+    || { echo "FAIL: scprefstest not built"; exit 1; }
+echo "==> scprefstest built"
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at
