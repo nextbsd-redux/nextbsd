@@ -441,6 +441,18 @@ expect {
     "CONFIGD-LIST-OK" { puts "\nOK: configd key listing works" }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: CONFIGD-MULTI marker not seen"
+        exit 1
+    }
+    "CONFIGD-MULTI-FAIL" {
+        puts "\nFAIL: configd batch routines failed"
+        exit 1
+    }
+    "CONFIGD-MULTI-OK" { puts "\nOK: configd batch routines work" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"

@@ -11,6 +11,7 @@
 
 #include "config_session.h"
 #include "config_types.h"		/* kSCStatus*, CONFIG_DATA_MAX */
+#include "config_wire.h"		/* wire_keylist_put — notifychanges encoding */
 
 #include <mach/notify.h>		/* MACH_NOTIFY_NO_SENDERS */
 
@@ -357,6 +358,28 @@ session_watch_remove(mach_port_t port, const void *key, size_t klen)
 }
 
 int
+session_watch_clear(mach_port_t port)
+{
+	struct session *s = session_find(port);
+
+	if (s == NULL)
+		return kSCStatusNoStoreSession;
+
+	/* Drop every watch — both explicit keys and regex patterns. */
+	keylist_free(s->watch, s->n_watch);
+	s->watch = NULL;
+	s->n_watch = 0;
+	s->watch_cap = 0;
+
+	patternlist_free(s->patterns, s->n_patterns);
+	s->patterns = NULL;
+	s->n_patterns = 0;
+	s->patterns_cap = 0;
+
+	return kSCStatusOK;
+}
+
+int
 config_pattern_anchor(const void *pat, size_t plen, char *buf, size_t bufsz)
 {
 	const char	*p = pat;
@@ -469,7 +492,6 @@ ssize_t
 session_drain_changes(mach_port_t port, void *buf, size_t cap)
 {
 	struct session	*s = session_find(port);
-	uint8_t		*p = buf;
 	size_t		i;
 	size_t		off = 0;
 
@@ -477,15 +499,9 @@ session_drain_changes(mach_port_t port, void *buf, size_t cap)
 		return -1;
 
 	for (i = 0; i < s->n_changed; i++) {
-		size_t		klen = s->changed[i].klen;
-		uint32_t	l32 = (uint32_t)klen;
-
-		if (off + sizeof(l32) + klen > cap)
+		if (wire_keylist_put(buf, cap, &off, s->changed[i].key,
+		    s->changed[i].klen) != 0)
 			return -1;	/* would not fit the reply array */
-		memcpy(p + off, &l32, sizeof(l32));
-		off += sizeof(l32);
-		memcpy(p + off, s->changed[i].key, klen);
-		off += klen;
 	}
 
 	/* The client has now seen these — clear the pending list. */

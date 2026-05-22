@@ -9,7 +9,9 @@
 # backing configopen / configget / configset / configremove. iter 4
 # adds config_session.c — per-session ports, key watches and the
 # change-notification fan-out backing notifyadd / notifyviaport /
-# notifychanges.
+# notifychanges. iter 7 adds config_wire.c — the key-list / key-value
+# byte encodings the batch routines (notifyset / configget_m /
+# configset_m) carry in their inline payloads.
 #
 # Build:   cd src/configd && make SYSROOT=/path/to/rootfs MIGOUT=...
 # Install: make DESTDIR=/path/to/rootfs install
@@ -17,7 +19,7 @@
 PROG=		configd
 MAN=
 
-SRCS=		configd.c config_store.c config_session.c
+SRCS=		configd.c config_store.c config_session.c config_wire.c
 
 # configServer.c — MIG-generated server demux for config.defs.
 # configUser.c — MIG-generated client stubs, linked for the in-process
