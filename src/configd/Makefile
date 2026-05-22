@@ -16,17 +16,20 @@ MAN=
 
 SRCS=		configd.c config_store.c
 
-# configServer.c — MIG-generated server demux + routine stubs for
-# config.defs. build.sh runs mig and passes MIGOUT=; a bare standalone
-# build without it fails at the generated #include "configServer.h",
-# which is expected — configd cannot build without the MIG output.
+# configServer.c — MIG-generated server demux for config.defs.
+# configUser.c — MIG-generated client stubs, linked for the in-process
+# `configd --selftest` round trip. build.sh runs mig and passes
+# MIGOUT=; a bare standalone build without it fails at the generated
+# #include "configServer.h", which is expected — configd cannot build
+# without the MIG output.
 MIGOUT?=
 .if !empty(MIGOUT)
 .PATH:			${MIGOUT}
-SRCS+=			configServer.c
+SRCS+=			configServer.c configUser.c
 CFLAGS+=		-I${MIGOUT}
 CFLAGS+=		-I${.CURDIR}	# generated stubs #include "config_types.h"
 CFLAGS.configServer.c+=	-w
+CFLAGS.configUser.c+=	-w
 # The MIG stubs pull <mach/notify.h>, which redefines the MACH_NOTIFY_*
 # macros <mach/message.h> also defines (identical values, whitespace
 # differs) — a benign clash in the vendored mach headers.

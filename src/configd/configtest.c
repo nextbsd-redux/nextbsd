@@ -7,13 +7,13 @@
  * it back and checks the value round-trips byte for byte (configget),
  * removes it (configremove), and confirms a get of the removed key
  * now reports kSCStatusNoKey. Prints CONFIGD-STORE-OK on success —
- * the CI boot test (run.sh / boot-test.sh) matches that marker.
+ * the CI boot test (run.sh / boot-test.sh) matches that marker. It
+ * speaks config.defs directly via the MIG user stub configUser.c,
+ * the same way hwregquery speaks hwreg.defs.
  *
- * This is a protocol-level client: it speaks config.defs directly
- * (built against the MIG user stub configUser.c), the same way
- * hwregquery speaks hwreg.defs. The CF-typed SystemConfiguration
- * framework — SCDynamicStoreCreate / SCDynamicStoreCopyValue / ... —
- * is a later iteration, for when a real consumer needs that API.
+ * config.defs carries the key/value payloads inline in bounded byte
+ * arrays (xmlData / xmlDataOut), so a value buffer is passed by the
+ * caller rather than returned out-of-line.
  */
 
 #include <mach/mach.h>
@@ -40,7 +40,7 @@ main(void)
 	int			newInstance = 0;
 	const char		*key = "configtest:roundtrip";
 	const char		*val = "configd iter 3 round-trip value";
-	xmlDataOut_t		got = NULL;
+	xmlDataOut		got;
 	mach_msg_type_number_t	gotCnt = 0;
 
 	kr = bootstrap_look_up(bootstrap_port, SERVICE, &server);
@@ -51,8 +51,8 @@ main(void)
 	}
 
 	/* Open a store session. */
-	kr = configopen(server, "configtest",
-	    (mach_msg_type_number_t)strlen("configtest"), "", 0,
+	kr = configopen(server, (uint8_t *)"configtest",
+	    (mach_msg_type_number_t)strlen("configtest"), (uint8_t *)"", 0,
 	    &session, &status);
 	if (kr != KERN_SUCCESS || status != kSCStatusOK) {
 		printf("CONFIGD-STORE-FAIL: configopen kr=0x%x status=%d\n",
@@ -61,9 +61,9 @@ main(void)
 	}
 
 	/* Store a key. */
-	kr = configset(session, key, (mach_msg_type_number_t)strlen(key),
-	    val, (mach_msg_type_number_t)strlen(val), 0, &newInstance,
-	    &status);
+	kr = configset(session, (uint8_t *)key,
+	    (mach_msg_type_number_t)strlen(key), (uint8_t *)val,
+	    (mach_msg_type_number_t)strlen(val), 0, &newInstance, &status);
 	if (kr != KERN_SUCCESS || status != kSCStatusOK) {
 		printf("CONFIGD-STORE-FAIL: configset kr=0x%x status=%d\n",
 		    (unsigned)kr, status);
@@ -71,8 +71,9 @@ main(void)
 	}
 
 	/* Read it back; the value must round-trip byte for byte. */
-	kr = configget(session, key, (mach_msg_type_number_t)strlen(key),
-	    &got, &gotCnt, &newInstance, &status);
+	kr = configget(session, (uint8_t *)key,
+	    (mach_msg_type_number_t)strlen(key), got, &gotCnt, &newInstance,
+	    &status);
 	if (kr != KERN_SUCCESS || status != kSCStatusOK) {
 		printf("CONFIGD-STORE-FAIL: configget kr=0x%x status=%d\n",
 		    (unsigned)kr, status);
@@ -87,7 +88,7 @@ main(void)
 	}
 
 	/* Remove the key. */
-	kr = configremove(session, key,
+	kr = configremove(session, (uint8_t *)key,
 	    (mach_msg_type_number_t)strlen(key), &status);
 	if (kr != KERN_SUCCESS || status != kSCStatusOK) {
 		printf("CONFIGD-STORE-FAIL: configremove kr=0x%x status=%d\n",
@@ -96,10 +97,10 @@ main(void)
 	}
 
 	/* A get of the removed key must now report "no such key". */
-	got = NULL;
 	gotCnt = 0;
-	kr = configget(session, key, (mach_msg_type_number_t)strlen(key),
-	    &got, &gotCnt, &newInstance, &status);
+	kr = configget(session, (uint8_t *)key,
+	    (mach_msg_type_number_t)strlen(key), got, &gotCnt, &newInstance,
+	    &status);
 	if (kr != KERN_SUCCESS || status != kSCStatusNoKey) {
 		printf("CONFIGD-STORE-FAIL: get-after-remove kr=0x%x "
 		    "status=%d (expected kSCStatusNoKey %d)\n",

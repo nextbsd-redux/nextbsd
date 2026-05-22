@@ -35,6 +35,8 @@
 #ifndef _CONFIG_TYPES_H
 #define _CONFIG_TYPES_H
 
+#include <stdint.h>	/* uint8_t — config.defs' config_byte_t element ctype */
+
 /*
  * Keep the MIG IPC functions at plain external linkage.
  */
@@ -56,14 +58,14 @@
 #define SCD_SERVER	"com.apple.SystemConfiguration.configd"
 
 /*
- * Input arguments: serialized key's, list delimiters, ...
- *	(sent as out-of-line data in a message)
+ * config.defs' xmlData / xmlDataOut MIG types. MIG records a `type`
+ * declaration's wire layout but emits no C typedef for it — the
+ * generated stubs use the name as-is and expect this imported header
+ * to define it (cf. hwregd's hwreg_mig_types.h). The bound matches
+ * config.defs' array[*:8192]; the payload is carried inline in the
+ * message, so the type is the byte array itself, not a pointer.
  */
-typedef const void * xmlData_t;
-
-/* Output arguments: serialized data, lists, ...
- *	(sent as out-of-line data in a message)
- */
-typedef const void * xmlDataOut_t;
+typedef uint8_t xmlData[8192];
+typedef uint8_t xmlDataOut[8192];
 
 #endif	/* !_CONFIG_TYPES_H */
