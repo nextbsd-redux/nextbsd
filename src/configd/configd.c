@@ -26,7 +26,8 @@
  *     notification port, and drain the keys that changed. configset /
  *     configremove / confignotify fan a change out to every watching
  *     session.
- * configlist, the multi-get/set variants and snapshot remain stubs.
+ *   - configlist (iter 6) lists store keys by prefix or POSIX regex.
+ * notifyset, the multi-get/set variants and snapshot remain stubs.
  *
  * config.defs carries the key/value payloads INLINE in bounded arrays
  * — out-of-line Mach data is broken cross-process in this port's
@@ -45,6 +46,7 @@
 #include <servers/bootstrap.h>
 
 #include <pthread.h>
+#include <regex.h>			/* regcomp / regexec — configlist isRegex */
 #include <signal.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -96,6 +98,28 @@ clog(const char *fmt, ...)
 }
 
 /*
+ * keylist_append — append one [uint32 little-endian length][bytes]
+ * record to `buf` at offset *off (capacity cap), advancing *off.
+ * Returns 0, or -1 if the record would not fit. configlist emits its
+ * key list in this encoding — the same one session_drain_changes uses
+ * for notifychanges.
+ */
+static int
+keylist_append(uint8_t *buf, size_t cap, size_t *off,
+    const void *rec, size_t rlen)
+{
+	uint32_t l32 = (uint32_t)rlen;
+
+	if (*off + sizeof(l32) + rlen > cap)
+		return -1;
+	memcpy(buf + *off, &l32, sizeof(l32));
+	*off += sizeof(l32);
+	memcpy(buf + *off, rec, rlen);
+	*off += rlen;
+	return 0;
+}
+
+/*
  * MIG routine handlers — config_server() dispatches to these. An
  * xmlData / xmlDataOut argument is an inline byte buffer (config.defs
  * carries the payloads inline); the matching mach_msg_type_number_t
@@ -131,14 +155,74 @@ _configopen(mach_port_t server, xmlData name, mach_msg_type_number_t nameCnt,
 	return KERN_SUCCESS;
 }
 
+/*
+ * configlist (SCDynamicStoreCopyKeyList) — return the store keys that
+ * match `key`: with isRegex set, the keys matching `key` as a POSIX
+ * regex; otherwise the keys prefixed by `key` (an empty `key` lists
+ * every key). The result is the keylist_append [len][bytes] encoding.
+ */
 kern_return_t
 _configlist(mach_port_t server, xmlData key, mach_msg_type_number_t keyCnt,
     int isRegex, xmlDataOut list, mach_msg_type_number_t *listCnt,
     int *status)
 {
-	(void)server; (void)key; (void)keyCnt; (void)isRegex; (void)list;
+	size_t	count, i, off = 0;
+	regex_t	re;
+	int	have_re = 0;
+
+	(void)server;
 	*listCnt = 0;
-	*status = kSCStatusFailed;
+
+	if (isRegex != 0) {
+		char buf[CONFIG_DATA_MAX + 3];	/* ^ + pattern + $ + NUL */
+
+		if (config_pattern_anchor(key, keyCnt, buf, sizeof(buf)) != 0 ||
+		    regcomp(&re, buf, REG_EXTENDED) != 0) {
+			*status = kSCStatusInvalidArgument;
+			return KERN_SUCCESS;
+		}
+		have_re = 1;
+	}
+
+	count = store_count();
+	for (i = 0; i < count; i++) {
+		const void	*skey;
+		size_t		sklen;
+		int		match;
+
+		if (store_key_at(i, &skey, &sklen) != 0)
+			continue;
+
+		if (isRegex != 0) {
+			char keystr[CONFIG_DATA_MAX + 1];	/* NUL-term */
+
+			if (sklen >= sizeof(keystr))
+				continue;	/* key too long to match */
+			memcpy(keystr, skey, sklen);
+			keystr[sklen] = '\0';
+			match = (regexec(&re, keystr, 0, NULL, 0) == 0);
+		} else {
+			/* prefix match; an empty key matches every key */
+			match = (keyCnt == 0) ||
+			    (sklen >= keyCnt &&
+			     memcmp(skey, key, keyCnt) == 0);
+		}
+
+		if (match && keylist_append(list, CONFIG_DATA_MAX, &off,
+		    skey, sklen) != 0) {
+			/* the packed list overflowed the inline reply */
+			if (have_re)
+				regfree(&re);
+			*listCnt = 0;
+			*status = kSCStatusFailed;
+			return KERN_SUCCESS;
+		}
+	}
+
+	if (have_re)
+		regfree(&re);
+	*listCnt = (mach_msg_type_number_t)off;
+	*status = kSCStatusOK;
 	return KERN_SUCCESS;
 }
 
@@ -491,12 +575,39 @@ extern kern_return_t configset(mach_port_t, xmlData,
 extern kern_return_t configget(mach_port_t, xmlData,
     mach_msg_type_number_t, xmlDataOut, mach_msg_type_number_t *,
     int *, int *);
+extern kern_return_t configlist(mach_port_t, xmlData,
+    mach_msg_type_number_t, int, xmlDataOut, mach_msg_type_number_t *,
+    int *);
 extern kern_return_t notifyadd(mach_port_t, xmlData,
     mach_msg_type_number_t, int, int *);
 extern kern_return_t notifyviaport(mach_port_t, mach_port_t,
     mach_msg_id_t, int *);
 extern kern_return_t notifychanges(mach_port_t, xmlDataOut,
     mach_msg_type_number_t *, int *);
+
+/*
+ * selftest_list_has — 1 if the keylist_append-encoded [len][bytes]
+ * list `list` (of `len` bytes) contains a record equal to want/wlen.
+ */
+static int
+selftest_list_has(const uint8_t *list, mach_msg_type_number_t len,
+    const void *want, size_t wlen)
+{
+	size_t off = 0;
+
+	while (off + sizeof(uint32_t) <= (size_t)len) {
+		uint32_t reclen;
+
+		memcpy(&reclen, list + off, sizeof(reclen));
+		off += sizeof(reclen);
+		if (off + reclen > (size_t)len)
+			break;
+		if (reclen == wlen && memcmp(list + off, want, wlen) == 0)
+			return 1;
+		off += reclen;
+	}
+	return 0;
+}
 
 static mach_port_t selftest_pset;
 
@@ -735,8 +846,26 @@ run_selftest(void)
 		}
 	}
 
+	/*
+	 * configlist: list every store key and confirm both keys this
+	 * selftest stored (the explicit key and the pattern-matched key)
+	 * appear in the result.
+	 */
+	gotCnt = 0;
+	kr = configlist(session, empty, 0, 0, got, &gotCnt, &status);
+	if (kr != KERN_SUCCESS || status != kSCStatusOK) {
+		clog("selftest: configlist kr=0x%x status=%d", (unsigned)kr,
+		    status);
+		return 1;
+	}
+	if (!selftest_list_has(got, gotCnt, key, sizeof(key) - 1) ||
+	    !selftest_list_has(got, gotCnt, patkey, sizeof(patkey) - 1)) {
+		clog("selftest: configlist is missing a stored key");
+		return 1;
+	}
+
 	clog("CONFIGD-SELFTEST-OK: in-process config.defs round-trip + "
-	    "change notification + notify port + regex watch works");
+	    "change notification + notify port + regex watch + list works");
 	return 0;
 }
 

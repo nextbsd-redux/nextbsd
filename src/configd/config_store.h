@@ -38,4 +38,17 @@ int store_get(const void *key, size_t klen, const void **val, size_t *vlen);
  */
 int store_remove(const void *key, size_t klen);
 
+/*
+ * store_count — number of keys currently in the store.
+ *
+ * store_key_at — borrow the key at index idx (0 <= idx < store_count()).
+ * On success *key / *klen point at the stored key (borrowed — valid
+ * only until the next store mutation) and 0 is returned; returns -1 if
+ * idx is out of range. Together they let configlist enumerate the
+ * store. Indices are not stable across a store_remove (which compacts),
+ * so a walk must not mutate the store mid-iteration.
+ */
+size_t store_count(void);
+int store_key_at(size_t idx, const void **key, size_t *klen);
+
 #endif /* _CONFIG_STORE_H */

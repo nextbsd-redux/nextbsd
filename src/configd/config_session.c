@@ -357,21 +357,46 @@ session_watch_remove(mach_port_t port, const void *key, size_t klen)
 }
 
 int
+config_pattern_anchor(const void *pat, size_t plen, char *buf, size_t bufsz)
+{
+	const char	*p = pat;
+	size_t		need;
+	size_t		off = 0;
+	int		lead;
+	int		trail;
+
+	/* prepend '^' unless the pattern is already anchored at the start */
+	lead = (plen == 0 || p[0] != '^');
+	/* append '$' unless it already ends in an unescaped '$' */
+	trail = (plen == 0 || p[plen - 1] != '$' ||
+	    (plen >= 2 && p[plen - 2] == '\\'));
+
+	need = plen + (size_t)(lead ? 1 : 0) + (size_t)(trail ? 1 : 0) + 1;
+	if (need > bufsz)
+		return -1;
+
+	if (lead)
+		buf[off++] = '^';
+	memcpy(buf + off, p, plen);
+	off += plen;
+	if (trail)
+		buf[off++] = '$';
+	buf[off] = '\0';
+	return 0;
+}
+
+int
 session_pattern_add(mach_port_t port, const void *pat, size_t plen)
 {
 	struct session	*s = session_find(port);
-	const char	*p = pat;
 	struct pattern	*entry;
 	regex_t		*preg;
 	void		*scopy;
 	char		buf[CONFIG_DATA_MAX + 3];	/* ^ + pattern + $ + NUL */
-	size_t		off = 0;
 	size_t		i;
 
 	if (s == NULL)
 		return kSCStatusNoStoreSession;
-	if (plen > CONFIG_DATA_MAX)
-		return kSCStatusInvalidArgument;
 
 	/* Already watching this exact pattern — idempotent success. */
 	for (i = 0; i < s->n_patterns; i++) {
@@ -380,19 +405,9 @@ session_pattern_add(mach_port_t port, const void *pat, size_t plen)
 			return kSCStatusOK;
 	}
 
-	/*
-	 * Anchor the expression to a full-key match: prepend '^' unless
-	 * it is already there, append '$' unless the pattern already
-	 * ends in an unescaped '$' (mirrors Apple's pattern.c).
-	 */
-	if (plen == 0 || p[0] != '^')
-		buf[off++] = '^';
-	memcpy(buf + off, p, plen);
-	off += plen;
-	if (plen == 0 || p[plen - 1] != '$' ||
-	    (plen >= 2 && p[plen - 2] == '\\'))
-		buf[off++] = '$';
-	buf[off] = '\0';
+	/* Anchor the expression to a full-key match, ready for regcomp(). */
+	if (config_pattern_anchor(pat, plen, buf, sizeof(buf)) != 0)
+		return kSCStatusInvalidArgument;
 
 	if (s->n_patterns == s->patterns_cap) {
 		size_t		ncap = (s->patterns_cap != 0)
