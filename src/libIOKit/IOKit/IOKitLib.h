@@ -19,8 +19,13 @@
  *   IOIteratorNext, IORegistryEntryGetName, IORegistryEntryGetPath,
  *   IOObjectRetain, IOObjectRelease.
  *
- * Later iterations add properties + matching (iter 2), the `ioreg`
- * tool (iter 3) and notifications (iter 4, K2 of the plan).
+ * iter 2 — properties + matching (CF-typed):
+ *   IORegistryEntryCreateCFProperties, IORegistryEntryCreateCFProperty,
+ *   IOObjectGetClass, IOServiceMatching, IOServiceGetMatchingService,
+ *   IOServiceGetMatchingServices.
+ *
+ * Later iterations add the `ioreg` tool (iter 3) and notifications
+ * (iter 4, K2 of the plan).
  *
  * NOTE: there is also a separate Apple-API stub at
  * src/launchd/freebsd-shims/IOKit/IOKitLib.h covering the four IOKit
@@ -58,6 +63,13 @@ typedef io_object_t io_iterator_t;
  */
 typedef char io_name_t[128];
 typedef char io_string_t[512];
+
+/*
+ * IOOptionBits — Apple's IOKit options-mask typedef. Accepted by
+ * several routines (CreateCFProperties etc.) for source
+ * compatibility; iter 2 ignores it.
+ */
+typedef uint32_t IOOptionBits;
 
 /*
  * IOReturn — Apple's IOKit error code space. kern_return_t fits the
@@ -127,6 +139,72 @@ kern_return_t	IORegistryEntryGetPath(io_registry_entry_t entry,
  */
 kern_return_t	IOObjectRetain(io_object_t object);
 kern_return_t	IOObjectRelease(io_object_t object);
+
+/*
+ * iter 2 ----------------------------------------------------------
+ *
+ * Well-known IOService matching dictionary keys (the small subset
+ * the facade understands). The full Apple set is much larger; the
+ * facade translates IOProviderClass / IOClass to hwregd's `class`
+ * criterion and IONameMatch to `name`.
+ */
+#define kIOProviderClassKey	"IOProviderClass"
+#define kIOClassKey		"IOClass"
+#define kIONameMatchKey		"IONameMatch"
+
+/*
+ * IORegistryEntryCreateCFProperties — `entry`'s full property bag
+ * as a freshly-allocated CFMutableDictionary (keys = CFString,
+ * values = CFString or CFNumber — the only types hwregd's bag
+ * carries). The caller releases the dictionary with CFRelease.
+ * `options` is ignored.
+ */
+kern_return_t	IORegistryEntryCreateCFProperties(io_registry_entry_t entry,
+		    CFMutableDictionaryRef *properties,
+		    CFAllocatorRef allocator, IOOptionBits options);
+
+/*
+ * IORegistryEntryCreateCFProperty — a single property's value, +1
+ * retain. NULL if `entry` has no such property. `options` is
+ * ignored.
+ */
+CFTypeRef	IORegistryEntryCreateCFProperty(io_registry_entry_t entry,
+		    CFStringRef key, CFAllocatorRef allocator,
+		    IOOptionBits options);
+
+/*
+ * IOObjectGetClass — the entry's class name (hwregd's `class`
+ * field — "CPU" / "PCIDevice" / "USBDevice" / etc.) into the
+ * caller's io_name_t buffer.
+ */
+kern_return_t	IOObjectGetClass(io_object_t object, io_name_t className);
+
+/*
+ * IOServiceMatching — build a fresh matching dictionary against a
+ * provider class. Equivalent to:
+ *   { kIOProviderClassKey: CFSTR(name) }
+ * Caller owns the returned dictionary; IOServiceGetMatchingService*
+ * consume one reference.
+ */
+CFMutableDictionaryRef	IOServiceMatching(const char *name);
+
+/*
+ * IOServiceGetMatchingService(s) — look up service(s) whose hwregd
+ * node matches `matching`. The single-result form returns the first
+ * match (or IO_OBJECT_NULL); the iterator form returns an iterator
+ * over all matches (always non-NULL on success — an empty iterator
+ * is valid and yields IO_OBJECT_NULL on first IOIteratorNext).
+ *
+ * BOTH forms consume one reference of `matching` (Apple contract:
+ * "one reference is always consumed by this function") so the
+ * idiom `IOServiceGetMatchingService(mp, IOServiceMatching("X"))`
+ * does not leak.
+ */
+io_service_t	IOServiceGetMatchingService(mach_port_t mainPort,
+		    CFDictionaryRef matching);
+
+kern_return_t	IOServiceGetMatchingServices(mach_port_t mainPort,
+		    CFDictionaryRef matching, io_iterator_t *iterator);
 
 #ifdef __cplusplus
 }

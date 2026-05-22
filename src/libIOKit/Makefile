@@ -18,7 +18,7 @@
 LIB=		IOKit
 SHLIB_MAJOR=	1
 
-SRCS=		IOKitLib.c
+SRCS=		IOKitLib.c IOKitMatching.c
 
 # hwregUser.c — MIG-generated hwreg.defs client stubs. build.sh runs
 # mig (step 3r) and passes MIGOUT=$HWREG_MIG. Same wiring
@@ -67,9 +67,12 @@ CFLAGS+=	-I${.CURDIR}
 
 # <servers/bootstrap.h> (bootstrap_look_up + the bootstrap_port
 # global) comes from liblaunch; its bootstrap.h pulls Apple shim
-# headers from launchd/freebsd-shims.
+# headers from launchd/freebsd-shims. -I libxpc gives IOKitMatching.c
+# the `nv.h` nvlist API (hwregd's property bag + hwreg_lookup
+# criteria cross MIG as packed nvlist blobs).
 CFLAGS+=	-I${.CURDIR}/../launchd/liblaunch
 CFLAGS+=	-I${.CURDIR}/../launchd/freebsd-shims
+CFLAGS+=	-I${.CURDIR}/../libxpc
 
 SYSROOT?=
 .if !empty(SYSROOT)
@@ -81,12 +84,15 @@ INCS=		IOKit/IOKitLib.h
 INCSDIR=	${PREFIX}/include/IOKit
 LIBDIR=		${PREFIX}/lib/system
 
-# -lCoreFoundation: pulled by the public header; later iters use it
-# for CFDictionary properties. -lsystem_kernel: mach_msg + the Mach
-# port syscalls behind the MIG client stubs. -llaunch:
-# bootstrap_look_up + bootstrap_port. -lpthread: pthread_once for the
-# lazy hwregd service-port lookup.
-LDADD+=		-lCoreFoundation
+# -lCoreFoundation: the CFDictionary / CFString / CFNumber object
+# model behind the iter-2 property and matching surface (the public
+# header pulls CoreFoundation too). -lxpc: the nvlist API
+# (nvlist_unpack / pack / next / get_*) IOKitMatching.c uses to
+# bridge hwregd's property bag and lookup criteria. -lsystem_kernel:
+# mach_msg + the Mach port syscalls behind the MIG client stubs.
+# -llaunch: bootstrap_look_up + bootstrap_port. -lpthread:
+# pthread_once for the lazy hwregd service-port lookup.
+LDADD+=		-lCoreFoundation -lxpc
 LDADD+=		-lsystem_kernel -llaunch -lpthread
 LDADD+=		-Wl,--allow-shlib-undefined
 LDADD+=		-Wl,-rpath,${PREFIX}/lib/system

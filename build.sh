@@ -1400,6 +1400,24 @@ chroot "$WORK/rootfs" ldd /usr/tests/freebsd-launchd-mach/iokittest \
     || { echo "FAIL: ldd doesn't resolve iokittest to /usr/lib/system/libIOKit.so"; exit 1; }
 echo "==> iokittest built + ldd verified"
 
+# iokitmatchtest — libIOKit iter 2 properties + matching test client.
+# Pulls a node's property bag as a CFDictionary, fetches a single
+# property as a CFString, exercises IOServiceMatching +
+# IOServiceGetMatchingService(s) against PCIDevice (deterministic in
+# the QEMU guest), prints IOKIT-MATCH-OK. run.sh runs it and checks
+# for the marker.
+echo "==> building iokitmatchtest"
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/iokitmatchtest" \
+   "$ROOT/src/libIOKit/iokitmatchtest.c" \
+   -lIOKit -lCoreFoundation -lsystem_kernel -llaunch -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/iokitmatchtest" \
+    || { echo "FAIL: iokitmatchtest not built"; exit 1; }
+echo "==> iokitmatchtest built"
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at
