@@ -1243,6 +1243,24 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scplinktest" \
     || { echo "FAIL: scplinktest not built"; exit 1; }
 echo "==> scplinktest built"
 
+# scnetiftest — libSystemConfiguration SCNetworkConfiguration iter 2
+# test client. Exercises SCNetworkInterfaceCopyAll + the interface
+# accessors: the QEMU guest boots with one e1000 NIC, so the
+# enumeration must report an Ethernet interface with a hardware
+# address and exclude loopback. run.sh runs it and checks for the
+# SC-NETIF-OK marker.
+echo "==> building scnetiftest"
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scnetiftest" \
+   "$ROOT/src/libSystemConfiguration/scnetiftest.c" \
+   -lSystemConfiguration -lCoreFoundation -lsystem_kernel -llaunch -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scnetiftest" \
+    || { echo "FAIL: scnetiftest not built"; exit 1; }
+echo "==> scnetiftest built"
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at

@@ -74,6 +74,7 @@ eval spawn qemu-system-x86_64 \
     -bios $env(OVMF) \
     $accel_flags \
     -drive file=$img,format=raw,if=virtio \
+    -nic user,model=e1000 \
     -display none -serial stdio \
     -no-reboot
 
@@ -559,6 +560,18 @@ expect {
         exit 1
     }
     "SC-PLINK-OK" { puts "\nOK: SCPreferences path links work" }
+}
+
+expect {
+    timeout {
+        puts "\nFAIL: SC-NETIF marker not seen"
+        exit 1
+    }
+    "SC-NETIF-FAIL" {
+        puts "\nFAIL: SCNetworkInterface enumeration failed"
+        exit 1
+    }
+    "SC-NETIF-OK" { puts "\nOK: SCNetworkInterface enumeration works" }
 }
 
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns

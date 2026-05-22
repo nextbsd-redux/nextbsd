@@ -597,4 +597,14 @@ if [ ! -x "$scplinktest" ]; then
 fi
 "$scplinktest" || true	# marker (SC-PLINK-OK/FAIL) gates in boot-test.sh
 
+# SC-NETIF — SCNetworkConfiguration interface enumeration: list the
+# network interfaces and confirm the e1000 NIC is reported as an
+# Ethernet interface with a hardware address, loopback excluded.
+scnetiftest=/usr/tests/freebsd-launchd-mach/scnetiftest
+if [ ! -x "$scnetiftest" ]; then
+    echo "SC-NETIF-FAIL: $scnetiftest missing"
+    exit 1
+fi
+"$scnetiftest" || true	# marker (SC-NETIF-OK/FAIL) gates in boot-test.sh
+
 exit 0
