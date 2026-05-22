@@ -119,3 +119,19 @@ store_remove(const void *key, size_t klen)
 	entries[idx] = entries[--n_entries];
 	return 0;
 }
+
+size_t
+store_count(void)
+{
+	return n_entries;
+}
+
+int
+store_key_at(size_t idx, const void **key, size_t *klen)
+{
+	if (idx >= n_entries)
+		return -1;
+	*key = entries[idx].key;
+	*klen = entries[idx].klen;
+	return 0;
+}

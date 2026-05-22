@@ -488,4 +488,13 @@ if [ ! -x "$patterntest" ]; then
 fi
 "$patterntest" || true	# marker (CONFIGD-PATTERN-OK/FAIL) gates in boot-test.sh
 
+# CONFIGD-LIST — configd key listing: store keys and query them back
+# with configlist by prefix, by empty key (all), and by POSIX regex.
+listtest=/usr/tests/freebsd-launchd-mach/listtest
+if [ ! -x "$listtest" ]; then
+    echo "CONFIGD-LIST-FAIL: $listtest missing"
+    exit 1
+fi
+"$listtest" || true	# marker (CONFIGD-LIST-OK/FAIL) gates in boot-test.sh
+
 exit 0

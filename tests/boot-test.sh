@@ -429,6 +429,18 @@ expect {
     "CONFIGD-PATTERN-OK" { puts "\nOK: configd regex pattern watches work" }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: CONFIGD-LIST marker not seen"
+        exit 1
+    }
+    "CONFIGD-LIST-FAIL" {
+        puts "\nFAIL: configd key listing failed"
+        exit 1
+    }
+    "CONFIGD-LIST-OK" { puts "\nOK: configd key listing works" }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"

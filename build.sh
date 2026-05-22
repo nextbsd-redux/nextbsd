@@ -1028,6 +1028,20 @@ cc -I"$CONFIGD_MIG" -I"$ROOT/src/configd" \
 test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/patterntest" \
     || { echo "FAIL: patterntest not built"; exit 1; }
 
+# listtest — configd iter 6 key-listing test client. Stores keys and
+# exercises configlist (prefix / empty-key / regex queries). run.sh
+# runs it and checks for the CONFIGD-LIST-OK marker.
+echo "==> building listtest"
+cc -I"$CONFIGD_MIG" -I"$ROOT/src/configd" \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/listtest" \
+   "$ROOT/src/configd/listtest.c" "$CONFIGD_MIG/configUser.c" \
+   -llaunch -lsystem_kernel
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/listtest" \
+    || { echo "FAIL: listtest not built"; exit 1; }
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at

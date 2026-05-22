@@ -107,6 +107,17 @@ int session_pattern_add(mach_port_t port, const void *pat, size_t plen);
 int session_pattern_remove(mach_port_t port, const void *pat, size_t plen);
 
 /*
+ * config_pattern_anchor — write the anchored, NUL-terminated form of a
+ * raw SCDynamicStore pattern into buf (capacity bufsz): '^' is prepended
+ * and '$' appended unless the pattern is already bounded, so a compiled
+ * regex matches a whole key (mirrors Apple's pattern.c). The result is
+ * ready for regcomp(). Returns 0, or -1 if bufsz is too small. Shared by
+ * the pattern-watch path and configlist's isRegex query.
+ */
+int config_pattern_anchor(const void *pat, size_t plen, char *buf,
+    size_t bufsz);
+
+/*
  * session_drain_changes — copy the session's pending changed-key list
  * into `buf` (capacity `cap`) and clear it. The list is encoded as a
  * run of records, each a uint32 little-endian key length followed by
