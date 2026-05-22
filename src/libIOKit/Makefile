@@ -50,7 +50,13 @@ CFLAGS+=		-Wno-macro-redefined
 WARNS=		0
 NO_MAN=		yes
 
-CFLAGS+=	-O2 -pipe
+# -fblocks: the public header pulls CoreFoundation, and CoreFoundation's
+# ForSwiftFoundationOnly.h / CFCalendarPriv.h / CFStreamPriv.h declare
+# block-typed function pointers (`void (^block)(...)`). Without -fblocks
+# clang errors out with "blocks support disabled" on every include
+# site. libSystemConfiguration / libxpc carry -fblocks for the same
+# reason.
+CFLAGS+=	-O2 -pipe -fblocks
 
 # -I${.CURDIR} MUST come first so <IOKit/IOKitLib.h> resolves to this
 # library's public header (src/libIOKit/IOKit/IOKitLib.h) rather than

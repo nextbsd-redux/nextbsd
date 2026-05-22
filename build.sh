@@ -1382,8 +1382,12 @@ echo "==> libIOKit built + installed"
 # iokittest — libIOKit iter 1 walk test client. Walks the hwregd
 # registry through the IOKit facade and prints IOKIT-WALK-OK. run.sh
 # runs it and checks for the marker.
+# -fblocks: IOKitLib.h pulls CoreFoundation; CF headers carry block
+# typedefs that need -fblocks even when iokittest itself doesn't use
+# any. Same flag the libSystemConfiguration test clients carry.
 echo "==> building iokittest"
-cc -I"$WORK/rootfs/usr/include" \
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
    -L"$WORK/rootfs/usr/lib/system" \
    -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
    -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/iokittest" \
