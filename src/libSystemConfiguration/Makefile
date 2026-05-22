@@ -42,12 +42,14 @@ CFLAGS.configUser.c+=	-w
 CFLAGS+=		-Wno-macro-redefined
 .endif
 
-WARNS?=		2
-# This is the first component that compiles new project code against
-# the whole CoreFoundation public header tree (~50 headers). Keep -Wall
-# diagnostics for our own sources, but don't let a warning buried in a
-# vendored CF header turn -Werror into a build break.
-NO_WERROR=	yes
+# WARNS=0: this library pulls the whole CoreFoundation public header
+# tree. At WARNS>0 the FreeBSD warning machinery adds -Wsystem-headers
+# -Werror, which promotes warnings *inside* the vendored CF headers
+# (-Wexpansion-to-defined in CFBundle.h/CFPriv.h/CFRuntime.h, and
+# CFLocking.h's "CF is not thread-safe" #warning) into hard build
+# errors. libxpc and libCoreFoundation — the repo's other CF-tree
+# components — build at WARNS=0 for the same reason.
+WARNS=		0
 NO_MAN=		yes
 
 CFLAGS+=	-O2 -pipe -fblocks
