@@ -1069,6 +1069,9 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/multitest" \
 #      headers at /usr/include/SystemConfiguration/.
 #
 echo "==> building libSystemConfiguration (src/libSystemConfiguration)"
+# bsd.incs.mk installs INCS into INCSDIR but does not create it — make
+# the header subdir first (build.sh does the same for libxpc's xpc/).
+mkdir -p "$WORK/rootfs/usr/include/SystemConfiguration"
 make -C "$ROOT/src/libSystemConfiguration" \
     DESTDIR="$WORK/rootfs" \
     SYSROOT="$WORK/rootfs" \
