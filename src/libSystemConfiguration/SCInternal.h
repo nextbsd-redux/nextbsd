@@ -38,7 +38,8 @@
 /* Notification delivery status (SCNotify.c). */
 enum {
 	NotifierNotRegistered = 0,
-	Using_NotifierInformViaDispatch
+	Using_NotifierInformViaDispatch,
+	Using_NotifierInformViaRunLoop
 };
 
 /*
@@ -73,9 +74,16 @@ typedef struct __SCDynamicStore {
 	 */
 	int			notifyStatus;	/* Notifier* enum above */
 	mach_port_t		notifyPort;	/* receive right configd notifies */
-	dispatch_queue_t	dispatchQueue;	/* caller's callout queue (retained) */
 	pthread_t		notifyThread;	/* raw mach_msg receive loop */
 	volatile int		notifyStop;	/* asks notifyThread to exit */
+
+	/* SCDynamicStoreSetDispatchQueue delivery */
+	dispatch_queue_t	dispatchQueue;	/* caller's callout queue (retained) */
+
+	/* SCDynamicStoreCreateRunLoopSource delivery */
+	CFRunLoopSourceRef	rls;		/* the v0 source (store-owned) */
+	CFRunLoopRef		rlsRunLoop;	/* run loop to wake on a change */
+	int			rlsScheduled;	/* CFRunLoopAddSource refcount */
 } SCDynamicStorePrivate, *SCDynamicStorePrivateRef;
 
 /* TRUE iff obj is a live SCDynamicStore. */

@@ -1126,6 +1126,24 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scnotifytest" \
     || { echo "FAIL: scnotifytest not built"; exit 1; }
 echo "==> scnotifytest built"
 
+# scrltest — libSystemConfiguration iter 3 run-loop-source test client.
+# One session watches a key and adds a SCDynamicStoreCreateRunLoopSource
+# to its run loop; another writes the key; running the run loop must
+# fire the callback. run.sh runs it and checks for the SC-RUNLOOP-OK
+# marker.
+echo "==> building scrltest"
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scrltest" \
+   "$ROOT/src/libSystemConfiguration/scrltest.c" \
+   -lSystemConfiguration -lCoreFoundation -ldispatch -lBlocksRuntime \
+   -lsystem_kernel -llaunch -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/scrltest" \
+    || { echo "FAIL: scrltest not built"; exit 1; }
+echo "==> scrltest built"
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at

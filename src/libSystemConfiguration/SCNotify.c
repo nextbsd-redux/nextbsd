@@ -264,7 +264,7 @@ __SCDynamicStoreDeliverChanges(SCDynamicStoreRef store)
 	}
 
 	if ((callout != NULL) &&
-	    (storePrivate->notifyStatus == Using_NotifierInformViaDispatch)) {
+	    (storePrivate->notifyStatus != NotifierNotRegistered)) {
 		(*callout)(store, changedKeys, info);
 	}
 
@@ -323,21 +323,95 @@ __sc_notify_thread(void *arg)
 			break;			/* port gone / unexpected error */
 		}
 
-		/* a notification arrived — deliver on the caller's queue */
-		CFRetain(store);
-		dispatch_async_f(storePrivate->dispatchQueue,
-				 (void *)store, __sc_deliver);
+		/* a notification arrived — hand it to the active delivery */
+		if (storePrivate->notifyStatus == Using_NotifierInformViaDispatch) {
+			CFRetain(store);
+			dispatch_async_f(storePrivate->dispatchQueue,
+					 (void *)store, __sc_deliver);
+		} else if (storePrivate->notifyStatus == Using_NotifierInformViaRunLoop) {
+			/* signal the run-loop source and wake its run loop */
+			CFRunLoopSourceSignal(storePrivate->rls);
+			if (storePrivate->rlsRunLoop != NULL) {
+				CFRunLoopWakeUp(storePrivate->rlsRunLoop);
+			}
+		}
 	}
 
 	return NULL;
+}
+
+/*
+ * Start the notification receive thread. notifyStatus and any
+ * delivery-mode fields must already be set. Returns TRUE, or FALSE
+ * with SCError() set and the registration unwound.
+ */
+static Boolean
+__sc_notify_start(SCDynamicStoreRef store)
+{
+	SCDynamicStorePrivateRef	storePrivate	= (SCDynamicStorePrivateRef)store;
+	mach_port_t			mp;
+	int				err;
+
+	mp = __SCDynamicStoreAddNotificationPort(store);
+	if (mp == MACH_PORT_NULL) {
+		return FALSE;		/* SCError already set */
+	}
+	storePrivate->notifyPort = mp;
+	storePrivate->notifyStop = 0;
+
+	/* the receive thread holds a reference to the store */
+	CFRetain(store);
+
+	err = pthread_create(&storePrivate->notifyThread, NULL,
+			     __sc_notify_thread, (void *)store);
+	if (err != 0) {
+		int	sc_status;
+
+		CFRelease(store);
+		if (storePrivate->server != MACH_PORT_NULL) {
+			(void) notifycancel(storePrivate->server, &sc_status);
+		}
+		(void) mach_port_mod_refs(mach_task_self(), mp,
+					  MACH_PORT_RIGHT_RECEIVE, -1);
+		storePrivate->notifyPort = MACH_PORT_NULL;
+		_SCErrorSet(kSCStatusFailed);
+		return FALSE;
+	}
+	return TRUE;
+}
+
+/*
+ * Stop the receive thread and tear the notification port down. Drops
+ * the receive thread's store reference last; callers must not touch
+ * storePrivate after this returns.
+ */
+static void
+__sc_notify_stop(SCDynamicStoreRef store)
+{
+	SCDynamicStorePrivateRef	storePrivate	= (SCDynamicStorePrivateRef)store;
+	int				sc_status;
+
+	storePrivate->notifyStop = 1;
+	(void) pthread_join(storePrivate->notifyThread, NULL);
+
+	if (storePrivate->server != MACH_PORT_NULL) {
+		(void) notifycancel(storePrivate->server, &sc_status);
+	}
+	if (storePrivate->notifyPort != MACH_PORT_NULL) {
+		(void) mach_port_mod_refs(mach_task_self(),
+					  storePrivate->notifyPort,
+					  MACH_PORT_RIGHT_RECEIVE, -1);
+		storePrivate->notifyPort = MACH_PORT_NULL;
+	}
+
+	/* release the receive thread's store reference */
+	CFRelease(store);
 }
 
 Boolean
 SCDynamicStoreSetDispatchQueue(SCDynamicStoreRef store, dispatch_queue_t queue)
 {
 	SCDynamicStorePrivateRef	storePrivate	= (SCDynamicStorePrivateRef)store;
-	mach_port_t			mp;
-	int				err;
 
 	if (!isA_SCDynamicStore(store)) {
 		_SCErrorSet(kSCStatusNoStoreSession);
@@ -364,41 +438,16 @@ SCDynamicStoreSetDispatchQueue(SCDynamicStoreRef store, dispatch_queue_t queue)
 		return FALSE;
 	}
 
-	/* register a notification port with configd */
-	mp = __SCDynamicStoreAddNotificationPort(store);
-	if (mp == MACH_PORT_NULL) {
-		return FALSE;		/* SCError already set */
-	}
-
-	storePrivate->notifyPort	= mp;
-	storePrivate->dispatchQueue	= queue;
+	storePrivate->dispatchQueue = queue;
 	dispatch_retain(queue);
-	storePrivate->notifyStop	= 0;
-	storePrivate->notifyStatus	= Using_NotifierInformViaDispatch;
+	storePrivate->notifyStatus = Using_NotifierInformViaDispatch;
 
-	/* the receive thread holds a reference to the store */
-	CFRetain(store);
-
-	err = pthread_create(&storePrivate->notifyThread, NULL,
-			     __sc_notify_thread, (void *)store);
-	if (err != 0) {
-		/* unwind the registration */
-		int	sc_status;
-
-		CFRelease(store);
+	if (!__sc_notify_start(store)) {
 		dispatch_release(queue);
 		storePrivate->dispatchQueue = NULL;
 		storePrivate->notifyStatus  = NotifierNotRegistered;
-		if (storePrivate->server != MACH_PORT_NULL) {
-			(void) notifycancel(storePrivate->server, &sc_status);
-		}
-		(void) mach_port_mod_refs(mach_task_self(), mp,
-					  MACH_PORT_RIGHT_RECEIVE, -1);
-		storePrivate->notifyPort = MACH_PORT_NULL;
-		_SCErrorSet(kSCStatusFailed);
 		return FALSE;
 	}
-
 	return TRUE;
 }
 
@@ -406,41 +455,136 @@ void
 __SCDynamicStoreNotifyCancel(SCDynamicStoreRef store)
 {
 	SCDynamicStorePrivateRef	storePrivate	= (SCDynamicStorePrivateRef)store;
-	int				sc_status;
+	dispatch_queue_t		queue;
 
+	/* this is the dispatch-queue teardown; the run-loop source path
+	   tears down through rlsCancel */
 	if (storePrivate->notifyStatus != Using_NotifierInformViaDispatch) {
 		return;
 	}
 
-	/* stop the receive loop and wait for the thread to exit */
-	storePrivate->notifyStop = 1;
-	(void) pthread_join(storePrivate->notifyThread, NULL);
+	queue = storePrivate->dispatchQueue;
+	storePrivate->dispatchQueue = NULL;
+	storePrivate->notifyStatus  = NotifierNotRegistered;
 
-	/* ask configd to stop notifying this session */
-	if (storePrivate->server != MACH_PORT_NULL) {
-		(void) notifycancel(storePrivate->server, &sc_status);
+	__sc_notify_stop(store);	/* last — drops the store reference */
+
+	if (queue != NULL) {
+		dispatch_release(queue);
+	}
+}
+
+
+#pragma mark -
+#pragma mark Run-loop-source delivery
+
+/* CFRunLoopSource perform — runs the callout on the run loop thread */
+static void
+rlsPerform(void *info)
+{
+	__SCDynamicStoreDeliverChanges((SCDynamicStoreRef)info);
+}
+
+/*
+ * CFRunLoopSource schedule — called when the source is added to a run
+ * loop. On the first run loop it registers the notification port and
+ * starts the receive thread.
+ */
+static void
+rlsSchedule(void *info, CFRunLoopRef rl, CFRunLoopMode mode)
+{
+	SCDynamicStoreRef		store		= (SCDynamicStoreRef)info;
+	SCDynamicStorePrivateRef	storePrivate	= (SCDynamicStorePrivateRef)store;
+
+	(void)mode;
+
+	/* the receive thread wakes this run loop on a change. If the
+	   source is added to several run loops only the last is woken
+	   explicitly; CFRunLoopSourceSignal still marks it for them all. */
+	storePrivate->rlsRunLoop = rl;
+
+	if (storePrivate->rlsScheduled == 0) {
+		if (storePrivate->server == MACH_PORT_NULL) {
+			return;
+		}
+		storePrivate->notifyStatus = Using_NotifierInformViaRunLoop;
+		if (!__sc_notify_start(store)) {
+			storePrivate->notifyStatus = NotifierNotRegistered;
+			return;
+		}
+	}
+	storePrivate->rlsScheduled++;
+}
+
+/*
+ * CFRunLoopSource cancel — called when the source is removed from a
+ * run loop (or invalidated). Stops notifications once the source is no
+ * longer scheduled anywhere.
+ */
+static void
+rlsCancel(void *info, CFRunLoopRef rl, CFRunLoopMode mode)
+{
+	SCDynamicStoreRef		store		= (SCDynamicStoreRef)info;
+	SCDynamicStorePrivateRef	storePrivate	= (SCDynamicStorePrivateRef)store;
+
+	(void)rl;
+	(void)mode;
+
+	if (storePrivate->rlsScheduled == 0) {
+		return;
+	}
+	storePrivate->rlsScheduled--;
+	if (storePrivate->rlsScheduled > 0) {
+		return;
+	}
+	if (storePrivate->notifyStatus == Using_NotifierInformViaRunLoop) {
+		storePrivate->notifyStatus = NotifierNotRegistered;
+		storePrivate->rlsRunLoop   = NULL;
+		__sc_notify_stop(store);	/* last — drops the store reference */
+	}
+}
+
+CFRunLoopSourceRef
+SCDynamicStoreCreateRunLoopSource(CFAllocatorRef	allocator,
+				  SCDynamicStoreRef	store,
+				  CFIndex		order)
+{
+	SCDynamicStorePrivateRef	storePrivate	= (SCDynamicStorePrivateRef)store;
+	CFRunLoopSourceContext		context		= {
+		.version	= 0,
+		.info		= (void *)store,
+		/*
+		 * No retain/release on info: the store owns the source via
+		 * storePrivate->rls, so a retaining context would form a
+		 * reference cycle.
+		 */
+		.schedule	= rlsSchedule,
+		.cancel		= rlsCancel,
+		.perform	= rlsPerform,
+	};
+
+	if (!isA_SCDynamicStore(store)) {
+		_SCErrorSet(kSCStatusNoStoreSession);
+		return NULL;
+	}
+	if (storePrivate->server == MACH_PORT_NULL) {
+		_SCErrorSet(kSCStatusNoStoreServer);
+		return NULL;
 	}
 
-	/* drop the notification port's receive right */
-	if (storePrivate->notifyPort != MACH_PORT_NULL) {
-		(void) mach_port_mod_refs(mach_task_self(),
-					  storePrivate->notifyPort,
-					  MACH_PORT_RIGHT_RECEIVE, -1);
-		storePrivate->notifyPort = MACH_PORT_NULL;
+	/* one source per session — hand back the existing one, retained */
+	if (storePrivate->rls != NULL) {
+		CFRetain(storePrivate->rls);
+		return storePrivate->rls;
 	}
 
-	if (storePrivate->dispatchQueue != NULL) {
-		dispatch_release(storePrivate->dispatchQueue);
-		storePrivate->dispatchQueue = NULL;
+	storePrivate->rls = CFRunLoopSourceCreate(allocator, order, &context);
+	if (storePrivate->rls == NULL) {
+		_SCErrorSet(kSCStatusFailed);
+		return NULL;
 	}
 
-	storePrivate->notifyStatus = NotifierNotRegistered;
-
-	/*
-	 * Release the receive thread's store reference. Any callout still
-	 * queued on the caller's queue holds its own reference (taken
-	 * before dispatch_async_f), so the store stays alive until those
-	 * drain.
-	 */
-	CFRelease(store);
+	/* one reference for storePrivate->rls, one returned to the caller */
+	CFRetain(storePrivate->rls);
+	return storePrivate->rls;
 }

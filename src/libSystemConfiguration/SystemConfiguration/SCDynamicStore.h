@@ -204,6 +204,19 @@ SCDynamicStoreSetDispatchQueue	(SCDynamicStoreRef		store,
 				 dispatch_queue_t		queue);
 
 /*!
+	@function SCDynamicStoreCreateRunLoopSource
+	@discussion Creates a CFRunLoopSource for the session. Once added
+		to a run loop with CFRunLoopAddSource(), the SCDynamicStore
+		CallBack passed to SCDynamicStoreCreate() runs on that run
+		loop whenever a watched key changes.
+	@result a CFRunLoopSource (caller releases), or NULL on error.
+ */
+CFRunLoopSourceRef
+SCDynamicStoreCreateRunLoopSource (CFAllocatorRef		allocator,
+				   SCDynamicStoreRef		store,
+				   CFIndex			order);
+
+/*!
 	@function SCError
 	@discussion Returns the most recent status/error code, as a
 		kSCStatus* value, for the calling thread.

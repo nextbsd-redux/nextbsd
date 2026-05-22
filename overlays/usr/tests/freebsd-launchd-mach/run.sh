@@ -528,4 +528,15 @@ if [ ! -x "$scnotifytest" ]; then
 fi
 "$scnotifytest" || true	# marker (SC-NOTIFY-OK/FAIL) gates in boot-test.sh
 
+# SC-RUNLOOP — SCDynamicStore run-loop-source notifications: a session
+# watches a key via SCDynamicStoreCreateRunLoopSource added to its run
+# loop, another writes the key, and running the run loop must fire the
+# callback with the changed key.
+scrltest=/usr/tests/freebsd-launchd-mach/scrltest
+if [ ! -x "$scrltest" ]; then
+    echo "SC-RUNLOOP-FAIL: $scrltest missing"
+    exit 1
+fi
+"$scrltest" || true	# marker (SC-RUNLOOP-OK/FAIL) gates in boot-test.sh
+
 exit 0
