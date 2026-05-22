@@ -996,6 +996,22 @@ cc -I"$CONFIGD_MIG" -I"$ROOT/src/configd" \
 test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/configtest" \
     || { echo "FAIL: configtest not built"; exit 1; }
 
+# notifytest — configd iter 4 change-notification round-trip test
+# client. Opens two sessions (per-session ports), watches a key,
+# registers a Mach notification port, changes the key from the other
+# session and confirms the notification + notifychanges. run.sh runs
+# it and checks for the CONFIGD-NOTIFY-OK marker.
+echo "==> building notifytest"
+cc -I"$CONFIGD_MIG" -I"$ROOT/src/configd" \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/notifytest" \
+   "$ROOT/src/configd/notifytest.c" "$CONFIGD_MIG/configUser.c" \
+   -llaunch -lsystem_kernel
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/notifytest" \
+    || { echo "FAIL: notifytest not built"; exit 1; }
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at

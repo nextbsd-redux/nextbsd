@@ -58,6 +58,22 @@
 #define SCD_SERVER	"com.apple.SystemConfiguration.configd"
 
 /*
+ * SCDynamicStore status codes — a subset of Apple's SCError.h. configd
+ * and its clients must agree on these values: they cross the wire as
+ * the `status` reply field of every config.defs routine.
+ */
+#define kSCStatusOK			0	/* success */
+#define kSCStatusFailed			1001	/* non-specific failure */
+#define kSCStatusInvalidArgument	1002	/* invalid argument */
+#define kSCStatusNoKey			1004	/* no such key */
+#define kSCStatusKeyExists		1005	/* key already defined */
+#define kSCStatusNoStoreSession		2001	/* no open store session */
+#define kSCStatusNotifierActive		2003	/* notifier already active */
+
+/* Maximum key / value size — config.defs' array[*:8192] bound. */
+#define CONFIG_DATA_MAX			8192
+
+/*
  * config.defs' xmlData / xmlDataOut MIG types. MIG records a `type`
  * declaration's wire layout but emits no C typedef for it — the
  * generated stubs use the name as-is and expect this imported header

@@ -467,4 +467,15 @@ if [ ! -x "$configtest" ]; then
 fi
 "$configtest" || true	# marker (CONFIGD-STORE-OK/FAIL) gates in boot-test.sh
 
+# CONFIGD-NOTIFY — configd change notifications + per-session ports:
+# open two sessions, have one watch a key and register a Mach
+# notification port, change the key from the other session, and
+# confirm the notification message + notifychanges report it.
+notifytest=/usr/tests/freebsd-launchd-mach/notifytest
+if [ ! -x "$notifytest" ]; then
+    echo "CONFIGD-NOTIFY-FAIL: $notifytest missing"
+    exit 1
+fi
+"$notifytest" || true	# marker (CONFIGD-NOTIFY-OK/FAIL) gates in boot-test.sh
+
 exit 0
