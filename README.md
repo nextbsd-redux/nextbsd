@@ -482,15 +482,16 @@ query/watch/load API + PCI enrichment) have landed; the launchd
 SystemConfiguration daemon, hosting the `SCDynamicStore` key/value
 store &mdash; has a feature-complete server over Mach IPC, and the
 CF-typed `SystemConfiguration` client framework on top of it
-(`libSystemConfiguration`: the full `SCDynamicStore` client API and the
-`SCPreferences` persistent-configuration API) is complete. Apple's
-`SCNetworkConfiguration` (the network-service / interface model), the
-IOKitUser facade (`ioreg`) and `IPConfiguration` (network config, the
-proper replacement for the interim `dhclient` setup) follow.
+(`libSystemConfiguration`: the `SCDynamicStore` client API, the
+`SCPreferences` persistent-configuration API, and the
+`SCNetworkConfiguration` network-configuration object model) is
+complete. The IOKitUser facade (`ioreg`) and `IPConfiguration`
+(network config, the proper replacement for the interim `dhclient`
+setup) follow.
 Full design: the
 [hardware registry + IOKit porting plan](https://pkgdemon.github.io/freebsd-hardware-registry-iokit-plan.html).
 
-### Phase K &mdash; configd + libSystemConfiguration (SCDynamicStore + SCPreferences) complete (2026-05-22)
+### Phase K &mdash; configd + libSystemConfiguration (SCDynamicStore + SCPreferences + SCNetworkConfiguration) complete (2026-05-22)
 
 **hwregd** is a working hardware-registry daemon. **Phase 0** (the
 `/dev/devctl` event reader, `kldload`-on-nomatch, and a Mach pub/sub
@@ -552,7 +553,7 @@ client framework &mdash; sits on top of configd, so real software links
 `-lSystemConfiguration` instead of hand-writing `config.defs` MIG. It
 installs `/usr/lib/system/libSystemConfiguration.so` and the public
 headers at `/usr/include/SystemConfiguration/`, and is complete across
-two API families:
+three API families:
 
 - the **SCDynamicStore** client API &mdash; `SCDynamicStoreCreate` plus
   `CopyValue` / `SetValue` / `AddValue` / `RemoveValue` / `CopyKeyList`,
@@ -564,10 +565,18 @@ two API families:
 - the **SCPreferences** API &mdash; the persistent-configuration plist:
   `SCPreferencesCreate` plus `GetValue` / `SetValue` / `RemoveValue` /
   `CopyKeyList` / `CommitChanges`, the `/`-separated path accessors
-  (`SCPreferencesPathGetValue` / &hellip;), the exclusive
+  (`SCPreferencesPathGetValue` / &hellip; / the `__LINK__`-following
+  `PathCreateUniqueChild` / `PathSetLink`), the exclusive
   `SCPreferencesLock`, and commit notifications
   (`SCPreferencesSetCallback`) (`SC-PREFS` / `SC-PATH` / `SC-LOCK` /
-  `SC-PNOTIFY`).
+  `SC-PNOTIFY` / `SC-PLINK`);
+- the **SCNetworkConfiguration** API &mdash; the network-configuration
+  object model: `SCNetworkInterface` (enumerated natively), the
+  `SCNetworkProtocol` / `SCNetworkService` / `SCNetworkSet` model
+  persisted through the `SCPreferences` path accessors, and the
+  `SCVLANInterface` / `SCBondInterface` / `SCBridgeInterface` virtual
+  interfaces (`SC-NETIF` / `SC-NETSVC` / `SC-NETSET` / `SC-VLAN` /
+  `SC-BOND` / `SC-BRIDGE`).
 
 The `SCDynamicStore` object is a CoreFoundation runtime type; values
 cross the wire as XML property lists. Apple builds the run-loop source
@@ -578,9 +587,22 @@ limitation `hwregd` also hit) &mdash; so both run on a dedicated
 `mach_msg` receive thread instead. Every API is exercised end-to-end
 against the live configd by a dedicated CI test client.
 
-**Next:** Apple's `SCNetworkConfiguration` (the network-service /
-interface / protocol model, built on the `SCPreferences` path
-accessors); then the IOKitUser facade (`ioreg`) and `IPConfiguration`.
+**SCNetworkConfiguration** &mdash; the CF-typed network-configuration
+object model &mdash; was ported in seven iterations (the first
+completing the `SCPreferences` path-link accessors it builds on).
+`SCNetworkInterface` enumerates the system's interfaces natively from
+`getifaddrs(3)` (Apple walks the IOKit registry &mdash; there is no
+IOKit kernel here);
+`SCNetworkProtocol`, `SCNetworkService` and `SCNetworkSet` are persisted
+in the preferences plist through the `SCPreferences` path accessors,
+with set membership recorded as `__LINK__` indirection; and
+`SCVLANInterface` / `SCBondInterface` / `SCBridgeInterface` model the
+VLAN / link-aggregation / bridging virtual interfaces under
+`/VirtualNetworkInterfaces`. Each iteration is exercised in the QEMU
+boot test against the guest's configured e1000 NIC.
+
+**Next:** the IOKitUser facade (`ioreg`) and `IPConfiguration` (the
+proper replacement for the interim `dhclient` setup).
 Deferred: USB / thermal property enrichment in hwregd; lifting
 configd's 8&nbsp;KiB cap (needs the kernel's out-of-line allocator
 fixed); configd's `notifyviafd` and `snapshot` routines (no consumer /
