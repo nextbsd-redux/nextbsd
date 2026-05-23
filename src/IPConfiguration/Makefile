@@ -10,6 +10,10 @@
 # Install: make DESTDIR=/path/to/rootfs install
 
 PROG=		ipconfigd
+# MAN= (empty) suppresses bsd.prog.mk's default ipconfigd.1 build —
+# NO_MAN=yes alone is insufficient, the make rule still references it.
+# Same suppression hwregd / configd use.
+MAN=
 SRCS=		ipconfigd.c
 
 WARNS?=		6
