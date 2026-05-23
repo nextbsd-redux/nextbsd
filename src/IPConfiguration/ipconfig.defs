@@ -1,0 +1,66 @@
+/*
+ * ipconfig.defs — Mach-RPC interface to ipconfigd.
+ *
+ * freebsd-launchd-mach port. Slimmed from Apple's
+ * bootp/bootplib/ipconfig.defs (~21 routines): iter 5a vendors the
+ * two read-only routines that prove the wire — ipconfig_if_count
+ * (scalar out) and ipconfig_if_addr (string in + ip_address out).
+ * Routine ORDER and msgh_id values (subsystem base 20000) match
+ * Apple so a later iter can grow the surface back to full ABI by
+ * appending — never reordering.
+ *
+ * Changes from Apple's defs:
+ *   - the `ServerAuditToken audit_token : audit_token_t` decorator
+ *     is dropped — no BSM identity in this port (configd / hwregd
+ *     drop it the same way).
+ *   - 18 routines that have no real consumer yet are omitted
+ *     entirely (iter 5b/6+ adds them when a client materializes —
+ *     iter 5a is the demux + worker-thread plumbing, not full ABI).
+ *   - xmlData / xmlDataOut / dataOut would be `^ array []` (OOL) on
+ *     Apple — broken in this port's kernel (the configd / hwreg.defs
+ *     ports document the same issue) — but the two iter-5a routines
+ *     don't use OOL data, so the question doesn't arise here.
+ *
+ * The server demux _ipconfig_server() runs inside ipconfigd's
+ * mach_service_thread receive loop. Per-routine implementations are
+ * in ipconfigd_mig.c.
+ *
+ * Apple's ipconfig.defs uses `subsystem ipconfig 20000;` — the same
+ * subsystem base as configd's `subsystem config 20000;`. The two
+ * never share a port set, so the id collision is harmless; keeping
+ * Apple's id makes msgh_id values match a real macOS dtrace.
+ */
+
+#include <mach/std_types.defs>
+#include <mach/mach_types.defs>
+
+subsystem ipconfig 20000;
+serverprefix _;
+
+import "ipconfig_mig_types.h";
+
+/* The Apple-original named types we need for the iter-5a routines. */
+type ip_address		= MACH_MSG_TYPE_INTEGER_32 ctype: ip_address_t;
+type ipconfig_status	= MACH_MSG_TYPE_INTEGER_32 ctype: ipconfig_status_t;
+type if_name		= array[16] of char ctype: InterfaceName;
+
+/*
+ * ipconfig_if_count — how many interfaces ipconfigd is currently
+ * tracking. iter 5a: returns 1 once BOUND on em0; 0 before.
+ */
+routine ipconfig_if_count(
+	server		: mach_port_t;
+	out count	: int
+);
+
+/*
+ * ipconfig_if_addr — the bound IPv4 address for `name` (network
+ * byte order, packed as a uint32_t). status = success_e if `name`
+ * is BOUND, no_server_e otherwise.
+ */
+routine ipconfig_if_addr(
+	server		: mach_port_t;
+	name		: if_name;
+	out addr	: ip_address;
+	out status	: ipconfig_status
+);
