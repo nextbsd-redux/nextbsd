@@ -273,6 +273,96 @@ sc_publish_ipv4(struct sc_publish *p, const char *ifname,
 }
 
 int
+sc_publish_ipv6(struct sc_publish *p, const char *ifname,
+    const struct in6_addr *addr, uint8_t prefix_len,
+    const struct in6_addr *router_lladdr)
+{
+	CFMutableDictionaryRef dict;
+	CFStringRef key, k_addresses, k_prefixlen, k_router;
+	CFStringRef k_iface, k_flags;
+	CFStringRef iface_str, addr_str, router_str;
+	CFArrayRef addr_arr, plen_arr;
+	CFNumberRef plen_num, flags_num;
+	const void *addr_vals[1];
+	const void *plen_vals[1];
+	char abuf[INET6_ADDRSTRLEN];
+	char rbuf[INET6_ADDRSTRLEN + IFNAMSIZ + 2];
+	int plen_i, flags_i = 0;
+	Boolean ok;
+
+	if (p == NULL || p->store == NULL)
+		return (-1);
+
+	if (inet_ntop(AF_INET6, addr, abuf, sizeof(abuf)) == NULL)
+		return (-1);
+	{
+		char rbase[INET6_ADDRSTRLEN];
+
+		if (inet_ntop(AF_INET6, router_lladdr, rbase,
+		    sizeof(rbase)) == NULL)
+			return (-1);
+		(void)snprintf(rbuf, sizeof(rbuf), "%s%%%s", rbase, ifname);
+	}
+
+	dict = CFDictionaryCreateMutable(NULL, 0,
+	    &kCFTypeDictionaryKeyCallBacks,
+	    &kCFTypeDictionaryValueCallBacks);
+	if (dict == NULL)
+		return (-1);
+
+	k_addresses = mkstr("Addresses");
+	k_prefixlen = mkstr("PrefixLength");
+	k_router = mkstr("Router");
+	k_iface = mkstr("InterfaceName");
+	k_flags = mkstr("Flags");
+
+	addr_str = mkstr(abuf);
+	addr_vals[0] = addr_str;
+	addr_arr = CFArrayCreate(NULL, addr_vals, 1, &kCFTypeArrayCallBacks);
+	CFDictionarySetValue(dict, k_addresses, addr_arr);
+	CFRelease(addr_arr);
+	CFRelease(addr_str);
+
+	plen_i = prefix_len;
+	plen_num = CFNumberCreate(NULL, kCFNumberIntType, &plen_i);
+	plen_vals[0] = plen_num;
+	plen_arr = CFArrayCreate(NULL, plen_vals, 1, &kCFTypeArrayCallBacks);
+	CFDictionarySetValue(dict, k_prefixlen, plen_arr);
+	CFRelease(plen_arr);
+	CFRelease(plen_num);
+
+	router_str = mkstr(rbuf);
+	CFDictionarySetValue(dict, k_router, router_str);
+	CFRelease(router_str);
+
+	iface_str = mkstr(ifname);
+	CFDictionarySetValue(dict, k_iface, iface_str);
+	CFRelease(iface_str);
+
+	flags_num = CFNumberCreate(NULL, kCFNumberIntType, &flags_i);
+	CFDictionarySetValue(dict, k_flags, flags_num);
+	CFRelease(flags_num);
+
+	CFRelease(k_addresses);
+	CFRelease(k_prefixlen);
+	CFRelease(k_router);
+	CFRelease(k_iface);
+	CFRelease(k_flags);
+
+	key = make_key(ifname, "IPv6");
+	ok = SCDynamicStoreSetValue(p->store, key, dict);
+	CFRelease(key);
+	CFRelease(dict);
+
+	if (!ok) {
+		xlog("SCDynamicStoreSetValue(IPv6) failed: %s",
+		    SCErrorString(SCError()));
+		return (-1);
+	}
+	return (0);
+}
+
+int
 sc_publish_remove(struct sc_publish *p, const char *ifname)
 {
 	CFStringRef key;
@@ -287,6 +377,10 @@ sc_publish_remove(struct sc_publish *p, const char *ifname)
 	CFRelease(key);
 
 	key = make_key(ifname, "DNS");
+	(void)SCDynamicStoreRemoveValue(p->store, key);
+	CFRelease(key);
+
+	key = make_key(ifname, "IPv6");
 	(void)SCDynamicStoreRemoveValue(p->store, key);
 	CFRelease(key);
 

@@ -744,6 +744,31 @@ expect {
     }
 }
 
+# IPCFG-RA — iter 7a IPv6 Router Advertisement + SLAAC. ipconfigd
+# sends an ND_ROUTER_SOLICIT to ff02::2 on em0, waits up to 15s for
+# an RA, derives a SLAAC address (EUI-64 over the PIO's prefix),
+# installs it + a default ::/0 route via the RA's source LL, and
+# publishes State:/Network/Service/.../IPv6.
+#
+# IPCFG-RA-MISS is the soft path: QEMU SLIRP's IPv6 RA support varies
+# by qemu version and CLI args. First-round CI accepts MISS so we can
+# see whether SLIRP actually responds; later rounds either keep MISS
+# acceptable (if SLIRP is silent) or upgrade to OK-required (if SLIRP
+# does answer). Either way, IPv6 not coming up does NOT fail the
+# overall boot — IPv4 already passed.
+expect {
+    timeout {
+        puts "\nFAIL: IPCFG-RA marker not seen (neither OK nor MISS)"
+        exit 1
+    }
+    "IPCFG-RA-OK" {
+        puts "\nOK: ipconfigd RA/SLAAC works (address + ::/0 route + State:/.../IPv6 published)"
+    }
+    "IPCFG-RA-MISS" {
+        puts "\nWARN: ipconfigd RA-MISS — SLIRP did not respond to RS (IPv4 still OK)"
+    }
+}
+
 expect {
     timeout {
         puts "\nFAIL: IPCFG-RENEW-OK marker not seen (iter 5b lease renewal CI gate)"
