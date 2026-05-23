@@ -24,6 +24,15 @@
     <key>ProgramArguments</key>
     <array>
         <string>/usr/sbin/mDNSResponder</string>
+        <!--
+          -foreground: tell PosixDaemon.c's ParseCmdLineArgs to skip
+          daemon(0, 0). Without this, daemon() closes stdin/stdout/
+          stderr and we lose all fprintf-to-stderr output (including
+          the iter-2 MDNS-ENGINE-OK marker). launchd already manages
+          the daemon's lifecycle via KeepAlive, so the self-
+          backgrounding is redundant anyway.
+        -->
+        <string>-foreground</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
