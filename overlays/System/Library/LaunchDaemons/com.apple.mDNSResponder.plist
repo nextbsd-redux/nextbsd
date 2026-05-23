@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.apple.mDNSResponder.plist
+
+  Boot-time launchd plist for mDNSResponder (freebsd-launchd-mach
+  Bonjour/zeroconf daemon).
+
+  iter 1 is the daemon skeleton: mDNSResponder claims the
+  com.apple.mDNSResponder Mach service via bootstrap_check_in and
+  sleeps until SIGTERM. iter 2 vendors mDNSCore + mDNSPosix +
+  mDNSShared and wires the multicast engine + the dns_sd.h client
+  wire protocol over Mach. RunAtLoad + KeepAlive so it starts at
+  PID-1 launchd boot and respawns on crash. StandardErrorPath /
+  StandardOutPath route the daemon's log to
+  /var/log/mDNSResponder.stderr — same convention hwregd / configd /
+  ipconfigd use; the CI boot test dumps the file post-boot for
+  verification.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.apple.mDNSResponder</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/sbin/mDNSResponder</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>MachServices</key>
+    <dict>
+        <key>com.apple.mDNSResponder</key>
+        <true/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/var/log/mDNSResponder.stderr</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/mDNSResponder.stderr</string>
+</dict>
+</plist>

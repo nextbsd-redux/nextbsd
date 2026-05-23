@@ -795,6 +795,24 @@ expect {
     }
 }
 
+# MDNS-BOOT — iter 1 mDNSResponder liveness. bootstrap_look_up for
+# com.apple.mDNSResponder via mdnstest. Iter 1 ships just the
+# daemon skeleton (no mDNS engine yet); iter 2+ wires mDNSCore +
+# the dnssd.defs MIG routines.
+expect {
+    timeout {
+        puts "\nFAIL: MDNS-BOOT marker not seen"
+        exit 1
+    }
+    "MDNS-BOOT-FAIL" {
+        puts "\nFAIL: mDNSResponder skeleton did not register its Mach service"
+        exit 1
+    }
+    "MDNS-BOOT-OK" {
+        puts "\nOK: mDNSResponder skeleton up (com.apple.mDNSResponder registered)"
+    }
+}
+
 # IPCFG-IPCONFIG — iter 8 Apple-shape CLI. Same MIG round-trip
 # ipconfigrpctest exercises, but driven through /usr/sbin/ipconfig.
 # Validates that the Apple-canonical CLI parses argv, looks up

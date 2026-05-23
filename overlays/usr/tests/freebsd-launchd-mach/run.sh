@@ -790,6 +790,17 @@ fi
 #
 # Marker: IPCFG-IPCONFIG-OK on both subcommands returning the expected
 # values (em0=10.0.2.15 from SLIRP; ifcount>=1). -FAIL on any mismatch.
+# MDNS-BOOT — iter 1 mDNSResponder liveness probe. bootstrap_look_up
+# for com.apple.mDNSResponder; prints MDNS-BOOT-OK on success. iter 1
+# is just the skeleton (no engine yet); iter 2+ grows real DNS-SD
+# routines over Mach.
+mdnstest=/usr/tests/freebsd-launchd-mach/mdnstest
+if [ ! -x "$mdnstest" ]; then
+    echo "MDNS-BOOT-FAIL: $mdnstest missing"
+else
+    "$mdnstest" || true	# marker gates in boot-test.sh
+fi
+
 ipconfig_cli=/usr/sbin/ipconfig
 if [ ! -x "$ipconfig_cli" ]; then
     echo "IPCFG-IPCONFIG-FAIL: $ipconfig_cli missing"
