@@ -26,6 +26,7 @@
  * + the full T1/T2 renewal machinery.
  */
 #include "dhcp_discover.h"
+#include "arp_probe.h"
 #include "dhcp_packet.h"
 
 #include <sys/types.h>
@@ -301,10 +302,13 @@ build_dhcp_msg(uint8_t *buf, const uint8_t mac[6], uint32_t xid,
 	(void)memcpy(opt, mac, 6);
 	opt += 6;
 
-	/* REQUEST-only: option 50 (requested ip) + 54 (server id). RFC
-	 * 2131 §4.3.2 requires these on the SELECTING-state REQUEST so
-	 * the server can disambiguate which offer the client took. */
-	if (msgtype == DHCP_MTYPE_REQUEST) {
+	/* REQUEST + DECLINE: option 50 (requested ip) + 54 (server id).
+	 * RFC 2131 §4.3.2 requires these on the SELECTING-state REQUEST
+	 * so the server can disambiguate which offer the client took.
+	 * RFC 2131 §3.1.5 requires them on DHCPDECLINE so the server
+	 * knows which offer the client is rejecting (so it can mark the
+	 * address as in-use and not re-offer it). */
+	if (msgtype == DHCP_MTYPE_REQUEST || msgtype == DHCP_MTYPE_DECLINE) {
 		if (requested_ip != NULL) {
 			*opt++ = DHCP_OPT_REQUESTED_IP;
 			*opt++ = 4;
@@ -674,6 +678,41 @@ dhcp_lease_acquire(const char *ifname, struct dhcp_lease *lease_out)
 		(void)inet_ntop(AF_INET, &offer.addr, y, sizeof(y));
 		(void)inet_ntop(AF_INET, &offer.server, s, sizeof(s));
 		xlog("OFFER yiaddr=%s server=%s", y, s);
+	}
+
+	/* ---- RFC 5227 ARP probe on the offered address ----
+	 *
+	 * Defends against the DHCP server handing out an address that
+	 * another host on the segment is already using (a misconfigured
+	 * static client, a leaked lease, etc.). On conflict we DECLINE
+	 * the offer and bail — iter 6 doesn't loop back to INIT (that
+	 * needs a per-attempt xid + a §3.1.5-mandated 10s wait between
+	 * decline and a new DISCOVER, which is iter 7 work). The daemon
+	 * stays alive on its Mach service; CI's SLIRP gateway can't
+	 * actually replicate a conflict, so the conflict branch is
+	 * exercised only by the unit/logic path. */
+	{
+		int pr = arp_probe(ifname, offer.addr);
+
+		if (pr == 1) {
+			frame_len = build_dhcp_msg(frame, mac, xid,
+			    DHCP_MTYPE_DECLINE, &offer.addr, &offer.server,
+			    NULL);
+			if (send_dhcp(bpf_fd, frame, frame_len) != 0)
+				xlog("DHCPDECLINE send failed");
+			else
+				xlog("sent DHCPDECLINE (xid=0x%08x)", xid);
+			xlog("IPCFG-BOUND-FAIL");
+			(void)close(bpf_fd);
+			return (-1);
+		}
+		if (pr == 0)
+			xlog("IPCFG-ARP-OK");
+		/* pr < 0: arp_probe failed (BPF open / send error). Treat
+		 * as no-conflict so a transient probe issue doesn't
+		 * deadlock the lease; the address is still verified by
+		 * DHCPACK below. No marker emitted on this path — the
+		 * boot test fails fast if it never sees ARP-OK. */
 	}
 
 	/* ---- REQUESTING: send REQUEST until an ACK arrives ---- */

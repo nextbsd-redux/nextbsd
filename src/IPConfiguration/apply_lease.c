@@ -12,6 +12,7 @@
  *      proper SCDynamicStore publish).
  */
 #include "apply_lease.h"
+#include "arp_probe.h"
 
 #include <sys/types.h>
 #include <sys/ioctl.h>
@@ -177,6 +178,12 @@ apply_lease(const char *ifname, const struct dhcp_lease *lease)
 
 	if (apply_address(ifname, lease) != 0)
 		rc = -1;
+	else
+		/* RFC 5227 §2.3 gratuitous-ARP announce. Best-effort —
+		 * the address is already on the interface, the announce
+		 * is purely a peer ARP-cache update. iter 6 does not
+		 * gate apply_lease on it. */
+		(void)arp_announce(ifname, lease->addr);
 	if (install_default_route(lease) != 0)
 		rc = -1;
 	/* DNS is best-effort; failure doesn't fail the apply. */
