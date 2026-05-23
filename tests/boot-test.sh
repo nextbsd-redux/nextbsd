@@ -869,6 +869,27 @@ expect {
     }
 }
 
+# DA-WATCH — iter 2 hwregd subscription. The daemon's hwreg_subscribe
+# layer sends a HWREG_MSG_SUBSCRIBE to org.freebsd.hwregd, waits for
+# the ack EVENT, then spawns a thread to log incoming attach/detach
+# events. Storage-device names (ada*/da*/nvd*/cd*/mmcsd*) are tagged
+# STORAGE in the log. iter 3+ will move to the MIG-served
+# hwreg_watch / hwreg_lookup so we can filter at the hwregd side and
+# enumerate the current registry state at startup.
+expect {
+    timeout {
+        puts "\nFAIL: DA-WATCH marker not seen"
+        exit 1
+    }
+    "DA-WATCH-FAIL" {
+        puts "\nFAIL: diskarbitrationd could not subscribe to org.freebsd.hwregd"
+        exit 1
+    }
+    "DA-WATCH-OK" {
+        puts "\nOK: diskarbitrationd subscribed to hwregd's pub/sub bus"
+    }
+}
+
 # IPCFG-IPCONFIG — iter 8 Apple-shape CLI. Same MIG round-trip
 # ipconfigrpctest exercises, but driven through /usr/sbin/ipconfig.
 # Validates that the Apple-canonical CLI parses argv, looks up

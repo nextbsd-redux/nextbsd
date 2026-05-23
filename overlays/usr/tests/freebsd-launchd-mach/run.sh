@@ -831,15 +831,34 @@ else
     "$dnssdtest" || true	# marker gates in boot-test.sh
 fi
 
-# DA-BOOT — DiskArbitration iter 1 liveness probe. bootstrap_look_up
-# for com.apple.DiskArbitration; prints DA-BOOT-OK on success. iter 1
-# is just the daemon skeleton (no hwregd subscription, no libgeom
-# enrichment, no DA framework). iter 2+ wires the real plumbing.
+# DA-BOOT + DA-WATCH — DiskArbitration iter 2. datest verifies the
+# Mach service (DA-BOOT-OK); the daemon itself subscribes to hwregd
+# at startup and emits DA-WATCH-OK to /var/log/diskarbitrationd.stderr
+# once the ack EVENT arrives. Cat the file so the marker reaches this
+# console for boot-test.sh's expect.
 datest=/usr/tests/freebsd-launchd-mach/datest
 if [ ! -x "$datest" ]; then
     echo "DA-BOOT-FAIL: $datest missing"
 else
     "$datest" || true	# marker gates in boot-test.sh
+fi
+if [ -f /var/log/diskarbitrationd.stderr ]; then
+    # Wait briefly for the hwregd subscription to complete — the daemon
+    # boots in parallel with hwregd; if DA starts first, the initial
+    # bootstrap_look_up may fail and the subscription will retry. iter 2
+    # has no retry; iter 3 will. For now just give it a few seconds.
+    i=0
+    while [ $i -lt 10 ]; do
+        if grep -q 'DA-WATCH-OK\|DA-WATCH-FAIL' \
+            /var/log/diskarbitrationd.stderr 2>/dev/null; then
+            break
+        fi
+        sleep 1
+        i=$((i+1))
+    done
+    echo "--- /var/log/diskarbitrationd.stderr ---"
+    cat /var/log/diskarbitrationd.stderr
+    echo "--- end diskarbitrationd.stderr ---"
 fi
 
 ipconfig_cli=/usr/sbin/ipconfig
