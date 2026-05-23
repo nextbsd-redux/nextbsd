@@ -168,26 +168,35 @@ bring_interface_up(const char *ifname)
 }
 
 /*
- * Open /dev/bpfN, BIOCSETIF to ifname, set immediate mode + the
- * hdrcmplt flag so our prebuilt Ethernet header is sent verbatim.
+ * Open a BPF descriptor, BIOCSETIF to ifname, set immediate mode +
+ * the hdrcmplt flag so our prebuilt Ethernet header is sent
+ * verbatim.
+ *
+ * FreeBSD ships /dev/bpf as a cloning device — open("/dev/bpf")
+ * autocreates a fresh /dev/bpfN and returns its descriptor. We
+ * also fall back to the /dev/bpfN loop (the Apple bootp/bootplib/
+ * bpflib.c shape) for older or non-cloning configurations.
  */
 static int
 bpf_open(const char *ifname)
 {
 	struct ifreq ifr;
-	int fd = -1, i;
+	int fd, i;
 	u_int one = 1;
 	struct timeval tv;
 
-	for (i = 0; i < 256; i++) {
-		char path[32];
+	fd = open("/dev/bpf", O_RDWR);
+	if (fd < 0 && (errno == ENOENT || errno == ENXIO)) {
+		for (i = 0; i < 256; i++) {
+			char path[32];
 
-		(void)snprintf(path, sizeof(path), "/dev/bpf%d", i);
-		fd = open(path, O_RDWR);
-		if (fd >= 0)
-			break;
-		if (errno != EBUSY)
-			break;
+			(void)snprintf(path, sizeof(path), "/dev/bpf%d", i);
+			fd = open(path, O_RDWR);
+			if (fd >= 0)
+				break;
+			if (errno != EBUSY)
+				break;
+		}
 	}
 	if (fd < 0)
 		return (-1);
@@ -470,24 +479,35 @@ dhcp_discover_run(const char *ifname)
 	time_t deadline;
 	int got = 0;
 
+	/*
+	 * On every failure path: log the diagnostic on its own line
+	 * FIRST, then emit the bare `IPCFG-DISCOVER-FAIL` marker on
+	 * its own line. tests/boot-test.sh's expect block matches on
+	 * the marker substring and exits immediately, so anything on
+	 * the same line as the marker is lost from the captured
+	 * console; keeping the marker bare guarantees the diagnostic
+	 * survives.
+	 */
 	if (get_interface_mac(ifname, mac) != 0) {
-		xlog("IPCFG-DISCOVER-FAIL: get_interface_mac(%s): %s",
+		xlog("get_interface_mac(%s) failed: %s",
 		    ifname, strerror(errno));
+		xlog("IPCFG-DISCOVER-FAIL");
 		return (-1);
 	}
 	xlog("iface %s mac %02x:%02x:%02x:%02x:%02x:%02x",
 	    ifname, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
 	if (bring_interface_up(ifname) != 0) {
-		xlog("IPCFG-DISCOVER-FAIL: bring_interface_up(%s): %s",
+		xlog("bring_interface_up(%s) failed: %s",
 		    ifname, strerror(errno));
+		xlog("IPCFG-DISCOVER-FAIL");
 		return (-1);
 	}
 
 	bpf_fd = bpf_open(ifname);
 	if (bpf_fd < 0) {
-		xlog("IPCFG-DISCOVER-FAIL: bpf_open(%s): %s",
-		    ifname, strerror(errno));
+		xlog("bpf_open(%s) failed: %s", ifname, strerror(errno));
+		xlog("IPCFG-DISCOVER-FAIL");
 		return (-1);
 	}
 
@@ -497,8 +517,9 @@ dhcp_discover_run(const char *ifname)
 
 	frame_len = build_discover(frame, mac, xid);
 	if (write(bpf_fd, frame, frame_len) != (ssize_t)frame_len) {
-		xlog("IPCFG-DISCOVER-FAIL: write(bpf, %zu): %s",
+		xlog("write(bpf, %zu) failed: %s",
 		    frame_len, strerror(errno));
+		xlog("IPCFG-DISCOVER-FAIL");
 		(void)close(bpf_fd);
 		return (-1);
 	}
@@ -550,7 +571,8 @@ dhcp_discover_run(const char *ifname)
 		    "server=%s", ifname, xid, y, s);
 		return (0);
 	}
-	xlog("IPCFG-DISCOVER-FAIL: no DHCPOFFER received within 10s "
-	    "(iface=%s xid=0x%08x)", ifname, xid);
+	xlog("no DHCPOFFER received within 10s (iface=%s xid=0x%08x)",
+	    ifname, xid);
+	xlog("IPCFG-DISCOVER-FAIL");
 	return (-1);
 }
