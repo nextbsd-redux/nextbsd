@@ -232,14 +232,18 @@ bpf_open(const char *ifname)
 
 /*
  * Build a DHCPDISCOVER or DHCPREQUEST frame into `buf` (≥ 1024
- * bytes). For DISCOVER, requested_ip / server_id are both NULL;
- * for REQUEST, both come from the OFFER we just received. Returns
- * the total Ethernet frame length.
+ * bytes). For DISCOVER, requested_ip / server_id / ciaddr are all
+ * NULL. For a SELECTING-state REQUEST, requested_ip + server_id
+ * come from the OFFER we just received and ciaddr is NULL. For a
+ * RENEWING/REBINDING REQUEST (iter 4), requested_ip + server_id are
+ * NULL but ciaddr is set to the bound address — RFC 2131 §4.3.2
+ * encoding for the post-BOUND renewal request. Returns the total
+ * Ethernet frame length.
  */
 static size_t
 build_dhcp_msg(uint8_t *buf, const uint8_t mac[6], uint32_t xid,
     uint8_t msgtype, const struct in_addr *requested_ip,
-    const struct in_addr *server_id)
+    const struct in_addr *server_id, const struct in_addr *ciaddr)
 {
 	struct ether_header *eh;
 	struct ip *ip;
@@ -277,6 +281,8 @@ build_dhcp_msg(uint8_t *buf, const uint8_t mac[6], uint32_t xid,
 	dh->dp_hlen = 6;
 	dh->dp_xid = htonl(xid);
 	dh->dp_flags = htons(DHCP_FLAG_BROADCAST);
+	if (ciaddr != NULL)
+		dh->dp_ciaddr = *ciaddr;
 	(void)memcpy(dh->dp_chaddr, mac, 6);
 
 	opt = (uint8_t *)dh + sizeof(*dh);
@@ -638,7 +644,7 @@ dhcp_lease_acquire(const char *ifname, struct dhcp_lease *lease_out)
 		if (got_term)
 			goto shutdown;
 		frame_len = build_dhcp_msg(frame, mac, xid,
-		    DHCP_MTYPE_DISCOVER, NULL, NULL);
+		    DHCP_MTYPE_DISCOVER, NULL, NULL, NULL);
 		if (send_dhcp(bpf_fd, frame, frame_len) != 0) {
 			xlog("IPCFG-BOUND-FAIL");
 			(void)close(bpf_fd);
@@ -677,7 +683,7 @@ dhcp_lease_acquire(const char *ifname, struct dhcp_lease *lease_out)
 		if (got_term)
 			goto shutdown;
 		frame_len = build_dhcp_msg(frame, mac, xid,
-		    DHCP_MTYPE_REQUEST, &offer.addr, &offer.server);
+		    DHCP_MTYPE_REQUEST, &offer.addr, &offer.server, NULL);
 		if (send_dhcp(bpf_fd, frame, frame_len) != 0) {
 			xlog("IPCFG-BOUND-FAIL");
 			(void)close(bpf_fd);
@@ -706,6 +712,69 @@ shutdown:
 	xlog("DHCP exchange interrupted by signal (got_term=%d)",
 	    (int)got_term);
 	xlog("IPCFG-BOUND-FAIL");
+	(void)close(bpf_fd);
+	return (-1);
+}
+
+int
+dhcp_renew(const char *ifname, const struct dhcp_lease *existing,
+    struct dhcp_lease *new_lease)
+{
+	uint8_t mac[6];
+	uint8_t frame[1024];
+	uint32_t xid;
+	int bpf_fd, try;
+	size_t frame_len;
+	struct timespec deadline;
+
+	if (get_interface_mac(ifname, mac) != 0)
+		return (-1);
+
+	/* Interface is already up (we have a lease on it) — no
+	 * bring_interface_up call needed. Open a fresh BPF descriptor
+	 * just for this exchange so we don't have to plumb the fd
+	 * across the lease loop. */
+	bpf_fd = bpf_open(ifname);
+	if (bpf_fd < 0) {
+		xlog("renew: bpf_open(%s) failed: %s", ifname,
+		    strerror(errno));
+		return (-1);
+	}
+
+	{
+		struct timespec ts;
+
+		(void)clock_gettime(CLOCK_REALTIME, &ts);
+		xid = (uint32_t)ts.tv_nsec ^ (uint32_t)ts.tv_sec ^
+		    (uint32_t)(mac[5] | (mac[4] << 8));
+	}
+
+	for (try = 0; try < DHCP_MAX_RETRIES; try++) {
+		int r;
+
+		if (got_term)
+			break;
+		frame_len = build_dhcp_msg(frame, mac, xid,
+		    DHCP_MTYPE_REQUEST, NULL, NULL, &existing->addr);
+		if (send_dhcp(bpf_fd, frame, frame_len) != 0) {
+			(void)close(bpf_fd);
+			return (-1);
+		}
+		xlog("renew: sent DHCPREQUEST (xid=0x%08x, try=%d/%d)",
+		    xid, try + 1, DHCP_MAX_RETRIES);
+
+		deadline_in(&deadline, retry_seconds[try]);
+		r = recv_dhcp_reply(bpf_fd, xid, DHCP_MTYPE_ACK,
+		    &deadline, new_lease);
+		if (r == 1) {
+			(void)close(bpf_fd);
+			return (0);
+		}
+		if (r < 0)
+			break;
+	}
+	xlog("renew: no DHCPACK after %d retries (iface=%s xid=0x%08x)",
+	    DHCP_MAX_RETRIES, ifname, xid);
 	(void)close(bpf_fd);
 	return (-1);
 }

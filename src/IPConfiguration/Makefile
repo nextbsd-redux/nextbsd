@@ -15,11 +15,17 @@ PROG=		ipconfigd
 # Same suppression hwregd / configd use.
 MAN=
 SRCS=		ipconfigd.c dhcp_discover.c apply_lease.c
+SRCS+=		sc_publish.c lease_loop.c
 
-WARNS?=		6
+# WARNS=0: sc_publish.c pulls the CoreFoundation public header tree
+# (CFRuntime.h, CFBundle.h, CFLocking.h ...). At WARNS>0 the FreeBSD
+# warning machinery adds -Wsystem-headers -Werror which promotes
+# warnings inside the vendored CF headers into hard errors. Same
+# carry libSystemConfiguration / libxpc / libCoreFoundation use.
+WARNS=		0
 NO_MAN=		yes
 
-CFLAGS+=	-O2 -pipe
+CFLAGS+=	-O2 -pipe -fblocks
 CFLAGS+=	-Wall -Wextra -Wshadow -Wstrict-prototypes
 CFLAGS+=	-Wmissing-prototypes -Wpointer-arith
 
@@ -40,7 +46,14 @@ LDFLAGS+=	-Wl,--allow-shlib-undefined
 
 # -llaunch: bootstrap_check_in + the bootstrap_port global.
 # -lsystem_kernel: mach_msg + the Mach port syscalls behind it.
+# -lSystemConfiguration: SCDynamicStoreSetValue — the configd publish
+# that sc_publish.c wraps. -lCoreFoundation: CFDictionary / CFString
+# / CFArray, the dictionary shape sc_publish.c builds for State:/...
+# -ldispatch -lBlocksRuntime: pulled transitively by the SC umbrella
+# header (SCDynamicStoreSetDispatchQueue ABI surface).
 LDADD+=		-llaunch -lsystem_kernel
+LDADD+=		-lSystemConfiguration -lCoreFoundation
+LDADD+=		-ldispatch -lBlocksRuntime -lpthread
 
 BINDIR=		/usr/sbin
 

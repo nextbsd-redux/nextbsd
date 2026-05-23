@@ -712,6 +712,20 @@ expect {
     }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: IPCFG-STORE marker not seen"
+        exit 1
+    }
+    "IPCFG-STORE-FAIL" {
+        puts "\nFAIL: ipconfigd SCDynamicStore publish failed"
+        exit 1
+    }
+    "IPCFG-STORE-OK" {
+        puts "\nOK: ipconfigd published State:/Network/Service/.../IPv4 to configd"
+    }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"
