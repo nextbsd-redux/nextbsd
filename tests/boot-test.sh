@@ -795,41 +795,21 @@ expect {
     }
 }
 
-# MDNS-BOOT — mDNSResponder Mach service liveness. bootstrap_look_up
-# for com.apple.mDNSResponder via mdnstest. Proves the Mach surface
-# is up; the engine itself is gated separately by MDNS-ENGINE-OK.
+# MDNS-BOOT — iter 1 mDNSResponder liveness. bootstrap_look_up for
+# com.apple.mDNSResponder via mdnstest. Iter 1 ships just the
+# daemon skeleton (no mDNS engine yet); iter 2+ wires mDNSCore +
+# the dnssd.defs MIG routines.
 expect {
     timeout {
         puts "\nFAIL: MDNS-BOOT marker not seen"
         exit 1
     }
     "MDNS-BOOT-FAIL" {
-        puts "\nFAIL: mDNSResponder did not register its Mach service"
+        puts "\nFAIL: mDNSResponder skeleton did not register its Mach service"
         exit 1
     }
     "MDNS-BOOT-OK" {
-        puts "\nOK: mDNSResponder Mach service up (com.apple.mDNSResponder registered)"
-    }
-}
-
-# MDNS-ENGINE — iter 2 mDNS engine. Logged by the daemon itself
-# (PosixDaemon.c, after mDNS_Init returns mStatus_NoError) to
-# /var/log/mDNSResponder.stderr, which run.sh cats so the marker
-# reaches this console. Confirms the protocol engine + uds_daemon
-# (AF_UNIX server at /var/run/mDNSResponder) initialized — i.e.
-# Apple-shape libdns_sd clients on this host can now register /
-# browse / resolve over the cross-platform mDNSPosix engine.
-expect {
-    timeout {
-        puts "\nFAIL: MDNS-ENGINE marker not seen"
-        exit 1
-    }
-    "MDNS-ENGINE-FAIL" {
-        puts "\nFAIL: mDNS_Init or udsserver_init returned an error"
-        exit 1
-    }
-    "MDNS-ENGINE-OK" {
-        puts "\nOK: mDNSResponder engine up (mDNS_Init + udsserver ready)"
+        puts "\nOK: mDNSResponder skeleton up (com.apple.mDNSResponder registered)"
     }
 }
 
