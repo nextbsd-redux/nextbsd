@@ -19,18 +19,22 @@
  *
  * iter 2 — one-shot DHCPv4 DISCOVER/OFFER probe (dhcp_discover.c).
  *
- * iter 3 — full RFC 2131 INIT → BOUND. dhcp_discover.c now runs
- * the SELECTING → REQUESTING → BOUND state machine with the
- * standard 4/8/16s retransmit ladder + ±1s jitter, returning a
- * struct dhcp_lease. apply_lease.c then installs it: SIOCAIFADDR
- * for the address+netmask+broadcast, PF_ROUTE RTM_ADD for the
- * default route via the offered router, and a best-effort
- * /etc/resolv.conf write. Long BPF reads are signal-aware via the
- * shared `got_term` flag — a SIGTERM/SIGHUP during the wait
- * short-circuits the loop instead of holding the daemon for the
- * full ladder. Marker IPCFG-BOUND-OK on success, IPCFG-BOUND-FAIL
- * on any failure path. Lease renewal / SCDynamicStore publish is
- * iter 4+.
+ * iter 3 — full RFC 2131 INIT → BOUND. dhcp_discover.c runs the
+ * SELECTING → REQUESTING → BOUND state machine; apply_lease.c then
+ * installs the result (SIOCAIFADDR, default route, /etc/resolv.conf).
+ *
+ * iter 4 — SCDynamicStore publish on BOUND + RFC 2131 §4.4.5
+ * RENEWING/REBINDING lease loop. sc_publish.c builds the
+ * State:/Network/Service/<UUID>/IPv4 dictionary; lease_loop.c
+ * sleeps until T1, sends a broadcast RENEWING REQUEST, etc.
+ *
+ * iter 5a — raw mach_msg MIG demux + worker thread.
+ * mach_service.c spawns a pthread that bootstrap_check_in's the
+ * service port and runs _ipconfig_server() (MIG demux for
+ * ipconfig.defs) on each request. The worker reads live state via
+ * bound_state.{c,h}; the main thread (DHCP + lease loop) writes it
+ * on BOUND. iter 5a vendors 2 read-only routines (if_count,
+ * if_addr); the full ipconfig.defs surface grows in iter 6+.
  */
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -39,9 +43,6 @@
 #include <net/if_dl.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>		/* inet_ntop for the BOUND log line */
-
-#include <mach/mach.h>
-#include <servers/bootstrap.h>
 
 #include <errno.h>
 #include <ifaddrs.h>
@@ -54,11 +55,11 @@
 #include <unistd.h>
 
 #include "apply_lease.h"
+#include "bound_state.h"
 #include "dhcp_discover.h"
 #include "lease_loop.h"
+#include "mach_service.h"
 #include "sc_publish.h"
-
-#define IPCFG_SERVICE_NAME	"com.apple.IPConfiguration"
 
 /*
  * Global (non-static): dhcp_discover.c's recv loop polls this
@@ -134,13 +135,11 @@ int
 main(int argc, char **argv)
 {
 	struct sigaction sa;
-	mach_port_t service = MACH_PORT_NULL;
-	kern_return_t kr;
 
 	(void)argc;
 	(void)argv;
 
-	xlog("ipconfigd starting (iter 1 skeleton — no DHCP yet)");
+	xlog("ipconfigd starting (iter 5a — MIG service + DHCPv4)");
 
 	/*
 	 * sa_flags = 0 — system calls are NOT auto-restarted on
@@ -161,23 +160,19 @@ main(int argc, char **argv)
 	}
 
 	/*
-	 * launchd handed us the receive right for the
-	 * com.apple.IPConfiguration MachServices entry via the
-	 * bootstrap port. bootstrap_check_in claims it. Without
-	 * RunAtLoad-then-check-in the service would not be reachable
-	 * from clients.
+	 * iter 5a: the Mach service thread now owns the receive right
+	 * for com.apple.IPConfiguration (bootstrap_check_in lives in
+	 * mach_service.c). It is spawned up-front so the service is
+	 * reachable while DHCP is still in flight — RPC routines
+	 * return ipconfig_status_no_server_e until the BOUND lease
+	 * lands in bound_state. iter-1 IPCFG-BOOT (ipconfigtest's
+	 * bootstrap_look_up) is now answered by launchd's broker, not
+	 * a direct send to our checked-in port; the Mach plumbing is
+	 * identical from the client side.
 	 */
-	kr = bootstrap_check_in(bootstrap_port, IPCFG_SERVICE_NAME,
-	    &service);
-	if (kr != KERN_SUCCESS) {
-		xlog("bootstrap_check_in('%s') failed: 0x%x — "
-		    "ipconfigtest will not see the service",
-		    IPCFG_SERVICE_NAME, (unsigned)kr);
-		/* don't exit; let launchd respawn surface the issue */
-	} else {
-		xlog("bootstrap_check_in('%s') ok: service port=0x%x",
-		    IPCFG_SERVICE_NAME, (unsigned)service);
-	}
+	bound_state_init();
+	if (mach_service_start() != 0)
+		xlog("mach_service_start failed; RPC off");
 
 	/*
 	 * iter 3: full DHCPv4 INIT → BOUND on the first non-loopback
@@ -231,6 +226,15 @@ main(int argc, char **argv)
 					    "server=%s lease=%us",
 					    ifname, a, m, r, s,
 					    (unsigned)lease.lease_time);
+					/*
+					 * Make the lease visible to the
+					 * Mach service worker before the
+					 * BOUND marker fires — so any
+					 * client racing IPCFG-RPC-OK
+					 * against IPCFG-BOUND-OK sees the
+					 * address it expects.
+					 */
+					bound_state_set(ifname, &lease);
 					xlog("IPCFG-BOUND-OK");
 
 					/*
@@ -274,5 +278,6 @@ main(int argc, char **argv)
 	}
 
 	xlog("ipconfigd exiting on signal %d", (int)got_term);
+	mach_service_join();
 	return (0);
 }

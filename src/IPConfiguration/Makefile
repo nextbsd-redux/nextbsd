@@ -16,6 +16,25 @@ PROG=		ipconfigd
 MAN=
 SRCS=		ipconfigd.c dhcp_discover.c apply_lease.c
 SRCS+=		sc_publish.c lease_loop.c
+SRCS+=		bound_state.c mach_service.c ipconfigd_mig.c
+
+# ipconfigServer.c — MIG-generated server stub for ipconfig.defs
+# (iter 5a's two read-only routines). build.sh runs mig and passes
+# MIGOUT=; a bare standalone build without it fails at the generated
+# #include "ipconfigServer.h", the same way liblaunch / hwregd do.
+# -w on the generated TU: MIG output is not WARNS-clean and must
+# not gate the build. -Wno-macro-redefined: the MIG stubs pull
+# <mach/notify.h>, which redefines the MACH_NOTIFY_* macros
+# <mach/message.h> also defines (identical values, whitespace
+# differs) — same benign clash hwregd / configd document.
+MIGOUT?=
+.if !empty(MIGOUT)
+.PATH:				${MIGOUT}
+SRCS+=				ipconfigServer.c
+CFLAGS+=			-I${MIGOUT}
+CFLAGS.ipconfigServer.c+=	-w
+CFLAGS+=			-Wno-macro-redefined
+.endif
 
 # WARNS=0: sc_publish.c pulls the CoreFoundation public header tree
 # (CFRuntime.h, CFBundle.h, CFLocking.h ...). At WARNS>0 the FreeBSD

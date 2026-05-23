@@ -1648,9 +1648,27 @@ echo "==> SYSLOG-CLI-BUILD-OK"
 #     track keeps Apple's Mach IPC + MIG, same as configd/hwregd).
 #
 echo "==> building ipconfigd (src/IPConfiguration)"
+# Phase K iter-5a: generate the ipconfig.defs MIG stubs
+# (_ipconfig_server() demux for ipconfigd, ipconfigUser.c for the
+# ipconfigrpctest client). Same mig.sh + migcom path as the
+# launchd / hwreg.defs MIG steps above.
+IPCFG_MIG="$WORK/ipcfg-mig"
+mkdir -p "$IPCFG_MIG"
+( cd "$IPCFG_MIG" && \
+  MIGCC=/usr/bin/cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
+  /bin/sh "$ROOT/src/bootstrap_cmds/migcom.tproj/mig.sh" \
+    -I"$ROOT/src/libmach/include" \
+    -I"$ROOT/src/IPConfiguration" \
+    -header ipconfig.h -user ipconfigUser.c \
+    -server ipconfigServer.c -sheader ipconfigServer.h \
+    "$ROOT/src/IPConfiguration/ipconfig.defs" ) \
+  || { echo "FAIL: mig could not process ipconfig.defs"; exit 1; }
+test -s "$IPCFG_MIG/ipconfigServer.c" \
+    || { echo "FAIL: mig produced no ipconfigServer.c"; exit 1; }
 make -C "$ROOT/src/IPConfiguration" \
     DESTDIR="$WORK/rootfs" \
     SYSROOT="$WORK/rootfs" \
+    MIGOUT="$IPCFG_MIG" \
     all install
 ls -lh "$WORK/rootfs/usr/sbin/ipconfigd"
 test -x "$WORK/rootfs/usr/sbin/ipconfigd" \
@@ -1670,7 +1688,26 @@ cc -I"$ROOT/src/launchd/liblaunch" \
    -llaunch -lsystem_kernel
 test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/ipconfigtest" \
     || { echo "FAIL: ipconfigtest not built"; exit 1; }
-echo "==> ipconfigd + ipconfigtest built"
+
+# ipconfigrpctest — iter 5a RPC liveness probe. Links the
+# MIG-generated ipconfigUser.c (client stubs for ipconfig_if_count
+# / ipconfig_if_addr). run.sh runs it after IPCFG-STORE-OK; the
+# IPCFG-RPC-OK marker gates in tests/boot-test.sh.
+echo "==> building ipconfigrpctest"
+cc -I"$IPCFG_MIG" -I"$ROOT/src/IPConfiguration" \
+   -I"$ROOT/src/launchd/liblaunch" \
+   -I"$ROOT/src/launchd/freebsd-shims" \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wno-macro-redefined \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/ipconfigrpctest" \
+   "$ROOT/src/IPConfiguration/ipconfigrpctest.c" \
+   "$IPCFG_MIG/ipconfigUser.c" \
+   -llaunch -lsystem_kernel
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/ipconfigrpctest" \
+    || { echo "FAIL: ipconfigrpctest not built"; exit 1; }
+echo "==> ipconfigd + ipconfigtest + ipconfigrpctest built"
 
 #
 # 3z. purge build packages + clean pkg cache + tear down chroot.

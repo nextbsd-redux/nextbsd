@@ -764,4 +764,17 @@ if [ -f /var/log/ipconfigd.stderr ]; then
     echo "--- end bound-state dump ---"
 fi
 
+# IPCFG-RPC — iter-5a Mach-RPC round-trip: ipconfigrpctest does
+# bootstrap_look_up for com.apple.IPConfiguration, calls
+# ipconfig_if_count (expects >= 1 after BOUND) + ipconfig_if_addr
+# ("em0") (expects 10.0.2.15 from SLIRP), prints IPCFG-RPC-OK on
+# success. Runs AFTER the BOUND/STORE markers so the worker has
+# already populated bound_state.
+ipconfigrpctest=/usr/tests/freebsd-launchd-mach/ipconfigrpctest
+if [ ! -x "$ipconfigrpctest" ]; then
+    echo "IPCFG-RPC-FAIL: $ipconfigrpctest missing"
+else
+    "$ipconfigrpctest" || true	# marker gates in boot-test.sh
+fi
+
 exit 0

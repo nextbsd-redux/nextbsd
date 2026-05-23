@@ -726,6 +726,20 @@ expect {
     }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: IPCFG-RPC marker not seen"
+        exit 1
+    }
+    "IPCFG-RPC-FAIL" {
+        puts "\nFAIL: ipconfigd MIG RPC (ipconfig_if_count / if_addr) failed"
+        exit 1
+    }
+    "IPCFG-RPC-OK" {
+        puts "\nOK: ipconfigd MIG RPC works (ipconfig_if_count + ipconfig_if_addr returned the BOUND lease)"
+    }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"
