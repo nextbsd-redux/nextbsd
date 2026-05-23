@@ -55,6 +55,8 @@
 
 #include "apply_lease.h"
 #include "dhcp_discover.h"
+#include "lease_loop.h"
+#include "sc_publish.h"
 
 #define IPCFG_SERVICE_NAME	"com.apple.IPConfiguration"
 
@@ -185,6 +187,12 @@ main(int argc, char **argv)
 	 * Marker IPCFG-BOUND-OK / IPCFG-BOUND-FAIL — emitted by the
 	 * helpers on their own log lines so the boot-test console
 	 * captures the diagnostic before the marker fires expect.
+	 *
+	 * iter 4: on BOUND, publish State:/Network/Service/<UUID>/IPv4
+	 * (+ optional /DNS) to configd via libSystemConfiguration —
+	 * marker IPCFG-STORE-OK. Then enter the post-BOUND lease loop:
+	 * sleep until T1, RENEWING, on fail sleep to T2, REBINDING.
+	 *
 	 * Failure does NOT exit ipconfigd — the Mach service stays
 	 * registered (iter-1 IPCFG-BOOT still passes), and a future
 	 * iter's retry logic will pick up.
@@ -208,6 +216,8 @@ main(int argc, char **argv)
 					    ifname);
 					xlog("IPCFG-BOUND-FAIL");
 				} else {
+					struct sc_publish *pub;
+
 					(void)inet_ntop(AF_INET,
 					    &lease.addr, a, sizeof(a));
 					(void)inet_ntop(AF_INET,
@@ -222,6 +232,31 @@ main(int argc, char **argv)
 					    ifname, a, m, r, s,
 					    (unsigned)lease.lease_time);
 					xlog("IPCFG-BOUND-OK");
+
+					/*
+					 * Publish to configd. Failure is
+					 * non-fatal: the daemon stays up,
+					 * the lease is already applied at
+					 * the kernel level, but observers
+					 * watching State:/Network/Service/.
+					 * won't see this binding. CI marker
+					 * IPCFG-STORE-FAIL flags it.
+					 */
+					pub = sc_publish_open("ipconfigd");
+					if (pub == NULL) {
+						xlog("IPCFG-STORE-FAIL: "
+						    "no configd session");
+					} else if (sc_publish_ipv4(pub,
+					    ifname, &lease) != 0) {
+						xlog("IPCFG-STORE-FAIL: "
+						    "set State:/.../IPv4");
+					} else {
+						xlog("IPCFG-STORE-OK");
+						(void)lease_loop_run(ifname,
+						    &lease, pub);
+					}
+					if (pub != NULL)
+						sc_publish_close(pub);
 				}
 			}
 			/* failure case: dhcp_lease_acquire already logged

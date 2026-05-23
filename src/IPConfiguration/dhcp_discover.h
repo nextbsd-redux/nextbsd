@@ -43,6 +43,23 @@ extern volatile sig_atomic_t got_term;
 int	dhcp_lease_acquire(const char *ifname, struct dhcp_lease *out);
 
 /*
+ * Renew a bound lease — send a DHCPREQUEST in BOUND/RENEWING form
+ * (ciaddr=current addr, no opt 50/54, broadcast flag set so SLIRP
+ * and other simple servers accept it without ARP-resolving the
+ * client first), wait for the DHCPACK, fill *new_lease.
+ *
+ * iter 4 keeps RENEWING and REBINDING on the same broadcast-BPF
+ * path; RFC 2131 §4.3.2 says RENEWING SHOULD unicast but servers
+ * MAY (and most do) accept the broadcast form. Splitting unicast
+ * out is iter 5+ work alongside the threading rework.
+ *
+ * Returns 0 on success, -1 on timeout / shutdown / fatal error.
+ */
+int	dhcp_renew(const char *ifname,
+	    const struct dhcp_lease *existing,
+	    struct dhcp_lease *new_lease);
+
+/*
  * Pick the first non-loopback Ethernet interface (the QEMU guest's
  * em0 in CI). Writes the name into ifname_out (buffer is at least
  * IFNAMSIZ).  Returns 0 on success.
