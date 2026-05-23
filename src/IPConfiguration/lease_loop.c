@@ -5,6 +5,16 @@
  *
  * Sleep is 1s-tick polling on `got_term` so SIGTERM shortens any
  * wait; the longest contiguous block call is sleep(1).
+ *
+ * iter 5b: lease_cap_secs (from IPCONFIGD_FAST_LEASE in env) caps
+ * the effective lease time used to derive T1 / T2. Useful in CI
+ * where SLIRP hands out 86400s leases that would otherwise mean
+ * T1 = 12 hours; capping to e.g. 10s makes the renewal code run
+ * within the boot-test budget. The cap is NOT applied to
+ * lease->lease_time (the value sc_publish.c forwards to configd) —
+ * downstream consumers see the server's authoritative value. iter
+ * 5b also emits IPCFG-RENEW-OK once on the first successful
+ * RENEWING/REBINDING ACK so the gate fires deterministically.
  */
 #include "lease_loop.h"
 #include "dhcp_discover.h"
@@ -13,6 +23,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,11 +60,25 @@ sleep_interruptible(uint32_t seconds)
 	return (got_term ? -1 : 0);
 }
 
+/*
+ * Apply the iter-5b lease cap. Returns min(in, cap) when cap > 0;
+ * `in` unchanged otherwise. The cap only shortens timer math —
+ * lease->lease_time (the value published to configd) is untouched.
+ */
+static uint32_t
+cap_lease(uint32_t in, uint32_t cap)
+{
+	if (cap > 0 && in > cap)
+		return (cap);
+	return (in);
+}
+
 int
 lease_loop_run(const char *ifname, struct dhcp_lease *lease,
-    struct sc_publish *pub)
+    struct sc_publish *pub, uint32_t lease_cap_secs)
 {
-	uint32_t lease_secs = lease->lease_time;
+	uint32_t lease_secs = cap_lease(lease->lease_time, lease_cap_secs);
+	bool renew_marker_fired = false;
 
 	if (lease_secs == 0) {
 		xlog("zero lease time — treating as infinite (no renewal)");
@@ -61,6 +86,9 @@ lease_loop_run(const char *ifname, struct dhcp_lease *lease,
 			(void)sleep(60);
 		return (0);
 	}
+	if (lease_cap_secs > 0)
+		xlog("lease cap active: server lease=%us → effective=%us",
+		    (unsigned)lease->lease_time, lease_secs);
 
 	for (;;) {
 		uint32_t t1, t2_after_t1, expiry_after_t2;
@@ -86,11 +114,18 @@ lease_loop_run(const char *ifname, struct dhcp_lease *lease,
 		xlog("RENEWING: T1 fired, sending DHCPREQUEST");
 		if (dhcp_renew(ifname, lease, &renewed) == 0) {
 			*lease = renewed;
-			lease_secs = lease->lease_time;
+			lease_secs = cap_lease(lease->lease_time,
+			    lease_cap_secs);
 			if (pub != NULL &&
 			    sc_publish_ipv4(pub, ifname, lease) != 0)
 				xlog("RENEWING: re-publish failed (continuing)");
-			xlog("RENEWING -> BOUND (new lease=%us)", lease_secs);
+			xlog("RENEWING -> BOUND (server lease=%us, "
+			    "effective=%us)",
+			    (unsigned)lease->lease_time, lease_secs);
+			if (!renew_marker_fired) {
+				xlog("IPCFG-RENEW-OK");
+				renew_marker_fired = true;
+			}
 			continue;
 		}
 		xlog("RENEWING: no ACK; waiting until T2");
@@ -102,11 +137,18 @@ lease_loop_run(const char *ifname, struct dhcp_lease *lease,
 		xlog("REBINDING: T2 fired, sending DHCPREQUEST");
 		if (dhcp_renew(ifname, lease, &renewed) == 0) {
 			*lease = renewed;
-			lease_secs = lease->lease_time;
+			lease_secs = cap_lease(lease->lease_time,
+			    lease_cap_secs);
 			if (pub != NULL &&
 			    sc_publish_ipv4(pub, ifname, lease) != 0)
 				xlog("REBINDING: re-publish failed (continuing)");
-			xlog("REBINDING -> BOUND (new lease=%us)", lease_secs);
+			xlog("REBINDING -> BOUND (server lease=%us, "
+			    "effective=%us)",
+			    (unsigned)lease->lease_time, lease_secs);
+			if (!renew_marker_fired) {
+				xlog("IPCFG-RENEW-OK");
+				renew_marker_fired = true;
+			}
 			continue;
 		}
 		xlog("REBINDING: no ACK; waiting until lease expiry");

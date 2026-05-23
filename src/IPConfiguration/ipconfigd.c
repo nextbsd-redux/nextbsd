@@ -131,15 +131,46 @@ enumerate_interfaces(void)
 	return (total);
 }
 
+/*
+ * Read IPCONFIGD_FAST_LEASE from the environment. The env var caps
+ * the effective lease time used for T1 / T2 timer math (the value
+ * published to configd is unaffected). Accepts integers in [4, 86400]
+ * seconds; outside that range, or unset, the cap is disabled (return
+ * 0). Floor of 4 because the iter-3 retransmit ladder is 4s.
+ */
+static uint32_t
+read_lease_cap_env(void)
+{
+	const char *s = getenv("IPCONFIGD_FAST_LEASE");
+	char *end;
+	long v;
+
+	if (s == NULL || *s == '\0')
+		return (0);
+	v = strtol(s, &end, 10);
+	if (end == s || *end != '\0' || v < 4 || v > 86400) {
+		xlog("IPCONFIGD_FAST_LEASE='%s' ignored (need integer "
+		    "in [4, 86400])", s);
+		return (0);
+	}
+	xlog("IPCONFIGD_FAST_LEASE=%ld — capping lease for renewal "
+	    "timer math (server lease still authoritative)", v);
+	return ((uint32_t)v);
+}
+
 int
 main(int argc, char **argv)
 {
 	struct sigaction sa;
+	uint32_t lease_cap_secs;
 
 	(void)argc;
 	(void)argv;
 
-	xlog("ipconfigd starting (iter 5a — MIG service + DHCPv4)");
+	xlog("ipconfigd starting (iter 5b — MIG service + DHCPv4 + "
+	    "renewal CI gate)");
+
+	lease_cap_secs = read_lease_cap_env();
 
 	/*
 	 * sa_flags = 0 — system calls are NOT auto-restarted on
@@ -257,7 +288,8 @@ main(int argc, char **argv)
 					} else {
 						xlog("IPCFG-STORE-OK");
 						(void)lease_loop_run(ifname,
-						    &lease, pub);
+						    &lease, pub,
+						    lease_cap_secs);
 					}
 					if (pub != NULL)
 						sc_publish_close(pub);

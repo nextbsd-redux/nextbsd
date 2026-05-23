@@ -42,5 +42,20 @@
     <string>/var/log/ipconfigd.stderr</string>
     <key>StandardErrorPath</key>
     <string>/var/log/ipconfigd.stderr</string>
+    <!--
+      iter 5b: cap the effective lease time for renewal timer math
+      so CI can exercise the RENEWING/REBINDING code path within the
+      boot-test budget. SLIRP hands out an 86400s lease — without
+      this cap, T1 would be 12 hours. The cap does NOT touch the
+      published lease (configd still sees the server's authoritative
+      lease_time); only the daemon's renewal-trigger timing is
+      shortened. Value: 10s → T1=5s, T2=8.75s → IPCFG-RENEW-OK
+      within ~10s of BOUND on a fast network like SLIRP.
+    -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>IPCONFIGD_FAST_LEASE</key>
+        <string>10</string>
+    </dict>
 </dict>
 </plist>
