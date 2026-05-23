@@ -303,7 +303,18 @@ main(int argc, char **argv)
 						 * means RA isn't configured;
 						 * we log IPCFG-RA-MISS and
 						 * continue with IPv4 only.
+						 *
+						 * Round-1 CI showed em0 has
+						 * ND6_IFF_IFDISABLED set (this
+						 * image's net.inet6.ip6.auto_
+						 * linklocal is 0, so the kernel
+						 * never auto-added a link-local).
+						 * bring_v6_up clears IFDISABLED
+						 * and installs fe80::EUI-64 so
+						 * the kernel can source-select
+						 * the link-local-scoped RS.
 						 */
+						(void)bring_v6_up(ifname);
 						rar = ra_acquire(ifname,
 						    15000, &ra);
 						if (rar == 0) {

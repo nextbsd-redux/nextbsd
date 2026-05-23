@@ -113,6 +113,107 @@ make_prefix_mask(uint8_t prefix_len, struct in6_addr *mask)
 		mask->s6_addr[i / 8] |= (uint8_t)(0x80 >> (i % 8));
 }
 
+/*
+ * Compute the EUI-64 modified-IID for `mac` into `iid` (RFC 4862
+ * §A "Creating Modified EUI-64 Format Interface Identifiers").
+ */
+static void
+mac_to_eui64(const uint8_t mac[6], uint8_t iid[8])
+{
+	iid[0] = mac[0] ^ 0x02;
+	iid[1] = mac[1];
+	iid[2] = mac[2];
+	iid[3] = 0xff;
+	iid[4] = 0xfe;
+	iid[5] = mac[3];
+	iid[6] = mac[4];
+	iid[7] = mac[5];
+}
+
+int
+bring_v6_up(const char *ifname)
+{
+	struct in6_ndireq ndi;
+	struct in6_aliasreq req;
+	uint8_t mac[6], iid[8];
+	int sock, rc, had_disabled;
+
+	if (get_iface_mac(ifname, mac) != 0) {
+		xlog("get_iface_mac(%s) failed", ifname);
+		return (-1);
+	}
+
+	sock = socket(AF_INET6, SOCK_DGRAM, 0);
+	if (sock < 0) {
+		xlog("socket(AF_INET6) failed: %s", strerror(errno));
+		return (-1);
+	}
+
+	/*
+	 * Read current nd6 flags. ND6_IFF_IFDISABLED is the bit FreeBSD
+	 * sets when net.inet6.ip6.auto_linklocal is 0 at attach. Clear
+	 * it (also enable ACCEPT_RTADV so kernel-side ND processing
+	 * isn't surprised when our RA arrives) and write back.
+	 */
+	(void)memset(&ndi, 0, sizeof(ndi));
+	(void)strlcpy(ndi.ifname, ifname, sizeof(ndi.ifname));
+	had_disabled = 0;
+	if (ioctl(sock, SIOCGIFINFO_IN6, &ndi) == 0) {
+		had_disabled = (ndi.ndi.flags & ND6_IFF_IFDISABLED) != 0;
+		ndi.ndi.flags &= ~ND6_IFF_IFDISABLED;
+		ndi.ndi.flags |= ND6_IFF_ACCEPT_RTADV;
+		if (ioctl(sock, SIOCSIFINFO_IN6, &ndi) != 0)
+			xlog("SIOCSIFINFO_IN6(%s) failed: %s (continuing)",
+			    ifname, strerror(errno));
+		else if (had_disabled)
+			xlog("cleared ND6_IFF_IFDISABLED on %s", ifname);
+	} else {
+		xlog("SIOCGIFINFO_IN6(%s) failed: %s (continuing)",
+		    ifname, strerror(errno));
+	}
+
+	/*
+	 * Install fe80::<EUI-64>/64. If the kernel cleared IFDISABLED
+	 * and auto-added one in the moment between our two ioctls, this
+	 * returns EEXIST — benign.
+	 */
+	(void)memset(&req, 0, sizeof(req));
+	(void)strlcpy(req.ifra_name, ifname, sizeof(req.ifra_name));
+	req.ifra_addr.sin6_family = AF_INET6;
+	req.ifra_addr.sin6_len = sizeof(struct sockaddr_in6);
+	req.ifra_addr.sin6_addr.s6_addr[0] = 0xfe;
+	req.ifra_addr.sin6_addr.s6_addr[1] = 0x80;
+	mac_to_eui64(mac, iid);
+	(void)memcpy(&req.ifra_addr.sin6_addr.s6_addr[8], iid, 8);
+
+	req.ifra_prefixmask.sin6_family = AF_INET6;
+	req.ifra_prefixmask.sin6_len = sizeof(struct sockaddr_in6);
+	make_prefix_mask(64, &req.ifra_prefixmask.sin6_addr);
+
+	req.ifra_flags = IN6_IFF_AUTOCONF;
+	req.ifra_lifetime.ia6t_vltime = ND6_INFINITE_LIFETIME;
+	req.ifra_lifetime.ia6t_pltime = ND6_INFINITE_LIFETIME;
+
+	rc = ioctl(sock, SIOCAIFADDR_IN6, &req);
+	if (rc != 0 && errno != EEXIST) {
+		xlog("SIOCAIFADDR_IN6(%s, fe80::…) failed: %s",
+		    ifname, strerror(errno));
+		(void)close(sock);
+		return (-1);
+	}
+	(void)close(sock);
+
+	{
+		char buf[INET6_ADDRSTRLEN];
+
+		(void)inet_ntop(AF_INET6, &req.ifra_addr.sin6_addr, buf,
+		    sizeof(buf));
+		xlog("link-local %s installed on %s%s", buf, ifname,
+		    rc != 0 ? " (already present)" : "");
+	}
+	return (0);
+}
+
 static int
 install_v6_address(const char *ifname, const struct in6_addr *addr,
     uint8_t prefix_len, uint32_t valid_lt, uint32_t preferred_lt)

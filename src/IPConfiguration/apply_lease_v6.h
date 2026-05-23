@@ -12,6 +12,17 @@
 #include "ra_listen.h"
 
 /*
+ * Clear ND6_IFF_IFDISABLED on `ifname` and install an EUI-64
+ * link-local fe80::… address. This is the precondition for sending
+ * an ND_ROUTER_SOLICIT: ff02::2 is link-local scope, so the kernel
+ * needs an LL source on the egress interface. FreeBSD's per-image
+ * default for `net.inet6.ip6.auto_linklocal` in this build is 0 (the
+ * stack leaves IFDISABLED set on attach), so we cannot rely on the
+ * kernel to auto-configure the LL. Returns 0 on success.
+ */
+int bring_v6_up(const char *ifname);
+
+/*
  * Build the SLAAC unicast address from `info`'s prefix + an EUI-64
  * derived from `ifname`'s MAC, install it via SIOCAIFADDR_IN6, and
  * add a default route via info->router_lladdr. Returns 0 on success
