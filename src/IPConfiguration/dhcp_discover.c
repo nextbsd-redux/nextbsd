@@ -141,12 +141,21 @@ get_interface_mac(const char *ifname, uint8_t mac[6])
 	return (ok);
 }
 
-/* OR IFF_UP into ifname's flags via a configuration socket. */
+/*
+ * OR IFF_UP into ifname's flags via a configuration socket, then
+ * spin-wait briefly for IFF_UP to actually be reflected (driver
+ * init via iflib may complete deferred admin work after
+ * SIOCSIFFLAGS returns). Returns 0 on success.
+ *
+ * Diagnostic flag values are logged before / after so a future
+ * round of CI red surfaces what actually changed.
+ */
 static int
 bring_interface_up(const char *ifname)
 {
 	struct ifreq ifr;
-	int sock, rc;
+	int sock, rc = -1, i;
+	unsigned before, after = 0;
 
 	sock = socket(AF_INET, SOCK_DGRAM, 0);
 	if (sock < 0)
@@ -157,12 +166,34 @@ bring_interface_up(const char *ifname)
 		(void)close(sock);
 		return (-1);
 	}
+	before = (unsigned)(uint16_t)ifr.ifr_flags;
 	if ((ifr.ifr_flags & IFF_UP) == 0) {
 		ifr.ifr_flags |= IFF_UP;
 		rc = ioctl(sock, SIOCSIFFLAGS, &ifr);
+		if (rc != 0) {
+			xlog("SIOCSIFFLAGS(%s, +IFF_UP) failed: %s",
+			    ifname, strerror(errno));
+			(void)close(sock);
+			return (rc);
+		}
 	} else {
 		rc = 0;
 	}
+	/* Poll up to ~3s for IFF_UP to land. Each iteration sleeps
+	 * 100ms; em(4)/iflib drivers init synchronously today but
+	 * leaving slack is cheap. */
+	for (i = 0; i < 30; i++) {
+		(void)memset(&ifr, 0, sizeof(ifr));
+		(void)strlcpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
+		if (ioctl(sock, SIOCGIFFLAGS, &ifr) == 0) {
+			after = (unsigned)(uint16_t)ifr.ifr_flags;
+			if ((after & IFF_UP) != 0)
+				break;
+		}
+		(void)usleep(100000);
+	}
+	xlog("bring_interface_up(%s) flags=0x%x -> 0x%x (waited %d/30)",
+	    ifname, before, after, i);
 	(void)close(sock);
 	return (rc);
 }
@@ -516,12 +547,36 @@ dhcp_discover_run(const char *ifname)
 	    (uint32_t)(mac[5] | (mac[4] << 8));
 
 	frame_len = build_discover(frame, mac, xid);
-	if (write(bpf_fd, frame, frame_len) != (ssize_t)frame_len) {
-		xlog("write(bpf, %zu) failed: %s",
-		    frame_len, strerror(errno));
-		xlog("IPCFG-DISCOVER-FAIL");
-		(void)close(bpf_fd);
-		return (-1);
+	/*
+	 * Retry bpf_write a few times — em(4)/iflib's if_transmit
+	 * checks IFF_DRV_RUNNING in addition to IFF_UP and returns
+	 * ENETDOWN until the driver finishes init after SIOCSIFFLAGS.
+	 * 10×100ms is generous; the path normally settles instantly.
+	 */
+	{
+		int try;
+		ssize_t n = -1;
+
+		for (try = 0; try < 10; try++) {
+			n = write(bpf_fd, frame, frame_len);
+			if (n == (ssize_t)frame_len)
+				break;
+			if (errno != ENETDOWN) {
+				/* a different failure — stop retrying */
+				break;
+			}
+			(void)usleep(100000);
+		}
+		if (n != (ssize_t)frame_len) {
+			xlog("write(bpf, %zu) failed after %d tries: %s",
+			    frame_len, try + 1, strerror(errno));
+			xlog("IPCFG-DISCOVER-FAIL");
+			(void)close(bpf_fd);
+			return (-1);
+		}
+		if (try > 0)
+			xlog("write(bpf) succeeded after %d retries "
+			    "(driver init race)", try);
 	}
 	xlog("sent DHCPDISCOVER (xid=0x%08x, len=%zu)", xid, frame_len);
 
