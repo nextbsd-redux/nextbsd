@@ -700,15 +700,15 @@ expect {
 
 expect {
     timeout {
-        puts "\nFAIL: IPCFG-DISCOVER marker not seen"
+        puts "\nFAIL: IPCFG-BOUND marker not seen"
         exit 1
     }
-    "IPCFG-DISCOVER-FAIL" {
-        puts "\nFAIL: ipconfigd DHCPv4 DISCOVER/OFFER probe failed"
+    "IPCFG-BOUND-FAIL" {
+        puts "\nFAIL: ipconfigd DHCPv4 INIT → BOUND failed"
         exit 1
     }
-    "IPCFG-DISCOVER-OK" {
-        puts "\nOK: ipconfigd DHCPv4 DISCOVER/OFFER round-trip works"
+    "IPCFG-BOUND-OK" {
+        puts "\nOK: ipconfigd DHCPv4 INIT → BOUND works (address + route + DNS installed)"
     }
 }
 

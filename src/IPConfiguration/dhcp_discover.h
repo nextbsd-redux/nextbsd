@@ -1,26 +1,46 @@
 /*
- * dhcp_discover.h — iter 2 one-shot DHCPv4 DISCOVER/OFFER probe.
+ * dhcp_discover.h — DHCPv4 client front door.
  *
- * Brings the interface up, opens a BPF descriptor on it, sends a
- * DHCPDISCOVER as a raw Ethernet frame (because the iface has no
- * IP yet), and waits for the first DHCPOFFER matching our xid.
- * Logs IPCFG-DISCOVER-OK on success / -FAIL on error / timeout —
- * that's the iter-2 boot marker.
+ * Despite the historical name (iter 2 was just DISCOVER/OFFER),
+ * this module now runs the full RFC 2131 INIT → SELECTING →
+ * REQUESTING → BOUND state machine: brings the interface up,
+ * opens a BPF descriptor, sends DHCPDISCOVER (retransmitted with
+ * the standard 4/8/16s backoff + jitter), parses the first
+ * DHCPOFFER it sees, sends DHCPREQUEST, parses the DHCPACK, and
+ * hands the caller a struct dhcp_lease.
  *
- * Full INIT → BOUND with SIOCSIFADDR + default route + the BOOTP/
- * DHCP option parser is iter 3+.
+ * Long BPF read waits are signal-aware: a SIGTERM/SIGHUP arriving
+ * during a wait short-circuits the loop (the daemon's global
+ * `got_term` flag is checked between reads + on EINTR).
+ *
+ * Lease persistence, T1/T2 renewal, RENEWING/REBINDING — iter 4.
  */
 #ifndef _IPCFG_DHCP_DISCOVER_H_
 #define _IPCFG_DHCP_DISCOVER_H_
 
+#include <signal.h>	/* sig_atomic_t */
 #include <stddef.h>	/* size_t */
 
+#include "dhcp_packet.h"
+
 /*
- * Run one DISCOVER/OFFER exchange on `ifname`. Returns 0 if an
- * OFFER was received and logged (marker emitted), non-zero
- * otherwise.
+ * The daemon's signal-asserted shutdown flag (defined in
+ * ipconfigd.c). dhcp_discover poll loops check it between BPF
+ * reads so a SIGTERM during the (potentially multi-second) DHCP
+ * retransmit window short-circuits the wait — fixes iter 2's
+ * 10-second deafness.
  */
-int	dhcp_discover_run(const char *ifname);
+extern volatile sig_atomic_t got_term;
+
+/*
+ * Run one INIT → BOUND exchange on `ifname`. On success returns 0
+ * and fills `*out` with the bound lease. The caller passes the
+ * lease to apply_lease() to actually configure the interface.
+ *
+ * Logs IPCFG-BOUND-FAIL on its own line and returns non-zero on
+ * any error / timeout.
+ */
+int	dhcp_lease_acquire(const char *ifname, struct dhcp_lease *out);
 
 /*
  * Pick the first non-loopback Ethernet interface (the QEMU guest's

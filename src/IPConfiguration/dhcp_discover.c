@@ -1,21 +1,29 @@
 /*
- * dhcp_discover.c — iter 2 one-shot DHCPv4 DISCOVER/OFFER probe.
+ * dhcp_discover.c — DHCPv4 client front door (iter 3).
  *
- * The minimum DHCPv4 logic to prove the daemon can fly packets:
- * pick an interface, bring it up, open a BPF descriptor, send a
- * raw Ethernet/IP/UDP DHCPDISCOVER (the interface has no IP yet
- * so plain UDP sockets can't address the DHCP server), read raw
- * frames until a DHCPOFFER matching our xid arrives.
+ * iter 2 shipped a one-shot DISCOVER/OFFER probe. iter 3 grows it
+ * into the full RFC 2131 INIT → SELECTING → REQUESTING → BOUND
+ * exchange: brings the iface up, opens BPF, sends DHCPDISCOVER,
+ * receives DHCPOFFER, sends DHCPREQUEST referencing the offer's
+ * server-id + yiaddr, receives DHCPACK, parses lease options
+ * (subnet, router, lease time, DNS) into struct dhcp_lease.
+ *
+ * Both transmits use the RFC 2131 retransmit ladder (4 / 8 / 16
+ * seconds with ±1s jitter). The first DISCOVER on QEMU SLIRP is
+ * always answered in well under 100ms; the ladder exists so a
+ * lossy real network gets standard-compliant behavior.
+ *
+ * BPF reads are signal-aware: SIGTERM/SIGHUP between reads or
+ * during a blocking BIOCSRTIMEOUT wait short-circuits the loop
+ * (the daemon's global `got_term` flag is checked between every
+ * read and on EINTR). Fixes iter 2's 10-second signal deafness.
  *
  * NOT vendored from Apple's IPConfiguration.bproj. The Apple
- * bootp/bootplib/{bpflib,dhcp_options}.c source is the long-term
- * destination; this iter writes ~250 LOC of clean BSD-licensed
- * code to land the marker fast. iter 3 starts pulling in Apple's
- * option parser when REQUEST/ACK needs it.
- *
- * QEMU SLIRP user-network (the CI guest's only NIC) runs an
- * internal DHCP server at 10.0.2.2 offering 10.0.2.15 — the
- * deterministic test target.
+ * bootp/bootplib/dhcp_options.c source (~1700 LOC, 113 options)
+ * is the long-term destination; iter 3 keeps its own small option
+ * parser for the half-dozen options BOUND needs. The vendor lift
+ * naturally lands when iter 4+ pulls in Apple's lease persistence
+ * + the full T1/T2 renewal machinery.
  */
 #include "dhcp_discover.h"
 #include "dhcp_packet.h"
@@ -99,8 +107,7 @@ dhcp_pick_interface(char *ifname_out, size_t ifname_sz)
 		if ((p->ifa_flags & IFF_LOOPBACK) != 0)
 			continue;
 		dl = (const struct sockaddr_dl *)(void *)p->ifa_addr;
-		/* IFT_ETHER = 6, the type for ordinary Ethernet. */
-		if (dl->sdl_type != 6)
+		if (dl->sdl_type != 6)	/* IFT_ETHER */
 			continue;
 		(void)strlcpy(ifname_out, p->ifa_name, ifname_sz);
 		found = 1;
@@ -110,10 +117,6 @@ dhcp_pick_interface(char *ifname_out, size_t ifname_sz)
 	return (found ? 0 : -1);
 }
 
-/*
- * Copy the AF_LINK MAC for `ifname` into mac[6]. Returns 0 on
- * success.
- */
 static int
 get_interface_mac(const char *ifname, uint8_t mac[6])
 {
@@ -141,15 +144,6 @@ get_interface_mac(const char *ifname, uint8_t mac[6])
 	return (ok);
 }
 
-/*
- * OR IFF_UP into ifname's flags via a configuration socket, then
- * spin-wait briefly for IFF_UP to actually be reflected (driver
- * init via iflib may complete deferred admin work after
- * SIOCSIFFLAGS returns). Returns 0 on success.
- *
- * Diagnostic flag values are logged before / after so a future
- * round of CI red surfaces what actually changed.
- */
 static int
 bring_interface_up(const char *ifname)
 {
@@ -179,9 +173,6 @@ bring_interface_up(const char *ifname)
 	} else {
 		rc = 0;
 	}
-	/* Poll up to ~3s for IFF_UP to land. Each iteration sleeps
-	 * 100ms; em(4)/iflib drivers init synchronously today but
-	 * leaving slack is cheap. */
 	for (i = 0; i < 30; i++) {
 		(void)memset(&ifr, 0, sizeof(ifr));
 		(void)strlcpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
@@ -198,16 +189,6 @@ bring_interface_up(const char *ifname)
 	return (rc);
 }
 
-/*
- * Open a BPF descriptor, BIOCSETIF to ifname, set immediate mode +
- * the hdrcmplt flag so our prebuilt Ethernet header is sent
- * verbatim.
- *
- * FreeBSD ships /dev/bpf as a cloning device — open("/dev/bpf")
- * autocreates a fresh /dev/bpfN and returns its descriptor. We
- * also fall back to the /dev/bpfN loop (the Apple bootp/bootplib/
- * bpflib.c shape) for older or non-cloning configurations.
- */
 static int
 bpf_open(const char *ifname)
 {
@@ -238,35 +219,27 @@ bpf_open(const char *ifname)
 		(void)close(fd);
 		return (-1);
 	}
-	/* immediate = wake on each packet. */
 	(void)ioctl(fd, BIOCIMMEDIATE, &one);
-	/* hdrcmplt = 1 — we provide the full Ethernet header (incl.
-	 * the src MAC); the kernel must NOT rewrite it. */
 	(void)ioctl(fd, BIOCSHDRCMPLT, &one);
-	/* Read timeout: 5s. Receive blocks at most this long. */
-	tv.tv_sec = 5;
+	/* BPF read timeout: 1s. Each timeout returns to the caller so
+	 * the wait loop can rotate through got_term + retransmit
+	 * deadline checks. */
+	tv.tv_sec = 1;
 	tv.tv_usec = 0;
 	(void)ioctl(fd, BIOCSRTIMEOUT, &tv);
 	return (fd);
 }
 
 /*
- * Build the iter-2 DISCOVER frame into `buf` (must be at least
- * 1024 bytes). Returns the total frame length.
- *
- * Layout:
- *   [0..13]                   Ethernet (dst=broadcast, src=mac, type=0x0800)
- *   [14..33]                  IPv4 (src=0.0.0.0, dst=255.255.255.255, proto=17)
- *   [34..41]                  UDP (sport=68, dport=67)
- *   [42..277]                 BOOTP/DHCP fixed-form (236 bytes)
- *   [278..281]                magic cookie
- *   [282..]                   options (msg-type DISCOVER, client-id, param-req, end, pad)
- *
- * Pad to >= DHCP_PACKET_MIN-overhead so router/firewall hardware
- * with minimum-payload assumptions doesn't drop the frame.
+ * Build a DHCPDISCOVER or DHCPREQUEST frame into `buf` (≥ 1024
+ * bytes). For DISCOVER, requested_ip / server_id are both NULL;
+ * for REQUEST, both come from the OFFER we just received. Returns
+ * the total Ethernet frame length.
  */
 static size_t
-build_discover(uint8_t *buf, const uint8_t mac[6], uint32_t xid)
+build_dhcp_msg(uint8_t *buf, const uint8_t mac[6], uint32_t xid,
+    uint8_t msgtype, const struct in_addr *requested_ip,
+    const struct in_addr *server_id)
 {
 	struct ether_header *eh;
 	struct ip *ip;
@@ -287,12 +260,8 @@ build_discover(uint8_t *buf, const uint8_t mac[6], uint32_t xid)
 	ip = (struct ip *)(void *)(buf + sizeof(*eh));
 	ip->ip_v = 4;
 	ip->ip_hl = 5;
-	ip->ip_tos = 0;
-	ip->ip_id = htons(0);
-	ip->ip_off = 0;
 	ip->ip_ttl = 64;
 	ip->ip_p = IPPROTO_UDP;
-	ip->ip_sum = 0;
 	ip->ip_src.s_addr = htonl(INADDR_ANY);
 	ip->ip_dst.s_addr = htonl(INADDR_BROADCAST);
 
@@ -313,19 +282,38 @@ build_discover(uint8_t *buf, const uint8_t mac[6], uint32_t xid)
 	opt = (uint8_t *)dh + sizeof(*dh);
 	(void)memcpy(opt, cookie, 4);
 	opt += 4;
-	/* option 53: DHCP message type = DISCOVER */
+
+	/* 53 message type */
 	*opt++ = DHCP_OPT_MESSAGE_TYPE;
 	*opt++ = 1;
-	*opt++ = DHCP_MTYPE_DISCOVER;
-	/* option 61: client id = htype 01 + mac */
+	*opt++ = msgtype;
+
+	/* 61 client id = htype + mac */
 	*opt++ = DHCP_OPT_CLIENT_ID;
 	*opt++ = 7;
 	*opt++ = HTYPE_ETHERNET;
 	(void)memcpy(opt, mac, 6);
 	opt += 6;
-	/* option 55: parameter request list (subnet, router, DNS,
-	 * lease, server-id). iter 2 doesn't consume these but
-	 * sending the list shapes the OFFER. */
+
+	/* REQUEST-only: option 50 (requested ip) + 54 (server id). RFC
+	 * 2131 §4.3.2 requires these on the SELECTING-state REQUEST so
+	 * the server can disambiguate which offer the client took. */
+	if (msgtype == DHCP_MTYPE_REQUEST) {
+		if (requested_ip != NULL) {
+			*opt++ = DHCP_OPT_REQUESTED_IP;
+			*opt++ = 4;
+			(void)memcpy(opt, &requested_ip->s_addr, 4);
+			opt += 4;
+		}
+		if (server_id != NULL) {
+			*opt++ = DHCP_OPT_SERVER_ID;
+			*opt++ = 4;
+			(void)memcpy(opt, &server_id->s_addr, 4);
+			opt += 4;
+		}
+	}
+
+	/* 55 parameter request list — what we want in the OFFER/ACK. */
 	*opt++ = DHCP_OPT_PARAM_REQUEST;
 	*opt++ = 5;
 	*opt++ = DHCP_OPT_SUBNET_MASK;
@@ -335,95 +323,52 @@ build_discover(uint8_t *buf, const uint8_t mac[6], uint32_t xid)
 	*opt++ = DHCP_OPT_SERVER_ID;
 	*opt++ = DHCP_OPT_END;
 
-	/* Pad up to the RFC 2131 minimum frame (576 IP bytes). */
+	/* Pad to RFC-2131 minimum 576 IP bytes. */
 	frame_len = (size_t)(opt - buf);
-	while (frame_len < sizeof(*eh) + DHCP_PACKET_MIN) {
+	while (frame_len < sizeof(*eh) + DHCP_PACKET_MIN)
 		buf[frame_len++] = DHCP_OPT_PAD;
-	}
 
 	udp_len = frame_len - sizeof(*eh) - sizeof(*ip);
 	ip_len = frame_len - sizeof(*eh);
 	ip->ip_len = htons((u_short)ip_len);
 	udp->uh_ulen = htons((u_short)udp_len);
 
-	/* IP header checksum (header only). Recompute after setting
-	 * ip_len. */
 	ip->ip_sum = 0;
 	ip->ip_sum = htons(in_cksum(ip, sizeof(*ip)));
 
-	/* UDP checksum: pseudo-header(12) + UDP header + payload.
-	 * SLIRP requires a valid UDP checksum on broadcast DHCP. */
 	(void)memset(pseudo, 0, sizeof(pseudo));
 	(void)memcpy(pseudo, &ip->ip_src.s_addr, 4);
 	(void)memcpy(pseudo + 4, &ip->ip_dst.s_addr, 4);
-	pseudo[8] = 0;
 	pseudo[9] = IPPROTO_UDP;
 	pseudo[10] = (uint8_t)(udp_len >> 8);
 	pseudo[11] = (uint8_t)(udp_len & 0xff);
 	{
-		/* Run the checksum over a temp buffer concatenating
-		 * the pseudo-header with the UDP header+payload. */
 		uint8_t tmp[2048];
-		size_t n;
 
-		if (udp_len > sizeof(tmp) - sizeof(pseudo)) {
-			/* should not happen for iter-2 sizes */
-			return (frame_len);
+		if (udp_len <= sizeof(tmp) - sizeof(pseudo)) {
+			(void)memcpy(tmp, pseudo, sizeof(pseudo));
+			(void)memcpy(tmp + sizeof(pseudo), udp, udp_len);
+			udp->uh_sum = htons(in_cksum(tmp,
+			    sizeof(pseudo) + udp_len));
+			if (udp->uh_sum == 0)
+				udp->uh_sum = 0xffff;
 		}
-		(void)memcpy(tmp, pseudo, sizeof(pseudo));
-		(void)memcpy(tmp + sizeof(pseudo), udp, udp_len);
-		n = sizeof(pseudo) + udp_len;
-		udp->uh_sum = htons(in_cksum(tmp, n));
-		if (udp->uh_sum == 0)
-			udp->uh_sum = 0xffff;	/* RFC 768: 0 means "no cksum" */
 	}
-
 	return (frame_len);
 }
 
 /*
- * Scan DHCP options for the message type (53). Returns the value,
- * or 0 if not found. opts_len is the trailing space available
- * past the magic cookie.
- */
-static uint8_t
-dhcp_msgtype(const uint8_t *opts, size_t opts_len)
-{
-	size_t i = 4;	/* skip the magic cookie */
-
-	while (i + 1 < opts_len) {
-		uint8_t code = opts[i];
-		uint8_t len;
-
-		if (code == DHCP_OPT_PAD) {
-			i++;
-			continue;
-		}
-		if (code == DHCP_OPT_END)
-			break;
-		len = opts[i + 1];
-		if (i + 2 + len > opts_len)
-			break;
-		if (code == DHCP_OPT_MESSAGE_TYPE && len == 1)
-			return (opts[i + 2]);
-		i += 2 + len;
-	}
-	return (0);
-}
-
-/*
- * Fetch the value of option `code` from the options blob (after
- * the cookie). Returns a pointer + length, or NULL on absence.
+ * Find DHCP option `code` in the options blob (after the cookie).
+ * Returns pointer + length, or NULL on absence.
  */
 static const uint8_t *
 dhcp_option(const uint8_t *opts, size_t opts_len, uint8_t code,
     uint8_t *len_out)
 {
-	size_t i = 4;
+	size_t i = 4;	/* skip the magic cookie */
 
 	while (i + 1 < opts_len) {
-		uint8_t c = opts[i];
-		uint8_t l;
+		uint8_t c = opts[i], l;
 
 		if (c == DHCP_OPT_PAD) {
 			i++;
@@ -444,12 +389,15 @@ dhcp_option(const uint8_t *opts, size_t opts_len, uint8_t code,
 }
 
 /*
- * Parse one BPF-delivered frame. Returns 1 + sets yiaddr_out /
- * server_out if it is a DHCPOFFER with our xid; 0 otherwise.
+ * Parse a BPF-delivered frame as a DHCP reply matching want_xid +
+ * want_msgtype. On match: fills `lease` with everything we care
+ * about (addr / netmask / router / server / lease_time / DNS) and
+ * returns 1. Returns 0 on a non-match (skip; caller continues
+ * the read loop).
  */
 static int
-parse_offer(const uint8_t *frame, size_t frame_len, uint32_t want_xid,
-    struct in_addr *yiaddr_out, struct in_addr *server_out)
+parse_dhcp_reply(const uint8_t *frame, size_t frame_len,
+    uint32_t want_xid, uint8_t want_msgtype, struct dhcp_lease *lease)
 {
 	const struct ether_header *eh;
 	const struct ip *ip;
@@ -482,121 +430,98 @@ parse_offer(const uint8_t *frame, size_t frame_len, uint32_t want_xid,
 		return (0);
 
 	opts = (const uint8_t *)dh + sizeof(*dh);
-	opts_len = frame + frame_len - opts;
+	opts_len = (size_t)(frame + frame_len - opts);
 	if (opts_len < 4 || memcmp(opts, cookie, 4) != 0)
 		return (0);
-	if (dhcp_msgtype(opts, opts_len) != DHCP_MTYPE_OFFER)
+
+	/* Message type */
+	v = dhcp_option(opts, opts_len, DHCP_OPT_MESSAGE_TYPE, &l);
+	if (v == NULL || l != 1 || *v != want_msgtype)
 		return (0);
 
-	yiaddr_out->s_addr = dh->dp_yiaddr.s_addr;
-	server_out->s_addr = 0;
+	(void)memset(lease, 0, sizeof(*lease));
+	lease->addr.s_addr = dh->dp_yiaddr.s_addr;
+
+	/* 54 server id */
 	v = dhcp_option(opts, opts_len, DHCP_OPT_SERVER_ID, &l);
 	if (v != NULL && l == 4)
-		(void)memcpy(&server_out->s_addr, v, 4);
+		(void)memcpy(&lease->server.s_addr, v, 4);
+
+	/* 1 subnet mask (default /8 if absent — RFC silly fallback) */
+	v = dhcp_option(opts, opts_len, DHCP_OPT_SUBNET_MASK, &l);
+	if (v != NULL && l == 4)
+		(void)memcpy(&lease->netmask.s_addr, v, 4);
+	else
+		lease->netmask.s_addr = htonl(0xff000000);
+
+	/* 3 router (first only) */
+	v = dhcp_option(opts, opts_len, DHCP_OPT_ROUTER, &l);
+	if (v != NULL && l >= 4)
+		(void)memcpy(&lease->router.s_addr, v, 4);
+
+	/* 51 lease time */
+	v = dhcp_option(opts, opts_len, DHCP_OPT_LEASE_TIME, &l);
+	if (v != NULL && l == 4) {
+		uint32_t be;
+
+		(void)memcpy(&be, v, 4);
+		lease->lease_time = ntohl(be);
+	}
+
+	/* 6 DNS — list of IPv4 addrs, up to DHCP_LEASE_MAX_DNS */
+	v = dhcp_option(opts, opts_len, DHCP_OPT_DNS_SERVER, &l);
+	if (v != NULL && l >= 4 && (l % 4) == 0) {
+		unsigned n = l / 4;
+
+		if (n > DHCP_LEASE_MAX_DNS)
+			n = DHCP_LEASE_MAX_DNS;
+		for (unsigned i = 0; i < n; i++)
+			(void)memcpy(&lease->dns[i].s_addr, v + i * 4, 4);
+		lease->dns_count = n;
+	}
+
 	return (1);
 }
 
-int
-dhcp_discover_run(const char *ifname)
+/*
+ * Wait up to `deadline` (CLOCK_MONOTONIC absolute) for a DHCP
+ * reply matching want_xid + want_msgtype. Returns 1 on match, 0
+ * on timeout, -1 on shutdown signal or fatal read error.
+ *
+ * The BPF descriptor has a 1s BIOCSRTIMEOUT so the wait wakes
+ * every second to re-check got_term + the deadline.
+ */
+static int
+recv_dhcp_reply(int bpf_fd, uint32_t want_xid, uint8_t want_msgtype,
+    struct timespec *deadline, struct dhcp_lease *lease)
 {
-	uint8_t mac[6];
-	uint8_t frame[1024];
 	uint8_t rxbuf[4096];
-	uint32_t xid;
-	int bpf_fd;
-	size_t frame_len;
-	struct timespec ts;
-	struct in_addr yiaddr, server;
-	time_t deadline;
-	int got = 0;
 
-	/*
-	 * On every failure path: log the diagnostic on its own line
-	 * FIRST, then emit the bare `IPCFG-DISCOVER-FAIL` marker on
-	 * its own line. tests/boot-test.sh's expect block matches on
-	 * the marker substring and exits immediately, so anything on
-	 * the same line as the marker is lost from the captured
-	 * console; keeping the marker bare guarantees the diagnostic
-	 * survives.
-	 */
-	if (get_interface_mac(ifname, mac) != 0) {
-		xlog("get_interface_mac(%s) failed: %s",
-		    ifname, strerror(errno));
-		xlog("IPCFG-DISCOVER-FAIL");
-		return (-1);
-	}
-	xlog("iface %s mac %02x:%02x:%02x:%02x:%02x:%02x",
-	    ifname, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-
-	if (bring_interface_up(ifname) != 0) {
-		xlog("bring_interface_up(%s) failed: %s",
-		    ifname, strerror(errno));
-		xlog("IPCFG-DISCOVER-FAIL");
-		return (-1);
-	}
-
-	bpf_fd = bpf_open(ifname);
-	if (bpf_fd < 0) {
-		xlog("bpf_open(%s) failed: %s", ifname, strerror(errno));
-		xlog("IPCFG-DISCOVER-FAIL");
-		return (-1);
-	}
-
-	(void)clock_gettime(CLOCK_REALTIME, &ts);
-	xid = (uint32_t)ts.tv_nsec ^ (uint32_t)ts.tv_sec ^
-	    (uint32_t)(mac[5] | (mac[4] << 8));
-
-	frame_len = build_discover(frame, mac, xid);
-	/*
-	 * Retry bpf_write a few times — em(4)/iflib's if_transmit
-	 * checks IFF_DRV_RUNNING in addition to IFF_UP and returns
-	 * ENETDOWN until the driver finishes init after SIOCSIFFLAGS.
-	 * 10×100ms is generous; the path normally settles instantly.
-	 */
-	{
-		int try;
-		ssize_t n = -1;
-
-		for (try = 0; try < 10; try++) {
-			n = write(bpf_fd, frame, frame_len);
-			if (n == (ssize_t)frame_len)
-				break;
-			if (errno != ENETDOWN) {
-				/* a different failure — stop retrying */
-				break;
-			}
-			(void)usleep(100000);
-		}
-		if (n != (ssize_t)frame_len) {
-			xlog("write(bpf, %zu) failed after %d tries: %s",
-			    frame_len, try + 1, strerror(errno));
-			xlog("IPCFG-DISCOVER-FAIL");
-			(void)close(bpf_fd);
-			return (-1);
-		}
-		if (try > 0)
-			xlog("write(bpf) succeeded after %d retries "
-			    "(driver init race)", try);
-	}
-	xlog("sent DHCPDISCOVER (xid=0x%08x, len=%zu)", xid, frame_len);
-
-	/* Read BPF responses until we get a matching DHCPOFFER or
-	 * 10 seconds elapse — the BPF descriptor has a 5s read
-	 * timeout so this is two read attempts. */
-	deadline = time(NULL) + 10;
-	while (!got && time(NULL) < deadline) {
-		ssize_t n = read(bpf_fd, rxbuf, sizeof(rxbuf));
+	while (!got_term) {
+		struct timespec now;
+		ssize_t n;
 		uint8_t *p, *end;
 
-		if (n <= 0) {
-			if (errno == EINTR || errno == EAGAIN)
+		(void)clock_gettime(CLOCK_MONOTONIC, &now);
+		if (now.tv_sec > deadline->tv_sec ||
+		    (now.tv_sec == deadline->tv_sec &&
+		     now.tv_nsec >= deadline->tv_nsec))
+			return (0);
+
+		n = read(bpf_fd, rxbuf, sizeof(rxbuf));
+		if (n < 0) {
+			if (errno == EINTR && got_term)
+				return (-1);
+			if (errno == EAGAIN || errno == EINTR)
 				continue;
-			break;	/* timeout or error */
+			xlog("read(bpf) failed: %s", strerror(errno));
+			return (-1);
 		}
+		if (n == 0)
+			continue;	/* BPF read timeout */
+
 		p = rxbuf;
 		end = rxbuf + n;
-		/* BPF return buffer can carry multiple packets, each
-		 * preceded by a struct bpf_hdr and aligned. */
 		while (p + sizeof(struct bpf_hdr) <= end) {
 			struct bpf_hdr bh;
 			uint8_t *pkt;
@@ -607,27 +532,180 @@ dhcp_discover_run(const char *ifname)
 			caplen = bh.bh_caplen;
 			if (pkt + caplen > end)
 				break;
-			if (parse_offer(pkt, caplen, xid, &yiaddr,
-			    &server)) {
-				got = 1;
-				break;
-			}
+			if (parse_dhcp_reply(pkt, caplen, want_xid,
+			    want_msgtype, lease))
+				return (1);
 			p += BPF_WORDALIGN(bh.bh_hdrlen + caplen);
 		}
 	}
-	(void)close(bpf_fd);
+	return (-1);
+}
 
-	if (got) {
+/*
+ * Send a DHCP message, handling em(4)/iflib's ~100ms post-IFF_UP
+ * window where if_transmit returns ENETDOWN even after IFF_UP +
+ * IFF_DRV_RUNNING are both set. iter 2 audited this in detail.
+ */
+static int
+send_dhcp(int bpf_fd, const uint8_t *frame, size_t frame_len)
+{
+	int try;
+	ssize_t n = -1;
+
+	for (try = 0; try < 10 && !got_term; try++) {
+		n = write(bpf_fd, frame, frame_len);
+		if (n == (ssize_t)frame_len)
+			return (0);
+		if (errno != ENETDOWN)
+			break;
+		(void)usleep(100000);
+	}
+	xlog("write(bpf, %zu) failed after %d tries: %s",
+	    frame_len, try + 1, strerror(errno));
+	return (-1);
+}
+
+/* RFC 2131 retransmit ladder: 4s, 8s, 16s with ±1s jitter. */
+static const int retry_seconds[] = { 4, 8, 16 };
+#define DHCP_MAX_RETRIES	(int)(sizeof(retry_seconds) / sizeof(retry_seconds[0]))
+
+static void
+deadline_in(struct timespec *out, int seconds)
+{
+	long jitter_ns;
+
+	(void)clock_gettime(CLOCK_MONOTONIC, out);
+	/* ±1s jitter — RFC 2131 §4.1 recommendation. */
+	jitter_ns = (long)random() % 2000000000L - 1000000000L;
+	out->tv_sec += seconds;
+	out->tv_nsec += jitter_ns;
+	while (out->tv_nsec < 0) {
+		out->tv_nsec += 1000000000L;
+		out->tv_sec--;
+	}
+	while (out->tv_nsec >= 1000000000L) {
+		out->tv_nsec -= 1000000000L;
+		out->tv_sec++;
+	}
+}
+
+int
+dhcp_lease_acquire(const char *ifname, struct dhcp_lease *lease_out)
+{
+	uint8_t mac[6];
+	uint8_t frame[1024];
+	uint32_t xid;
+	int bpf_fd, try;
+	size_t frame_len;
+	struct timespec deadline;
+	struct dhcp_lease offer;
+
+	if (get_interface_mac(ifname, mac) != 0) {
+		xlog("get_interface_mac(%s) failed: %s",
+		    ifname, strerror(errno));
+		xlog("IPCFG-BOUND-FAIL");
+		return (-1);
+	}
+	xlog("iface %s mac %02x:%02x:%02x:%02x:%02x:%02x",
+	    ifname, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+	if (bring_interface_up(ifname) != 0) {
+		xlog("IPCFG-BOUND-FAIL");
+		return (-1);
+	}
+
+	bpf_fd = bpf_open(ifname);
+	if (bpf_fd < 0) {
+		xlog("bpf_open(%s) failed: %s", ifname, strerror(errno));
+		xlog("IPCFG-BOUND-FAIL");
+		return (-1);
+	}
+
+	{
+		struct timespec ts;
+
+		(void)clock_gettime(CLOCK_REALTIME, &ts);
+		xid = (uint32_t)ts.tv_nsec ^ (uint32_t)ts.tv_sec ^
+		    (uint32_t)(mac[5] | (mac[4] << 8));
+		srandom((unsigned)xid);
+	}
+
+	/* ---- SELECTING: send DISCOVER until an OFFER arrives ---- */
+	(void)memset(&offer, 0, sizeof(offer));
+	for (try = 0; try < DHCP_MAX_RETRIES; try++) {
+		int r;
+
+		if (got_term)
+			goto shutdown;
+		frame_len = build_dhcp_msg(frame, mac, xid,
+		    DHCP_MTYPE_DISCOVER, NULL, NULL);
+		if (send_dhcp(bpf_fd, frame, frame_len) != 0) {
+			xlog("IPCFG-BOUND-FAIL");
+			(void)close(bpf_fd);
+			return (-1);
+		}
+		xlog("sent DHCPDISCOVER (xid=0x%08x, try=%d/%d)", xid,
+		    try + 1, DHCP_MAX_RETRIES);
+
+		deadline_in(&deadline, retry_seconds[try]);
+		r = recv_dhcp_reply(bpf_fd, xid, DHCP_MTYPE_OFFER,
+		    &deadline, &offer);
+		if (r == 1)
+			break;
+		if (r < 0)
+			goto shutdown;
+	}
+	if (try == DHCP_MAX_RETRIES) {
+		xlog("no DHCPOFFER after %d retries (iface=%s xid=0x%08x)",
+		    DHCP_MAX_RETRIES, ifname, xid);
+		xlog("IPCFG-BOUND-FAIL");
+		(void)close(bpf_fd);
+		return (-1);
+	}
+	{
 		char y[INET_ADDRSTRLEN], s[INET_ADDRSTRLEN];
 
-		(void)inet_ntop(AF_INET, &yiaddr, y, sizeof(y));
-		(void)inet_ntop(AF_INET, &server, s, sizeof(s));
-		xlog("IPCFG-DISCOVER-OK: iface=%s xid=0x%08x yiaddr=%s "
-		    "server=%s", ifname, xid, y, s);
-		return (0);
+		(void)inet_ntop(AF_INET, &offer.addr, y, sizeof(y));
+		(void)inet_ntop(AF_INET, &offer.server, s, sizeof(s));
+		xlog("OFFER yiaddr=%s server=%s", y, s);
 	}
-	xlog("no DHCPOFFER received within 10s (iface=%s xid=0x%08x)",
-	    ifname, xid);
-	xlog("IPCFG-DISCOVER-FAIL");
+
+	/* ---- REQUESTING: send REQUEST until an ACK arrives ---- */
+	for (try = 0; try < DHCP_MAX_RETRIES; try++) {
+		int r;
+
+		if (got_term)
+			goto shutdown;
+		frame_len = build_dhcp_msg(frame, mac, xid,
+		    DHCP_MTYPE_REQUEST, &offer.addr, &offer.server);
+		if (send_dhcp(bpf_fd, frame, frame_len) != 0) {
+			xlog("IPCFG-BOUND-FAIL");
+			(void)close(bpf_fd);
+			return (-1);
+		}
+		xlog("sent DHCPREQUEST (xid=0x%08x, try=%d/%d)", xid,
+		    try + 1, DHCP_MAX_RETRIES);
+
+		deadline_in(&deadline, retry_seconds[try]);
+		r = recv_dhcp_reply(bpf_fd, xid, DHCP_MTYPE_ACK,
+		    &deadline, lease_out);
+		if (r == 1) {
+			(void)close(bpf_fd);
+			return (0);
+		}
+		if (r < 0)
+			goto shutdown;
+	}
+	xlog("no DHCPACK after %d retries (iface=%s xid=0x%08x)",
+	    DHCP_MAX_RETRIES, ifname, xid);
+	xlog("IPCFG-BOUND-FAIL");
+	(void)close(bpf_fd);
+	return (-1);
+
+shutdown:
+	xlog("DHCP exchange interrupted by signal (got_term=%d)",
+	    (int)got_term);
+	xlog("IPCFG-BOUND-FAIL");
+	(void)close(bpf_fd);
 	return (-1);
 }
