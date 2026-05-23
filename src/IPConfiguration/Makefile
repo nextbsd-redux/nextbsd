@@ -32,6 +32,7 @@ MIGOUT?=
 .PATH:				${MIGOUT}
 SRCS+=				ipconfigServer.c
 CFLAGS+=			-I${MIGOUT}
+CFLAGS+=			-I${.CURDIR}	# generated stubs #include "ipconfig_mig_types.h"
 CFLAGS.ipconfigServer.c+=	-w
 CFLAGS+=			-Wno-macro-redefined
 .endif
