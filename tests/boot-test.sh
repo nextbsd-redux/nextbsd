@@ -728,6 +728,18 @@ expect {
 
 expect {
     timeout {
+        puts "\nFAIL: IPCFG-RENEW-OK marker not seen (iter 5b lease renewal CI gate)"
+        exit 1
+    }
+    "IPCFG-RENEW-OK" {
+        puts "\nOK: ipconfigd lease renewal works (RENEWING DHCPREQUEST → ACK, lease re-published)"
+    }
+}
+
+# IPCFG-RPC fires AFTER the daemon log dump (ipconfigrpctest runs at
+# the end of run.sh), so expect for it last.
+expect {
+    timeout {
         puts "\nFAIL: IPCFG-RPC marker not seen"
         exit 1
     }

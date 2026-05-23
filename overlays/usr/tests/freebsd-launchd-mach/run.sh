@@ -730,20 +730,23 @@ if [ ! -x "$ipconfigtest" ]; then
 fi
 "$ipconfigtest" || true	# marker (IPCFG-BOOT-OK/FAIL) gates in boot-test.sh
 
-# IPCFG-BOUND + IPCFG-STORE — iter-3 full DHCPv4 INIT → BOUND on em0
-# (DISCOVER → OFFER → REQUEST → ACK with the standard 4/8/16s RFC 2131
-# retransmit ladder, then apply_lease() runs SIOCAIFADDR + RTM_ADD
-# default route + /etc/resolv.conf write) followed by iter-4
-# SCDynamicStore publish of State:/Network/Service/<UUID>/IPv4 (+/DNS)
-# to configd. The bound IP comes from QEMU SLIRP (10.0.2.15 /
-# 10.0.2.2). Wait up to ~60s for both markers (worst-case retransmit
-# window 4+8+16 = 28s + SC publish round-trip; boot scheduling adds
-# slack), then cat the stderr log so the markers reach this console
-# for boot-test.sh's expect blocks.
+# IPCFG-BOUND + IPCFG-STORE + IPCFG-RENEW — iter-3 full DHCPv4 INIT →
+# BOUND on em0 (DISCOVER → OFFER → REQUEST → ACK with the standard
+# 4/8/16s RFC 2131 retransmit ladder, then apply_lease() runs
+# SIOCAIFADDR + RTM_ADD default route + /etc/resolv.conf write)
+# followed by iter-4 SCDynamicStore publish of
+# State:/Network/Service/<UUID>/IPv4 (+/DNS) to configd, then iter-5b
+# lease renewal (RENEWING DHCPREQUEST sent at T1 = 5s with
+# IPCONFIGD_FAST_LEASE=10 set in the plist; SLIRP ACKs with the same
+# address; IPCFG-RENEW-OK fires once). Wait up to ~60s for the
+# RENEW marker (worst case: BOUND ~5s + T1=5s + renew retransmit
+# ladder 4s = ~14s, boot scheduling adds slack). Cat the stderr
+# log so the markers reach this console for boot-test.sh's expect
+# blocks.
 if [ -f /var/log/ipconfigd.stderr ]; then
     i=0
     while [ $i -lt 30 ]; do
-        if grep -q 'IPCFG-STORE-OK\|IPCFG-STORE-FAIL\|IPCFG-BOUND-FAIL' \
+        if grep -q 'IPCFG-RENEW-OK\|IPCFG-STORE-FAIL\|IPCFG-BOUND-FAIL' \
             /var/log/ipconfigd.stderr 2>/dev/null; then
             break
         fi

@@ -17,6 +17,8 @@
 #ifndef _IPCFG_LEASE_LOOP_H_
 #define _IPCFG_LEASE_LOOP_H_
 
+#include <stdint.h>
+
 #include "dhcp_packet.h"
 
 struct sc_publish;
@@ -28,9 +30,17 @@ struct sc_publish;
  * publish session — re-publish after each renewal; NULL means no
  * publishing.
  *
+ * `lease_cap_secs` (iter 5b) caps the effective lease time used to
+ * derive T1 / T2 — useful for CI where SLIRP hands out 86400s
+ * leases that would otherwise mean T1 = 12 hours. 0 = no cap.
+ * Both initial lease and post-renewal leases are capped. The cap
+ * does NOT touch `lease->lease_time` (the published lease
+ * authoritatively reports the server's value); it only shortens
+ * the daemon's renewal-trigger timing.
+ *
  * Returns 0 on clean shutdown (signal), -1 on lease loss.
  */
 int	lease_loop_run(const char *ifname, struct dhcp_lease *lease,
-	    struct sc_publish *pub);
+	    struct sc_publish *pub, uint32_t lease_cap_secs);
 
 #endif /* _IPCFG_LEASE_LOOP_H_ */
