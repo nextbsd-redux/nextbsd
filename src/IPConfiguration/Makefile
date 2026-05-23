@@ -17,6 +17,7 @@ MAN=
 SRCS=		ipconfigd.c dhcp_discover.c apply_lease.c
 SRCS+=		sc_publish.c lease_loop.c
 SRCS+=		bound_state.c mach_service.c ipconfigd_mig.c
+SRCS+=		arp_probe.c
 
 # ipconfigServer.c — MIG-generated server stub for ipconfig.defs
 # (iter 5a's two read-only routines). build.sh runs mig and passes

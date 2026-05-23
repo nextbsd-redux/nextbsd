@@ -698,6 +698,24 @@ expect {
     }
 }
 
+# IPCFG-ARP — iter 6 RFC 5227 ARP probe on the DHCPOFFER. Fires
+# after 3 successful (= no-reply) probes of the offered address;
+# precedes IPCFG-BOUND-OK in the timeline (probe runs between
+# OFFER and REQUEST). Conflict path would log IPCFG-BOUND-FAIL.
+expect {
+    timeout {
+        puts "\nFAIL: IPCFG-ARP marker not seen"
+        exit 1
+    }
+    "IPCFG-BOUND-FAIL" {
+        puts "\nFAIL: ipconfigd DHCPv4 failed before ARP probe completed"
+        exit 1
+    }
+    "IPCFG-ARP-OK" {
+        puts "\nOK: ipconfigd RFC 5227 ARP probe clean (no conflict on offered address)"
+    }
+}
+
 expect {
     timeout {
         puts "\nFAIL: IPCFG-BOUND marker not seen"
