@@ -3,7 +3,7 @@
  *
  * Owns the receive right for com.apple.IPConfiguration. Runs a raw
  * mach_msg(MACH_RCV_MSG | MACH_RCV_TIMEOUT, 500ms) loop and hands
- * each message to _ipconfig_server() (the MIG demux for
+ * each message to ipconfig_server() (the MIG demux for
  * ipconfig.defs). Same shape as configd_serve() / hwregd's
  * mach_service_thread().
  *
@@ -12,7 +12,7 @@
  */
 #include "mach_service.h"
 #include "dhcp_discover.h"		/* got_term */
-#include "ipconfigServer.h"		/* MIG: _ipconfig_server() */
+#include "ipconfigServer.h"		/* MIG: ipconfig_server() */
 
 #include <mach/mach.h>
 #include <servers/bootstrap.h>
@@ -82,7 +82,7 @@ mach_service_thread(void *arg)
 		}
 
 		(void)memset(&rep, 0, sizeof(rep));
-		if (!_ipconfig_server(&req.hdr, &rep.hdr)) {
+		if (!ipconfig_server(&req.hdr, &rep.hdr)) {
 			xlog("ignoring message id=%d", req.hdr.msgh_id);
 			continue;
 		}
