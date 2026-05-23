@@ -55,10 +55,12 @@
 #include <unistd.h>
 
 #include "apply_lease.h"
+#include "apply_lease_v6.h"
 #include "bound_state.h"
 #include "dhcp_discover.h"
 #include "lease_loop.h"
 #include "mach_service.h"
+#include "ra_listen.h"
 #include "sc_publish.h"
 
 /*
@@ -167,8 +169,8 @@ main(int argc, char **argv)
 	(void)argc;
 	(void)argv;
 
-	xlog("ipconfigd starting (iter 5b — MIG service + DHCPv4 + "
-	    "renewal CI gate)");
+	xlog("ipconfigd starting (iter 7a — MIG service + DHCPv4 + "
+	    "RFC 5227 ARP + IPv6 RA/SLAAC)");
 
 	lease_cap_secs = read_lease_cap_env();
 
@@ -286,7 +288,62 @@ main(int argc, char **argv)
 						xlog("IPCFG-STORE-FAIL: "
 						    "set State:/.../IPv4");
 					} else {
+						struct ra_info ra;
+						int rar;
+
 						xlog("IPCFG-STORE-OK");
+
+						/*
+						 * iter 7a: solicit + listen for
+						 * one RA, derive a SLAAC address,
+						 * install it + the v6 default
+						 * route, and publish State:/.../
+						 * IPv6. 15s budget — QEMU SLIRP
+						 * answers within ms, so a miss
+						 * means RA isn't configured;
+						 * we log IPCFG-RA-MISS and
+						 * continue with IPv4 only.
+						 *
+						 * Round-1 CI showed em0 has
+						 * ND6_IFF_IFDISABLED set (this
+						 * image's net.inet6.ip6.auto_
+						 * linklocal is 0, so the kernel
+						 * never auto-added a link-local).
+						 * bring_v6_up clears IFDISABLED
+						 * and installs fe80::EUI-64 so
+						 * the kernel can source-select
+						 * the link-local-scoped RS.
+						 */
+						(void)bring_v6_up(ifname);
+						rar = ra_acquire(ifname,
+						    15000, &ra);
+						if (rar == 0) {
+							struct in6_addr v6;
+
+							if (apply_ra_lease(
+							    ifname, &ra,
+							    &v6) == 0) {
+								(void)
+								sc_publish_ipv6(
+								    pub, ifname,
+								    &v6,
+								    ra.prefix_len,
+								    &ra.router_lladdr);
+								xlog("IPCFG-RA-OK");
+							} else {
+								xlog("IPCFG-RA-MISS: "
+								    "apply_ra_lease failed");
+							}
+						} else if (rar == 1) {
+							xlog("IPCFG-RA-MISS: "
+							    "no RA in 15s "
+							    "(SLIRP may not "
+							    "advertise IPv6)");
+						} else {
+							xlog("IPCFG-RA-MISS: "
+							    "ra_acquire fatal");
+						}
+
 						(void)lease_loop_run(ifname,
 						    &lease, pub,
 						    lease_cap_secs);

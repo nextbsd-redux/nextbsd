@@ -18,6 +18,9 @@
 
 #include "dhcp_packet.h"
 
+#include <netinet/in.h>
+#include <stdint.h>
+
 struct sc_publish;
 
 /*
@@ -38,6 +41,18 @@ struct sc_publish	*sc_publish_open(const char *session_name);
  */
 int	sc_publish_ipv4(struct sc_publish *p, const char *ifname,
 	    const struct dhcp_lease *lease);
+
+/*
+ * Publish iter 7a SLAAC state under State:/Network/Service/<UUID>/IPv6.
+ * Mirrors Apple's IPv6 dict shape: Addresses (array of strings),
+ * PrefixLength (array of numbers), Router (link-local address with
+ * %ifname zone), InterfaceName, Flags=0 (SLAAC). Returns 0 on success.
+ *
+ * Single-address publish only; iter 7a doesn't track multiple PIOs.
+ */
+int	sc_publish_ipv6(struct sc_publish *p, const char *ifname,
+	    const struct in6_addr *addr, uint8_t prefix_len,
+	    const struct in6_addr *router_lladdr);
 
 /*
  * Remove the previously-published keys for `ifname`. Called on
