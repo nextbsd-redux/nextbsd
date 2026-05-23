@@ -13,7 +13,7 @@
 
 PROG=		mDNSResponder
 MAN=
-SRCS=		main.c
+SRCS=		mDNSResponder.c
 
 NO_MAN=		yes
 WARNS=		6
