@@ -1743,7 +1743,8 @@ echo "==> ipconfigd + ipconfigtest + ipconfigrpctest + ipconfig built"
 echo "==> Phase K: building mDNSResponder (src/mDNSResponder)"
 make -C "$ROOT/src/mDNSResponder" \
      DESTDIR="$WORK/rootfs" \
-     SYSROOT="$WORK/rootfs" install
+     SYSROOT="$WORK/rootfs" \
+     all install
 test -x "$WORK/rootfs/usr/sbin/mDNSResponder" \
     || { echo "FAIL: /usr/sbin/mDNSResponder not installed or not executable"; exit 1; }
 
