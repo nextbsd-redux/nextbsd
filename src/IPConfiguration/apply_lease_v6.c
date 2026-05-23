@@ -265,9 +265,8 @@ install_v6_address(const char *ifname, const struct in6_addr *addr,
  * is why apply_lease.c's IPv4 RTM_ADD works without padding.
  */
 #define RT_SIN6_WIRE	32
-#if RT_SIN6_WIRE < sizeof(struct sockaddr_in6)
-#error "RT_SIN6_WIRE smaller than struct sockaddr_in6"
-#endif
+_Static_assert(RT_SIN6_WIRE >= sizeof(struct sockaddr_in6),
+    "RT_SIN6_WIRE smaller than struct sockaddr_in6");
 
 static int
 install_v6_default_route(const struct in6_addr *gateway, unsigned ifindex)
