@@ -34,6 +34,7 @@ SRCS+=		dso.c dso-transport.c
 .PATH:		${.CURDIR}/mDNSCore
 .PATH:		${.CURDIR}/mDNSPosix
 .PATH:		${.CURDIR}/mDNSShared
+.PATH:		${.CURDIR}/mDNSShared/utilities
 .PATH:		${.CURDIR}/DSO
 
 # Vendored Apple code is not WARNS=6-clean (lots of -Wunused-but-set-
@@ -57,6 +58,7 @@ CFLAGS+=	-I${.CURDIR}
 CFLAGS+=	-I${.CURDIR}/mDNSCore
 CFLAGS+=	-I${.CURDIR}/mDNSPosix
 CFLAGS+=	-I${.CURDIR}/mDNSShared
+CFLAGS+=	-I${.CURDIR}/mDNSShared/utilities
 CFLAGS+=	-I${.CURDIR}/DSO
 
 # <servers/bootstrap.h> (bootstrap_check_in + bootstrap_port global)
