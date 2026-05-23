@@ -25,6 +25,8 @@
  *             DADiskUnmount / DADiskEject.
  *   iter 5+ — mount-policy arbitration, per-user agent.
  */
+#include "hwreg_subscribe.h"
+
 #include <mach/mach.h>
 #include <servers/bootstrap.h>
 
@@ -103,10 +105,18 @@ main(int argc, char **argv)
 	    "(receive right=0x%x)", (unsigned)svc);
 
 	/*
+	 * iter 2: subscribe to org.freebsd.hwregd's pub/sub bus and log
+	 * incoming device events. Tag storage names (ada*, da*, nvd*,
+	 * cd*, mmcsd*) with STORAGE; emit DA-WATCH-OK on subscription
+	 * ack. Non-fatal — if hwregd isn't up yet, the daemon stays
+	 * alive without storage events.
+	 */
+	(void)hwreg_subscribe_start();
+
+	/*
 	 * iter-1 hold-alive loop. Spin on sleep(60) — SIGTERM/SIGHUP
-	 * short-circuit. iter 2 replaces this with a Mach receive loop
-	 * subscribing to hwregd's storage events (mirroring how
-	 * ipconfigd's mach_service.c demuxes ipconfig.defs).
+	 * short-circuit. iter 3+ replaces this with a Mach receive loop
+	 * demuxing the da.defs MIG IDL (DARegisterDisk*Callback etc.).
 	 */
 	while (!got_term)
 		(void)sleep(60);

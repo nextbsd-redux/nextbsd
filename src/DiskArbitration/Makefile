@@ -13,7 +13,7 @@
 
 PROG=		diskarbitrationd
 MAN=
-SRCS=		diskarbitrationd.c
+SRCS=		diskarbitrationd.c hwreg_subscribe.c
 
 NO_MAN=		yes
 WARNS=		6
@@ -39,7 +39,8 @@ LDFLAGS+=	-Wl,--allow-shlib-undefined
 
 # -llaunch: bootstrap_check_in + the bootstrap_port global.
 # -lsystem_kernel: mach_msg + the Mach port syscalls behind it.
-LDADD+=		-llaunch -lsystem_kernel
+# -lpthread: the hwregd subscription receive-loop runs on its own thread.
+LDADD+=		-llaunch -lsystem_kernel -lpthread
 
 BINDIR=		/usr/sbin
 
