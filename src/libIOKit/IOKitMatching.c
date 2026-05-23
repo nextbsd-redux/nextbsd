@@ -194,6 +194,50 @@ copy_string_value(CFDictionaryRef matching, CFStringRef key,
 	    kCFStringEncodingUTF8) == TRUE);
 }
 
+void
+__io_extract_criteria(CFDictionaryRef matching, struct io_criteria *out)
+{
+	(void)memset(out, 0, sizeof(*out));
+	if (matching == NULL)
+		return;
+	if (!copy_string_value(matching, CFSTR(kIOProviderClassKey),
+	    out->klass, sizeof(out->klass)))
+		(void)copy_string_value(matching, CFSTR(kIOClassKey),
+		    out->klass, sizeof(out->klass));
+	(void)copy_string_value(matching, CFSTR(kIONameMatchKey),
+	    out->name, sizeof(out->name));
+}
+
+kern_return_t
+__io_pack_criteria(const struct io_criteria *c, uint8_t *blob,
+    uint32_t *out_size)
+{
+	nvlist_t *crit;
+	void *packed;
+	size_t psz = 0;
+
+	crit = nvlist_create_dictionary(0);
+	if (crit == NULL)
+		return (kIOReturnError);
+	if (c->klass[0] != '\0')
+		nvlist_add_string(crit, "class", c->klass);
+	if (c->name[0] != '\0')
+		nvlist_add_string(crit, "name", c->name);
+	if (c->driver[0] != '\0')
+		nvlist_add_string(crit, "driver", c->driver);
+
+	packed = nvlist_pack(crit, &psz);
+	nvlist_destroy(crit);
+	if (packed == NULL || psz > sizeof(hwreg_blob_t)) {
+		free(packed);
+		return (kIOReturnError);
+	}
+	(void)memcpy(blob, packed, psz);
+	free(packed);
+	*out_size = (uint32_t)psz;
+	return (KERN_SUCCESS);
+}
+
 /*
  * Translate `matching` to a hwreg_lookup criteria nvlist, pack it,
  * fire the RPC, return the malloc'd id array + count. Caller frees
@@ -205,40 +249,19 @@ lookup_matches(CFDictionaryRef matching, uint64_t **ids_out,
     uint32_t *count_out)
 {
 	mach_port_t svc = __io_hwregd_port();
-	nvlist_t *crit;
-	void *packed = NULL;
-	size_t psz = 0;
+	struct io_criteria c;
 	hwreg_blob_t critblob;
+	uint32_t psz = 0;
 	uint64_t *ids;
 	mach_msg_type_number_t nids = 128;
-	char buf[64];
 	kern_return_t kr;
 
 	if (svc == MACH_PORT_NULL)
 		return (kIOReturnNoDevice);
-	crit = nvlist_create_dictionary(0);
-	if (crit == NULL)
-		return (kIOReturnError);
-
-	if (copy_string_value(matching, CFSTR(kIOProviderClassKey),
-	    buf, sizeof(buf)))
-		nvlist_add_string(crit, "class", buf);
-	else if (copy_string_value(matching, CFSTR(kIOClassKey),
-	    buf, sizeof(buf)))
-		nvlist_add_string(crit, "class", buf);
-	if (copy_string_value(matching, CFSTR(kIONameMatchKey),
-	    buf, sizeof(buf)))
-		nvlist_add_string(crit, "name", buf);
-
-	packed = nvlist_pack(crit, &psz);
-	nvlist_destroy(crit);
-	if (packed == NULL || psz > sizeof(critblob)) {
-		free(packed);
-		return (kIOReturnError);
-	}
-	(void)memcpy(critblob, packed, psz);
-	free(packed);
-
+	__io_extract_criteria(matching, &c);
+	kr = __io_pack_criteria(&c, critblob, &psz);
+	if (kr != KERN_SUCCESS)
+		return (kr);
 	ids = calloc(nids, sizeof(*ids));
 	if (ids == NULL)
 		return (KERN_RESOURCE_SHORTAGE);

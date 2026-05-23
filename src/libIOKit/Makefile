@@ -18,7 +18,7 @@
 LIB=		IOKit
 SHLIB_MAJOR=	1
 
-SRCS=		IOKitLib.c IOKitMatching.c
+SRCS=		IOKitLib.c IOKitMatching.c IOKitNotify.c
 
 # hwregUser.c — MIG-generated hwreg.defs client stubs. build.sh runs
 # mig (step 3r) and passes MIGOUT=$HWREG_MIG. Same wiring
@@ -88,11 +88,15 @@ LIBDIR=		${PREFIX}/lib/system
 # model behind the iter-2 property and matching surface (the public
 # header pulls CoreFoundation too). -lxpc: the nvlist API
 # (nvlist_unpack / pack / next / get_*) IOKitMatching.c uses to
-# bridge hwregd's property bag and lookup criteria. -lsystem_kernel:
-# mach_msg + the Mach port syscalls behind the MIG client stubs.
-# -llaunch: bootstrap_look_up + bootstrap_port. -lpthread:
-# pthread_once for the lazy hwregd service-port lookup.
+# bridge hwregd's property bag and lookup criteria. -ldispatch +
+# -lBlocksRuntime: the iter-4 IONotificationPortSetDispatchQueue +
+# dispatch_async_f path (the public header pulls <dispatch/dispatch.h>
+# too). -lsystem_kernel: mach_msg + the Mach port syscalls behind
+# the MIG client stubs. -llaunch: bootstrap_look_up +
+# bootstrap_port. -lpthread: pthread_once for the lazy hwregd
+# service-port lookup + the IONotificationPort receive thread.
 LDADD+=		-lCoreFoundation -lxpc
+LDADD+=		-ldispatch -lBlocksRuntime
 LDADD+=		-lsystem_kernel -llaunch -lpthread
 LDADD+=		-Wl,--allow-shlib-undefined
 LDADD+=		-Wl,-rpath,${PREFIX}/lib/system

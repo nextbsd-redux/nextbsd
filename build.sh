@@ -1438,6 +1438,27 @@ chroot "$WORK/rootfs" ldd /usr/sbin/ioreg \
     || { echo "FAIL: ldd doesn't resolve ioreg to /usr/lib/system/libIOKit.so"; exit 1; }
 echo "==> ioreg(8) built + installed at /usr/sbin/ioreg"
 
+# iokitnotifytest — libIOKit iter 4 notification-wiring test client.
+# Validates IONotificationPort + IOServiceAddMatchingNotification
+# end-to-end: allocate the port, SetDispatchQueue, register a Match
+# notification, drain the initial-arming iterator, tear the port
+# down. The async device-arrival callback fire path is not exercised
+# in CI (QEMU hot-plug isn't injectable from the boot test); the
+# underlying raw-mach_msg receive thread is structurally identical to
+# HWREG-PUBSUB / SC-NOTIFY, both already CI-proven.
+echo "==> building iokitnotifytest"
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/iokitnotifytest" \
+   "$ROOT/src/libIOKit/iokitnotifytest.c" \
+   -lIOKit -lCoreFoundation -ldispatch -lBlocksRuntime \
+   -lsystem_kernel -llaunch -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/iokitnotifytest" \
+    || { echo "FAIL: iokitnotifytest not built"; exit 1; }
+echo "==> iokitnotifytest built"
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at

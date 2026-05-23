@@ -703,4 +703,19 @@ else
     echo "IOKIT-IOREG-OK: ioreg -l works (lines=$lines), -c CPU finds CPU nodes"
 fi
 
+# IOKIT-NOTIFY — libIOKit iter 4 K2 device notifications: allocate
+# an IONotificationPort, SetDispatchQueue, AddMatchingNotification
+# for PCIDevice (initial-arming iterator should hand back ≥1 entry
+# from the QEMU PCI bus), then a no-match class (initial-arming
+# iterator empty but non-NULL), tear it down. Async device-arrival
+# fire isn't injectable from this CI; the underlying raw-mach_msg
+# receive-thread pattern is structurally identical to HWREG-PUBSUB
+# / SC-NOTIFY, both already CI-proven.
+iokitnotifytest=/usr/tests/freebsd-launchd-mach/iokitnotifytest
+if [ ! -x "$iokitnotifytest" ]; then
+    echo "IOKIT-NOTIFY-FAIL: $iokitnotifytest missing"
+    exit 1
+fi
+"$iokitnotifytest" || true	# marker (IOKIT-NOTIFY-OK/FAIL) gates in boot-test.sh
+
 exit 0
