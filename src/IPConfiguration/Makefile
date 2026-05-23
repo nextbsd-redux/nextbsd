@@ -14,7 +14,7 @@ PROG=		ipconfigd
 # NO_MAN=yes alone is insufficient, the make rule still references it.
 # Same suppression hwregd / configd use.
 MAN=
-SRCS=		ipconfigd.c dhcp_discover.c
+SRCS=		ipconfigd.c dhcp_discover.c apply_lease.c
 
 WARNS?=		6
 NO_MAN=		yes

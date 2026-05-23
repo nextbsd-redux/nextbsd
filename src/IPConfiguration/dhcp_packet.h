@@ -72,4 +72,21 @@ struct dhcp {
 
 #define DHCP_PACKET_MIN		576	/* RFC 2131 minimum 576 octets */
 
+/*
+ * iter-3 lease carrier — the subset of an ACK we care about for
+ * apply_lease. Extra options (broadcast addr, NTP, etc.) can grow
+ * this struct in later iters without changing existing callers.
+ */
+#define DHCP_LEASE_MAX_DNS	4
+
+struct dhcp_lease {
+	struct in_addr	addr;		/* yiaddr from the ACK */
+	struct in_addr	netmask;	/* option 1 (default 255.0.0.0) */
+	struct in_addr	router;		/* option 3 (first entry) */
+	struct in_addr	server;		/* option 54 (server identifier) */
+	uint32_t	lease_time;	/* option 51 (seconds) */
+	struct in_addr	dns[DHCP_LEASE_MAX_DNS];
+	unsigned	dns_count;
+};
+
 #endif /* _IPCFG_DHCP_PACKET_H_ */

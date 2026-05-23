@@ -18,12 +18,19 @@
  * service) — same pattern hwregd / configd iter 1 use.
  *
  * iter 2 — one-shot DHCPv4 DISCOVER/OFFER probe (dhcp_discover.c).
- * After bootstrap_check_in, ipconfigd picks the first non-loopback
- * Ethernet interface, brings it up, opens BPF, sends DHCPDISCOVER
- * and waits for a DHCPOFFER. Logs IPCFG-DISCOVER-OK/FAIL to stderr
- * (run.sh cats the stderr file post-boot so the marker reaches the
- * boot-test console). Full INIT → BOUND with SIOCSIFADDR + the
- * default route is iter 3+.
+ *
+ * iter 3 — full RFC 2131 INIT → BOUND. dhcp_discover.c now runs
+ * the SELECTING → REQUESTING → BOUND state machine with the
+ * standard 4/8/16s retransmit ladder + ±1s jitter, returning a
+ * struct dhcp_lease. apply_lease.c then installs it: SIOCAIFADDR
+ * for the address+netmask+broadcast, PF_ROUTE RTM_ADD for the
+ * default route via the offered router, and a best-effort
+ * /etc/resolv.conf write. Long BPF reads are signal-aware via the
+ * shared `got_term` flag — a SIGTERM/SIGHUP during the wait
+ * short-circuits the loop instead of holding the daemon for the
+ * full ladder. Marker IPCFG-BOUND-OK on success, IPCFG-BOUND-FAIL
+ * on any failure path. Lease renewal / SCDynamicStore publish is
+ * iter 4+.
  */
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -31,6 +38,7 @@
 #include <net/if.h>
 #include <net/if_dl.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>		/* inet_ntop for the BOUND log line */
 
 #include <mach/mach.h>
 #include <servers/bootstrap.h>
@@ -45,11 +53,18 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "apply_lease.h"
 #include "dhcp_discover.h"
 
 #define IPCFG_SERVICE_NAME	"com.apple.IPConfiguration"
 
-static volatile sig_atomic_t got_term;
+/*
+ * Global (non-static): dhcp_discover.c's recv loop polls this
+ * between BPF reads so SIGTERM/SIGHUP during the multi-second
+ * retransmit ladder short-circuits the wait. Declared in
+ * dhcp_discover.h.
+ */
+volatile sig_atomic_t got_term;
 
 static void
 on_signal(int sig)
@@ -125,10 +140,18 @@ main(int argc, char **argv)
 
 	xlog("ipconfigd starting (iter 1 skeleton — no DHCP yet)");
 
+	/*
+	 * sa_flags = 0 — system calls are NOT auto-restarted on
+	 * signal. That's deliberate: a SIGTERM/SIGHUP during
+	 * dhcp_discover.c's BPF read returns EINTR, the read loop
+	 * checks got_term and bails out instead of resuming the
+	 * (potentially-multi-second) wait. iter-2 had no such hook.
+	 */
 	(void)memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = on_signal;
 	(void)sigaction(SIGTERM, &sa, NULL);
 	(void)sigaction(SIGINT, &sa, NULL);
+	(void)sigaction(SIGHUP, &sa, NULL);
 
 	if (enumerate_interfaces() < 0) {
 		xlog("interface enumeration failed; continuing anyway");
@@ -155,24 +178,54 @@ main(int argc, char **argv)
 	}
 
 	/*
-	 * iter 2: one-shot DHCPv4 DISCOVER/OFFER probe on the first
-	 * non-loopback Ethernet interface (em0 in CI). Logs
-	 * IPCFG-DISCOVER-OK/FAIL via dhcp_discover_run's xlog. We do
-	 * not exit on failure — the daemon keeps the Mach service
-	 * registered either way; the marker is the test signal.
-	 * iter 3+ replaces this one-shot with the full INIT → BOUND
-	 * state machine.
+	 * iter 3: full DHCPv4 INIT → BOUND on the first non-loopback
+	 * Ethernet interface (em0 in CI). dhcp_lease_acquire runs the
+	 * SELECTING → REQUESTING → BOUND state machine; apply_lease
+	 * installs the result (SIOCAIFADDR, default route, DNS).
+	 * Marker IPCFG-BOUND-OK / IPCFG-BOUND-FAIL — emitted by the
+	 * helpers on their own log lines so the boot-test console
+	 * captures the diagnostic before the marker fires expect.
+	 * Failure does NOT exit ipconfigd — the Mach service stays
+	 * registered (iter-1 IPCFG-BOOT still passes), and a future
+	 * iter's retry logic will pick up.
 	 */
 	{
 		char ifname[IFNAMSIZ] = "";
 
-		if (dhcp_pick_interface(ifname, sizeof(ifname)) == 0) {
-			xlog("selected interface for DHCPv4 probe: %s",
-			    ifname);
-			(void)dhcp_discover_run(ifname);
+		if (dhcp_pick_interface(ifname, sizeof(ifname)) != 0) {
+			xlog("no Ethernet interface found for DHCPv4");
+			xlog("IPCFG-BOUND-FAIL");
 		} else {
-			xlog("IPCFG-DISCOVER-FAIL: no Ethernet interface "
-			    "found");
+			struct dhcp_lease lease;
+
+			xlog("selected interface for DHCPv4: %s", ifname);
+			if (dhcp_lease_acquire(ifname, &lease) == 0) {
+				char a[INET_ADDRSTRLEN], m[INET_ADDRSTRLEN];
+				char r[INET_ADDRSTRLEN], s[INET_ADDRSTRLEN];
+
+				if (apply_lease(ifname, &lease) != 0) {
+					xlog("apply_lease(%s) failed",
+					    ifname);
+					xlog("IPCFG-BOUND-FAIL");
+				} else {
+					(void)inet_ntop(AF_INET,
+					    &lease.addr, a, sizeof(a));
+					(void)inet_ntop(AF_INET,
+					    &lease.netmask, m, sizeof(m));
+					(void)inet_ntop(AF_INET,
+					    &lease.router, r, sizeof(r));
+					(void)inet_ntop(AF_INET,
+					    &lease.server, s, sizeof(s));
+					xlog("bound: iface=%s addr=%s "
+					    "netmask=%s router=%s "
+					    "server=%s lease=%us",
+					    ifname, a, m, r, s,
+					    (unsigned)lease.lease_time);
+					xlog("IPCFG-BOUND-OK");
+				}
+			}
+			/* failure case: dhcp_lease_acquire already logged
+			 * the marker on its own line */
 		}
 	}
 
