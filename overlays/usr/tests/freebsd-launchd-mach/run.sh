@@ -831,6 +831,17 @@ else
     "$dnssdtest" || true	# marker gates in boot-test.sh
 fi
 
+# DA-BOOT — DiskArbitration iter 1 liveness probe. bootstrap_look_up
+# for com.apple.DiskArbitration; prints DA-BOOT-OK on success. iter 1
+# is just the daemon skeleton (no hwregd subscription, no libgeom
+# enrichment, no DA framework). iter 2+ wires the real plumbing.
+datest=/usr/tests/freebsd-launchd-mach/datest
+if [ ! -x "$datest" ]; then
+    echo "DA-BOOT-FAIL: $datest missing"
+else
+    "$datest" || true	# marker gates in boot-test.sh
+fi
+
 ipconfig_cli=/usr/sbin/ipconfig
 if [ ! -x "$ipconfig_cli" ]; then
     echo "IPCFG-IPCONFIG-FAIL: $ipconfig_cli missing"

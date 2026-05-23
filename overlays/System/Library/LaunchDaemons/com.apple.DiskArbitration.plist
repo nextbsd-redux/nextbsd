@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.apple.DiskArbitration.plist
+
+  Boot-time launchd plist for diskarbitrationd (freebsd-launchd-mach
+  DiskArbitration daemon).
+
+  iter 1 is the daemon skeleton: diskarbitrationd claims the
+  com.apple.DiskArbitration Mach service via bootstrap_check_in and
+  sleeps until SIGTERM. iter 2 subscribes to hwregd's storage device
+  class events (ATTACH/DETACH for ada0/da0/nvd0/cd0); iter 3 adds
+  libgeom enrichment (partition table, UUID, label, FS-type); iter 4+
+  serves the DiskArbitration.framework client API via the da.defs
+  MIG IDL. RunAtLoad + KeepAlive so it starts at PID-1 launchd boot
+  and respawns on crash. StandardErrorPath / StandardOutPath route
+  the daemon's log to /var/log/diskarbitrationd.stderr — same
+  convention hwregd / configd / ipconfigd / mDNSResponder use; the
+  CI boot test dumps the file post-boot for verification.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.apple.DiskArbitration</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/sbin/diskarbitrationd</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>MachServices</key>
+    <dict>
+        <key>com.apple.DiskArbitration</key>
+        <true/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/var/log/diskarbitrationd.stderr</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/diskarbitrationd.stderr</string>
+</dict>
+</plist>
