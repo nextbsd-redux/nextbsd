@@ -222,7 +222,11 @@ static int
 listen_for_conflict(int bpf_fd, const uint8_t our_mac[6],
     struct in_addr target, unsigned ms)
 {
-	uint8_t rxbuf[2048];
+	/* 4096 — FreeBSD's default BPF buffer size (BIOCGBLEN). A
+	 * read smaller than that returns EINVAL even when no packet
+	 * is queued, killing the wait loop. Matches dhcp_discover.c's
+	 * rxbuf size. */
+	uint8_t rxbuf[4096];
 	struct timespec deadline, now;
 
 	(void)clock_gettime(CLOCK_MONOTONIC, &deadline);
