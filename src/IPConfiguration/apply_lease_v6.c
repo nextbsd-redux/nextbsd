@@ -257,15 +257,28 @@ install_v6_address(const char *ifname, const struct in6_addr *addr,
 	return (rc);
 }
 
+/*
+ * SA_SIZE-equivalent rounding for sockaddr_in6 in a PF_ROUTE message:
+ * the kernel reads sockaddrs at sizeof(long)-aligned offsets, so each
+ * sin6 occupies 32 bytes on the wire (28-byte struct + 4 bytes
+ * padding). IPv4's sockaddr_in is 16 bytes — already aligned — which
+ * is why apply_lease.c's IPv4 RTM_ADD works without padding.
+ */
+#define RT_SIN6_WIRE	32
+#if RT_SIN6_WIRE < sizeof(struct sockaddr_in6)
+#error "RT_SIN6_WIRE smaller than struct sockaddr_in6"
+#endif
+
 static int
 install_v6_default_route(const struct in6_addr *gateway, unsigned ifindex)
 {
 	struct {
 		struct rt_msghdr	hdr;
-		struct sockaddr_in6	dst;
-		struct sockaddr_in6	gw;
-		struct sockaddr_in6	mask;
+		uint8_t			dst[RT_SIN6_WIRE];
+		uint8_t			gw[RT_SIN6_WIRE];
+		uint8_t			mask[RT_SIN6_WIRE];
 	} msg;
+	struct sockaddr_in6 sa;
 	int sock;
 	ssize_t n;
 
@@ -278,31 +291,35 @@ install_v6_default_route(const struct in6_addr *gateway, unsigned ifindex)
 	msg.hdr.rtm_pid = (int32_t)getpid();
 	msg.hdr.rtm_seq = 1;
 
-	msg.dst.sin6_family = AF_INET6;
-	msg.dst.sin6_len = sizeof(msg.dst);
-	/* ::/0 — zero-filled */
+	/* dst = ::/0 */
+	(void)memset(&sa, 0, sizeof(sa));
+	sa.sin6_family = AF_INET6;
+	sa.sin6_len = sizeof(sa);
+	(void)memcpy(msg.dst, &sa, sizeof(sa));
 
-	msg.gw.sin6_family = AF_INET6;
-	msg.gw.sin6_len = sizeof(msg.gw);
-	msg.gw.sin6_addr = *gateway;
 	/*
-	 * FreeBSD's PF_ROUTE socket uses "embedded scope" for link-local
-	 * sockaddrs (sa6_embedscope): the ifindex goes into bytes 2-3 of
-	 * the address (network byte order), and sin6_scope_id stays 0.
-	 * Without this the kernel returns EINVAL on RTM_ADD. The same
-	 * embedding is visible in dmesg lines like `fe80:1::5054:ff:fe12:
-	 * 3456(em0)` — the `:1` IS the ifindex. RFC 2553 §4 plus FreeBSD-
-	 * specific routing-socket convention.
+	 * gw — copy the LL gateway, then embed the ifindex into bytes
+	 * 2-3 of the address per FreeBSD's "embedded scope" convention
+	 * for PF_ROUTE sockaddrs (sa6_embedscope). sin6_scope_id stays
+	 * 0 — the kernel's rt_xaddrs path picks up scope from the
+	 * embedded form. The same encoding is visible in dmesg lines
+	 * like `fe80:1::5054:ff:fe12:3456(em0)` — the `:1` IS ifindex.
 	 */
-	if (IN6_IS_ADDR_LINKLOCAL(&msg.gw.sin6_addr)) {
-		msg.gw.sin6_addr.s6_addr[2] = (uint8_t)((ifindex >> 8) & 0xff);
-		msg.gw.sin6_addr.s6_addr[3] = (uint8_t)(ifindex & 0xff);
+	(void)memset(&sa, 0, sizeof(sa));
+	sa.sin6_family = AF_INET6;
+	sa.sin6_len = sizeof(sa);
+	sa.sin6_addr = *gateway;
+	if (IN6_IS_ADDR_LINKLOCAL(&sa.sin6_addr)) {
+		sa.sin6_addr.s6_addr[2] = (uint8_t)((ifindex >> 8) & 0xff);
+		sa.sin6_addr.s6_addr[3] = (uint8_t)(ifindex & 0xff);
 	}
-	msg.gw.sin6_scope_id = 0;
+	(void)memcpy(msg.gw, &sa, sizeof(sa));
 
-	msg.mask.sin6_family = AF_INET6;
-	msg.mask.sin6_len = sizeof(msg.mask);
-	/* ::/0 mask — zero-filled */
+	/* mask = ::/0 */
+	(void)memset(&sa, 0, sizeof(sa));
+	sa.sin6_family = AF_INET6;
+	sa.sin6_len = sizeof(sa);
+	(void)memcpy(msg.mask, &sa, sizeof(sa));
 
 	sock = socket(AF_ROUTE, SOCK_RAW, 0);
 	if (sock < 0) {
