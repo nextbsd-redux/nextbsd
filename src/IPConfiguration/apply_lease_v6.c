@@ -285,7 +285,20 @@ install_v6_default_route(const struct in6_addr *gateway, unsigned ifindex)
 	msg.gw.sin6_family = AF_INET6;
 	msg.gw.sin6_len = sizeof(msg.gw);
 	msg.gw.sin6_addr = *gateway;
-	msg.gw.sin6_scope_id = ifindex;	/* required for link-local gw */
+	/*
+	 * FreeBSD's PF_ROUTE socket uses "embedded scope" for link-local
+	 * sockaddrs (sa6_embedscope): the ifindex goes into bytes 2-3 of
+	 * the address (network byte order), and sin6_scope_id stays 0.
+	 * Without this the kernel returns EINVAL on RTM_ADD. The same
+	 * embedding is visible in dmesg lines like `fe80:1::5054:ff:fe12:
+	 * 3456(em0)` — the `:1` IS the ifindex. RFC 2553 §4 plus FreeBSD-
+	 * specific routing-socket convention.
+	 */
+	if (IN6_IS_ADDR_LINKLOCAL(&msg.gw.sin6_addr)) {
+		msg.gw.sin6_addr.s6_addr[2] = (uint8_t)((ifindex >> 8) & 0xff);
+		msg.gw.sin6_addr.s6_addr[3] = (uint8_t)(ifindex & 0xff);
+	}
+	msg.gw.sin6_scope_id = 0;
 
 	msg.mask.sin6_family = AF_INET6;
 	msg.mask.sin6_len = sizeof(msg.mask);
