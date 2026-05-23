@@ -762,6 +762,8 @@ if [ -f /var/log/ipconfigd.stderr ]; then
     ifconfig em0 2>&1 || true
     echo "--- netstat -rn (default route) ---"
     netstat -rn -f inet 2>&1 | head -20 || true
+    echo "--- netstat -rn -f inet6 (iter 7a SLAAC default) ---"
+    netstat -rn -f inet6 2>&1 | head -20 || true
     echo "--- /etc/resolv.conf ---"
     cat /etc/resolv.conf 2>/dev/null || echo "(missing)"
     echo "--- end bound-state dump ---"
