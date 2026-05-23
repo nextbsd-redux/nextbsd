@@ -790,34 +790,15 @@ fi
 #
 # Marker: IPCFG-IPCONFIG-OK on both subcommands returning the expected
 # values (em0=10.0.2.15 from SLIRP; ifcount>=1). -FAIL on any mismatch.
-# MDNS-BOOT + MDNS-ENGINE — iter 2 mDNSResponder. bootstrap_look_up
-# for com.apple.mDNSResponder via mdnstest gates MDNS-BOOT-OK. The
-# daemon itself logs MDNS-ENGINE-OK to /var/log/mDNSResponder.stderr
-# right after mDNS_Init returns mStatus_NoError; cat the file so the
-# marker reaches the boot console for boot-test.sh's expect.
+# MDNS-BOOT — iter 1 mDNSResponder liveness probe. bootstrap_look_up
+# for com.apple.mDNSResponder; prints MDNS-BOOT-OK on success. iter 1
+# is just the skeleton (no engine yet); iter 2+ grows real DNS-SD
+# routines over Mach.
 mdnstest=/usr/tests/freebsd-launchd-mach/mdnstest
 if [ ! -x "$mdnstest" ]; then
     echo "MDNS-BOOT-FAIL: $mdnstest missing"
 else
     "$mdnstest" || true	# marker gates in boot-test.sh
-fi
-if [ -f /var/log/mDNSResponder.stderr ]; then
-    # Wait briefly for the engine to come up — the daemon starts at
-    # plist KeepAlive boot but may not have called mDNS_Init by the
-    # time mdnstest finishes (mdnstest just proves bootstrap_look_up,
-    # not engine init).
-    i=0
-    while [ $i -lt 10 ]; do
-        if grep -q 'MDNS-ENGINE-OK\|MDNS-ENGINE-FAIL' \
-            /var/log/mDNSResponder.stderr 2>/dev/null; then
-            break
-        fi
-        sleep 1
-        i=$((i+1))
-    done
-    echo "--- /var/log/mDNSResponder.stderr ---"
-    cat /var/log/mDNSResponder.stderr
-    echo "--- end mDNSResponder.stderr ---"
 fi
 
 ipconfig_cli=/usr/sbin/ipconfig
