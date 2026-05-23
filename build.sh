@@ -1707,7 +1707,28 @@ cc -I"$IPCFG_MIG" -I"$ROOT/src/IPConfiguration" \
    -llaunch -lsystem_kernel
 test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/ipconfigrpctest" \
     || { echo "FAIL: ipconfigrpctest not built"; exit 1; }
-echo "==> ipconfigd + ipconfigtest + ipconfigrpctest built"
+
+# ipconfig — iter 8 Apple-shape CLI. Same MIG-client-stub linkage as
+# ipconfigrpctest; subcommand table mirrors bootp/ipconfig.tproj/
+# client.c so future iters grow by appending rows. Installs at
+# Apple-canonical /usr/sbin/ipconfig (no FreeBSD conflict — FreeBSD
+# has no ipconfig tool; sibling /sbin/ifconfig is a different binary).
+echo "==> building ipconfig (CLI)"
+mkdir -p "$WORK/rootfs/usr/sbin"
+cc -I"$IPCFG_MIG" -I"$ROOT/src/IPConfiguration" \
+   -I"$ROOT/src/launchd/liblaunch" \
+   -I"$ROOT/src/launchd/freebsd-shims" \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wno-macro-redefined \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/sbin/ipconfig" \
+   "$ROOT/src/IPConfiguration/ipconfig.c" \
+   "$IPCFG_MIG/ipconfigUser.c" \
+   -llaunch -lsystem_kernel
+test -x "$WORK/rootfs/usr/sbin/ipconfig" \
+    || { echo "FAIL: /usr/sbin/ipconfig not built"; exit 1; }
+echo "==> ipconfigd + ipconfigtest + ipconfigrpctest + ipconfig built"
 
 #
 # 3z. purge build packages + clean pkg cache + tear down chroot.

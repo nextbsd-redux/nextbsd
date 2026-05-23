@@ -782,4 +782,36 @@ else
     "$ipconfigrpctest" || true	# marker gates in boot-test.sh
 fi
 
+# IPCFG-IPCONFIG — iter 8 Apple-shape CLI smoke. The same
+# ipconfig_if_count + ipconfig_if_addr MIG round-trip ipconfigrpctest
+# exercises, but driven via /usr/sbin/ipconfig at its Apple-canonical
+# path. Validates that the binary parses argv, looks up the service,
+# calls the MIG stub, and prints the result.
+#
+# Marker: IPCFG-IPCONFIG-OK on both subcommands returning the expected
+# values (em0=10.0.2.15 from SLIRP; ifcount>=1). -FAIL on any mismatch.
+ipconfig_cli=/usr/sbin/ipconfig
+if [ ! -x "$ipconfig_cli" ]; then
+    echo "IPCFG-IPCONFIG-FAIL: $ipconfig_cli missing"
+else
+    cli_count=$("$ipconfig_cli" ifcount 2>&1 || true)
+    cli_addr=$("$ipconfig_cli" getifaddr em0 2>&1 || true)
+    echo "  ipconfig ifcount -> $cli_count"
+    echo "  ipconfig getifaddr em0 -> $cli_addr"
+    case "$cli_count" in
+        ''|*[!0-9]*)
+            echo "IPCFG-IPCONFIG-FAIL: ifcount non-numeric '$cli_count'"
+            ;;
+        *)
+            if [ "$cli_count" -lt 1 ]; then
+                echo "IPCFG-IPCONFIG-FAIL: ifcount=$cli_count < 1"
+            elif [ "$cli_addr" != "10.0.2.15" ]; then
+                echo "IPCFG-IPCONFIG-FAIL: em0 addr '$cli_addr' != 10.0.2.15"
+            else
+                echo "IPCFG-IPCONFIG-OK: ipconfig ifcount=$cli_count em0=$cli_addr"
+            fi
+            ;;
+    esac
+fi
+
 exit 0

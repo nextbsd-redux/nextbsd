@@ -795,6 +795,25 @@ expect {
     }
 }
 
+# IPCFG-IPCONFIG — iter 8 Apple-shape CLI. Same MIG round-trip
+# ipconfigrpctest exercises, but driven through /usr/sbin/ipconfig.
+# Validates that the Apple-canonical CLI parses argv, looks up
+# com.apple.IPConfiguration, calls ipconfig_if_count + ipconfig_if_addr,
+# and prints the expected results.
+expect {
+    timeout {
+        puts "\nFAIL: IPCFG-IPCONFIG marker not seen"
+        exit 1
+    }
+    "IPCFG-IPCONFIG-FAIL" {
+        puts "\nFAIL: /usr/sbin/ipconfig CLI did not return the expected ifcount + getifaddr"
+        exit 1
+    }
+    "IPCFG-IPCONFIG-OK" {
+        puts "\nOK: /usr/sbin/ipconfig CLI works (Apple-shape getifaddr + ifcount)"
+    }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"
