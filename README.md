@@ -486,9 +486,9 @@ persistent-configuration API, and the `SCNetworkConfiguration`
 network-configuration object model) is complete. **libIOKit**
 (`ioreg(8)` works, `IONotificationPort` works) and
 **`IPConfiguration`** (DHCPv4 INIT &rarr; BOUND with RENEWING/
-REBINDING, SCDynamicStore publish, MIG RPC surface &mdash; the
-proper replacement for the interim `dhclient` setup) have both
-shipped their first ports.
+REBINDING, RFC&nbsp;5227 ARP probe + announce, SCDynamicStore
+publish, MIG RPC surface &mdash; the proper replacement for the
+interim `dhclient` setup) have both shipped their first ports.
 Full design: the
 [hardware registry + IOKit porting plan](https://pkgdemon.github.io/freebsd-hardware-registry-iokit-plan.html).
 
@@ -602,9 +602,8 @@ VLAN / link-aggregation / bridging virtual interfaces under
 `/VirtualNetworkInterfaces`. Each iteration is exercised in the QEMU
 boot test against the guest's configured e1000 NIC.
 
-**Next:** IPConfiguration iter 6 &mdash; ARP conflict detection
-(RFC&nbsp;5227), then DHCPv6 + RA / SLAAC; the `ipconfig(8)` CLI
-port follows. Beyond IPConfiguration: `mDNSResponder` and
+**Next:** DHCPv6 + RA&nbsp;/&nbsp;SLAAC, then the `ipconfig(8)` CLI
+port. Beyond IPConfiguration: `mDNSResponder` and
 `DiskArbitration` remain on the Phase K shopping list.
 Deferred: USB / thermal property enrichment in hwregd; libIOKit
 K3 (powerd / `IOPMAssertion*`) and K4 (HID/USB/audio); lifting
@@ -681,7 +680,7 @@ because `configd` here has no plugin loader. The daemon is the
 proper replacement for the interim `dhclient` setup the boot image
 used to ship with.
 
-Ported across six iterations (iter 1 through iter 5b) on the
+Ported across seven iterations (iter 1 through iter 6) on the
 **Mach-IPC track**: real `mach_msg` MIG + `ipconfig.defs`, not the
 AF\_UNIX / GNUstep-DO design of the companion `freebsd-launchd`
 repo's IPConfiguration plan. Vendored upstream:
@@ -739,10 +738,27 @@ repo's IPConfiguration plan. Vendored upstream:
   configd is unaffected, downstream consumers still see the server's
   authoritative lease. On the first successful RENEWING-or-REBINDING
   ACK, the daemon emits `IPCFG-RENEW-OK` once. SLIRP turns out to
-  accept the renewing-form REQUEST and ACK it, so the boot test
-  reliably sees five markers in order: `IPCFG-BOOT` &rarr;
-  `IPCFG-BOUND` &rarr; `IPCFG-STORE` &rarr; `IPCFG-RENEW` &rarr;
-  `IPCFG-RPC`.
+  accept the renewing-form REQUEST and ACK it.
+- **iter 6** &mdash; RFC 5227 ARP conflict detection. Between
+  DHCPOFFER and DHCPREQUEST, the daemon probes the offered address
+  by broadcasting three ARP requests with sender IP = 0.0.0.0,
+  target IP = the offered address (RFC&nbsp;5227 §2.1.1). Any reply,
+  or any ARP request from a different sender HW whose sender IP is
+  the probed address, is treated as a conflict: the daemon sends
+  `DHCPDECLINE` per RFC&nbsp;2131 §3.1.5 (option&nbsp;50 = declined
+  IP + option&nbsp;54 = server&nbsp;ID) and fails the lease attempt.
+  On a clean probe, `apply_lease` calls `arp_announce` after
+  `SIOCAIFADDR` succeeds &mdash; two gratuitous ARPs (sender IP =
+  target IP = our IP, RFC&nbsp;5227 §2.3) to update peer ARP
+  caches. Fresh ~370&nbsp;LOC `arp_probe.{c,h}`, not vendored:
+  Apple's `bootp/bootplib/arp.{c,h}` is route-socket cache
+  plumbing, and `IPConfiguration.bproj/arp_session.c` is a
+  ~2500&nbsp;LOC event-channel state machine; this MVP is
+  synchronous BPF send/recv reusing `dhcp_discover.c`'s pattern.
+  Marker `IPCFG-ARP-OK` fires after three clean probes, before
+  `IPCFG-BOUND-OK`. The boot test now reliably sees six markers in
+  order: `IPCFG-BOOT` &rarr; `IPCFG-ARP` &rarr; `IPCFG-BOUND` &rarr;
+  `IPCFG-STORE` &rarr; `IPCFG-RENEW` &rarr; `IPCFG-RPC`.
 
 A small MIG-generated client stub (`ipconfigUser.c`) is linked into
 **`ipconfigrpctest`**, the CI test client that closes the loop:
@@ -751,9 +767,12 @@ A small MIG-generated client stub (`ipconfigUser.c`) is linked into
 (expects 10.0.2.15, the SLIRP-assigned address) &rarr; prints
 `IPCFG-RPC-OK`.
 
-**Deferred** (port when a real consumer needs it): ARP conflict
-detection (RFC 5227); DHCPv6 + RA / SLAAC; IPv4LL; the `ipconfig(8)`
-CLI port; per-interface DHCP worker threads (`ipconfigd` only DHCPs
+**Deferred** (port when a real consumer needs it): DHCPv6 + RA /
+SLAAC; IPv4LL; the `ipconfig(8)` CLI port; INIT retry after
+`DHCPDECLINE` (iter&nbsp;6 fails the lease and leaves the daemon
+holding its Mach service &mdash; retrying needs a per-attempt xid +
+the RFC&nbsp;2131 §3.1.5-mandated 10&nbsp;s wait); per-interface
+DHCP worker threads (`ipconfigd` only DHCPs
 em0 today; multi-interface fan-out is a hot-plug consumer story);
 the BPF receive path on `kqueue` `EVFILT_READ` instead of
 `BIOCSRTIMEOUT` (the timeout-driven loop already sleeps efficiently);
