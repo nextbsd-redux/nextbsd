@@ -718,4 +718,24 @@ if [ ! -x "$iokitnotifytest" ]; then
 fi
 "$iokitnotifytest" || true	# marker (IOKIT-NOTIFY-OK/FAIL) gates in boot-test.sh
 
+# IPCFG-BOOT — IPConfiguration daemon iter 1 liveness probe:
+# bootstrap_look_up against com.apple.IPConfiguration. If ipconfigd
+# launched + claimed its service, the lookup returns a non-null
+# send right and the test client prints IPCFG-BOOT-OK. DHCP itself
+# isn't exercised in this iter (the next iter wires DHCPDISCOVER).
+ipconfigtest=/usr/tests/freebsd-launchd-mach/ipconfigtest
+if [ ! -x "$ipconfigtest" ]; then
+    echo "IPCFG-BOOT-FAIL: $ipconfigtest missing"
+    exit 1
+fi
+"$ipconfigtest" || true	# marker (IPCFG-BOOT-OK/FAIL) gates in boot-test.sh
+
+# Dump ipconfigd's stderr log to the console so the iter-1 interface
+# enumeration shows up alongside the marker (debug aid; not gated).
+if [ -f /var/log/ipconfigd.stderr ]; then
+    echo "--- /var/log/ipconfigd.stderr ---"
+    cat /var/log/ipconfigd.stderr
+    echo "--- end ipconfigd.stderr ---"
+fi
+
 exit 0

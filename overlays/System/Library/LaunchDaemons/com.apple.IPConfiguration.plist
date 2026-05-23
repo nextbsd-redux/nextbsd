@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.apple.IPConfiguration.plist
+
+  Boot-time launchd plist for ipconfigd (freebsd-launchd-mach
+  IPConfiguration daemon). Apple runs IPConfiguration as a configd
+  plugin; we run it standalone because this repo's configd has no
+  plugin loader (see the IPConfiguration port plan / the
+  configd-port-state memory).
+
+  iter 1 is the daemon skeleton: ipconfigd enumerates interfaces
+  via getifaddrs(3), checks the com.apple.IPConfiguration Mach
+  service in, and sleeps until SIGTERM. Later iters fold in the
+  DHCPv4 client (iter 2/3), the SCDynamicStore publish
+  (iter 4 — uses the libSystemConfiguration the SCNetworkConfig
+  port just built), and the config.defs MIG RPC surface (iter 5).
+  RunAtLoad + KeepAlive so it starts at PID-1 launchd boot and
+  respawns on crash. StandardErrorPath / StandardOutPath route the
+  daemon's log to /var/log/ipconfigd.stderr — same convention
+  hwregd / configd use; the CI boot test dumps the file
+  post-boot for verification.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.apple.IPConfiguration</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/sbin/ipconfigd</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>MachServices</key>
+    <dict>
+        <key>com.apple.IPConfiguration</key>
+        <true/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/var/log/ipconfigd.stderr</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/ipconfigd.stderr</string>
+</dict>
+</plist>

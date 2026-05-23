@@ -1635,6 +1635,44 @@ test -x "$WORK/rootfs/usr/bin/syslog" \
 echo "==> SYSLOG-CLI-BUILD-OK"
 
 #
+# 3y. Phase K — build ipconfigd (src/IPConfiguration/) iter 1.
+#     Apple IPConfiguration daemon port (Mach-IPC track) — the real
+#     DHCPv4/DHCPv6/IPv4LL/RA client. iter 1 is the daemon skeleton:
+#     getifaddrs interface enumeration + bootstrap_check_in for
+#     com.apple.IPConfiguration. Later iters wire DHCPv4 + the
+#     SCDynamicStore publish path that the libSystemConfiguration
+#     port just built. Installs /usr/sbin/ipconfigd + the launchd
+#     plist (in overlays/, copied by step 4).
+#     Plan: pkgdemon.github.io/freebsd-ipconfiguration-plan.html
+#     (note: that doc targets the sibling AF_UNIX repo; this Mach
+#     track keeps Apple's Mach IPC + MIG, same as configd/hwregd).
+#
+echo "==> building ipconfigd (src/IPConfiguration)"
+make -C "$ROOT/src/IPConfiguration" \
+    DESTDIR="$WORK/rootfs" \
+    SYSROOT="$WORK/rootfs" \
+    all install
+ls -lh "$WORK/rootfs/usr/sbin/ipconfigd"
+test -x "$WORK/rootfs/usr/sbin/ipconfigd" \
+    || { echo "FAIL: /usr/sbin/ipconfigd not installed or not executable"; exit 1; }
+
+# ipconfigtest — iter 1 liveness probe. bootstrap_look_up for
+# com.apple.IPConfiguration; prints IPCFG-BOOT-OK on success.
+# run.sh runs it and the marker gates in tests/boot-test.sh.
+echo "==> building ipconfigtest"
+cc -I"$ROOT/src/launchd/liblaunch" \
+   -I"$ROOT/src/launchd/freebsd-shims" \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/ipconfigtest" \
+   "$ROOT/src/IPConfiguration/ipconfigtest.c" \
+   -llaunch -lsystem_kernel
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/ipconfigtest" \
+    || { echo "FAIL: ipconfigtest not built"; exit 1; }
+echo "==> ipconfigd + ipconfigtest built"
+
+#
 # 3z. purge build packages + clean pkg cache + tear down chroot.
 #     Runs LAST in the build phase, after every chroot-side build
 #     (libdispatch) has used cmake/ninja/clang. Build pkgs (cmake/ninja
