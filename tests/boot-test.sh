@@ -851,6 +851,24 @@ expect {
     }
 }
 
+# DA-BOOT — DiskArbitration iter 1 liveness. bootstrap_look_up for
+# com.apple.DiskArbitration via datest. Iter 1 ships just the daemon
+# skeleton (no hwregd subscription / libgeom / framework yet); iter 2+
+# adds storage event subscription via Mach RPC to hwregd.
+expect {
+    timeout {
+        puts "\nFAIL: DA-BOOT marker not seen"
+        exit 1
+    }
+    "DA-BOOT-FAIL" {
+        puts "\nFAIL: diskarbitrationd did not register its Mach service"
+        exit 1
+    }
+    "DA-BOOT-OK" {
+        puts "\nOK: diskarbitrationd Mach service up (com.apple.DiskArbitration registered)"
+    }
+}
+
 # IPCFG-IPCONFIG — iter 8 Apple-shape CLI. Same MIG round-trip
 # ipconfigrpctest exercises, but driven through /usr/sbin/ipconfig.
 # Validates that the Apple-canonical CLI parses argv, looks up

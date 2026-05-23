@@ -1794,6 +1794,40 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/dnssdtest" \
 echo "==> mDNSResponder + mdnstest + libdns_sd + dnssdtest built"
 
 #
+# 3w. Phase K DiskArbitration iter 1 — daemon skeleton.
+#     Apple's DiskArbitration daemon. iter 1 is the bootstrap_check_in
+#     shell (no hwregd subscription yet, no libgeom enrichment, no
+#     DA framework). Mirrors hwregd / ipconfigd / mDNSResponder iter 1
+#     shape: prove the Mach plumbing + launchd plist + build infra
+#     first, then layer real subsystem code. iter 2 subscribes to
+#     hwregd's storage device class events.
+#     Plan: pkgdemon.github.io/freebsd-disk-arbitration-plan.html
+#
+echo "==> Phase K: building diskarbitrationd (src/DiskArbitration)"
+make -C "$ROOT/src/DiskArbitration" \
+     DESTDIR="$WORK/rootfs" \
+     SYSROOT="$WORK/rootfs" \
+     all install
+test -x "$WORK/rootfs/usr/sbin/diskarbitrationd" \
+    || { echo "FAIL: /usr/sbin/diskarbitrationd not installed or not executable"; exit 1; }
+
+# datest — iter 1 liveness probe. bootstrap_look_up for
+# com.apple.DiskArbitration; prints DA-BOOT-OK on success. run.sh
+# runs it and the marker gates in tests/boot-test.sh.
+echo "==> building datest"
+cc -I"$ROOT/src/launchd/liblaunch" \
+   -I"$ROOT/src/launchd/freebsd-shims" \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/datest" \
+   "$ROOT/src/DiskArbitration/datest.c" \
+   -llaunch -lsystem_kernel
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/datest" \
+    || { echo "FAIL: datest not built"; exit 1; }
+echo "==> diskarbitrationd + datest built"
+
+#
 # 3z. purge build packages + clean pkg cache + tear down chroot.
 #     Runs LAST in the build phase, after every chroot-side build
 #     (libdispatch) has used cmake/ninja/clang. Build pkgs (cmake/ninja
