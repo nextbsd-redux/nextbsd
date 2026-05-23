@@ -684,6 +684,20 @@ expect {
     }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: IPCFG-BOOT marker not seen"
+        exit 1
+    }
+    "IPCFG-BOOT-FAIL" {
+        puts "\nFAIL: ipconfigd skeleton did not claim its Mach service"
+        exit 1
+    }
+    "IPCFG-BOOT-OK" {
+        puts "\nOK: ipconfigd skeleton up (com.apple.IPConfiguration registered)"
+    }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"
