@@ -830,6 +830,27 @@ expect {
     }
 }
 
+# MDNS-DNSSD — iter 3 end-to-end DNS-SD round-trip via libdns_sd.
+# dnssdtest registers "_iter3._tcp" / "freebsd-launchd-mach-iter3"
+# through libdns_sd's AF_UNIX channel to the daemon, then browses
+# for the same type and waits up to 5s for its own registration to
+# show up in the browse callback. Proves the engine + uds_daemon +
+# libdns_sd stubs all wire correctly end-to-end — the first iter
+# that exercises a real DNS-SD round-trip from a client binary.
+expect {
+    timeout {
+        puts "\nFAIL: MDNS-DNSSD marker not seen"
+        exit 1
+    }
+    "MDNS-DNSSD-FAIL" {
+        puts "\nFAIL: dnssdtest could not round-trip Register + Browse via libdns_sd"
+        exit 1
+    }
+    "MDNS-DNSSD-OK" {
+        puts "\nOK: libdns_sd end-to-end (Register + Browse round-trip via /var/run/mDNSResponder)"
+    }
+}
+
 # IPCFG-IPCONFIG — iter 8 Apple-shape CLI. Same MIG round-trip
 # ipconfigrpctest exercises, but driven through /usr/sbin/ipconfig.
 # Validates that the Apple-canonical CLI parses argv, looks up

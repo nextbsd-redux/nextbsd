@@ -1762,7 +1762,36 @@ cc -I"$ROOT/src/launchd/liblaunch" \
    -llaunch -lsystem_kernel
 test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/mdnstest" \
     || { echo "FAIL: mdnstest not built"; exit 1; }
-echo "==> mDNSResponder + mdnstest built"
+
+# libdns_sd — iter 3 client library. Compiles the cross-platform
+# DNS-SD client stubs from mDNSShared/ into /usr/lib/system/
+# libdns_sd.so so Apple-shape apps can link -ldns_sd. Same shape as
+# libIOKit / libSystemConfiguration's Makefile.
+echo "==> Phase K iter 3: building libdns_sd (src/mDNSResponder/libdns_sd)"
+make -C "$ROOT/src/mDNSResponder/libdns_sd" \
+     DESTDIR="$WORK/rootfs" \
+     SYSROOT="$WORK/rootfs" \
+     all install
+test -f "$WORK/rootfs/usr/lib/system/libdns_sd.so.1" \
+    || { echo "FAIL: libdns_sd.so.1 not installed"; exit 1; }
+test -L "$WORK/rootfs/usr/lib/system/libdns_sd.so" \
+    || { echo "FAIL: libdns_sd.so symlink not installed"; exit 1; }
+test -f "$WORK/rootfs/usr/include/dns_sd.h" \
+    || { echo "FAIL: /usr/include/dns_sd.h not installed"; exit 1; }
+
+# dnssdtest — iter 3 end-to-end DNS-SD round-trip probe. Registers a
+# test service and browses for it via libdns_sd, expects the daemon
+# to round-trip the entry. Marker MDNS-DNSSD-OK on success.
+echo "==> building dnssdtest"
+cc -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/dnssdtest" \
+   "$ROOT/src/mDNSResponder/dnssdtest.c" \
+   -ldns_sd
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/dnssdtest" \
+    || { echo "FAIL: dnssdtest not built"; exit 1; }
+echo "==> mDNSResponder + mdnstest + libdns_sd + dnssdtest built"
 
 #
 # 3z. purge build packages + clean pkg cache + tear down chroot.

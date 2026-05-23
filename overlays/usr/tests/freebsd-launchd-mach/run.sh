@@ -819,6 +819,18 @@ if [ -f /var/log/mDNSResponder.stderr ]; then
     echo "--- end mDNSResponder.stderr ---"
 fi
 
+# MDNS-DNSSD — iter 3 end-to-end round-trip via libdns_sd:
+# dnssdtest registers a service ("freebsd-launchd-mach-iter3" /
+# _iter3._tcp) and browses for it; on success the daemon round-trips
+# its own registration back through libdns_sd's AF_UNIX channel.
+# Proves the engine + uds_daemon + libdns_sd stubs all line up.
+dnssdtest=/usr/tests/freebsd-launchd-mach/dnssdtest
+if [ ! -x "$dnssdtest" ]; then
+    echo "MDNS-DNSSD-FAIL: $dnssdtest missing"
+else
+    "$dnssdtest" || true	# marker gates in boot-test.sh
+fi
+
 ipconfig_cli=/usr/sbin/ipconfig
 if [ ! -x "$ipconfig_cli" ]; then
     echo "IPCFG-IPCONFIG-FAIL: $ipconfig_cli missing"
