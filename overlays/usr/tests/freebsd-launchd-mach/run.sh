@@ -730,9 +730,23 @@ if [ ! -x "$ipconfigtest" ]; then
 fi
 "$ipconfigtest" || true	# marker (IPCFG-BOOT-OK/FAIL) gates in boot-test.sh
 
-# Dump ipconfigd's stderr log to the console so the iter-1 interface
-# enumeration shows up alongside the marker (debug aid; not gated).
+# IPCFG-DISCOVER — iter-2 DHCPv4 DISCOVER/OFFER probe. ipconfigd
+# fires it once at startup against the first Ethernet interface
+# (em0 in CI via QEMU SLIRP user-net) and logs IPCFG-DISCOVER-OK/
+# FAIL to /var/log/ipconfigd.stderr. Wait up to ~30s for the
+# marker to land (DHCP timeout is 10s; boot scheduling adds slack),
+# then cat the stderr log so the marker reaches this console for
+# the boot-test.sh expect block.
 if [ -f /var/log/ipconfigd.stderr ]; then
+    i=0
+    while [ $i -lt 15 ]; do
+        if grep -q 'IPCFG-DISCOVER-OK\|IPCFG-DISCOVER-FAIL' \
+            /var/log/ipconfigd.stderr 2>/dev/null; then
+            break
+        fi
+        sleep 2
+        i=$((i+1))
+    done
     echo "--- /var/log/ipconfigd.stderr ---"
     cat /var/log/ipconfigd.stderr
     echo "--- end ipconfigd.stderr ---"

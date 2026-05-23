@@ -698,6 +698,20 @@ expect {
     }
 }
 
+expect {
+    timeout {
+        puts "\nFAIL: IPCFG-DISCOVER marker not seen"
+        exit 1
+    }
+    "IPCFG-DISCOVER-FAIL" {
+        puts "\nFAIL: ipconfigd DHCPv4 DISCOVER/OFFER probe failed"
+        exit 1
+    }
+    "IPCFG-DISCOVER-OK" {
+        puts "\nOK: ipconfigd DHCPv4 DISCOVER/OFFER round-trip works"
+    }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"

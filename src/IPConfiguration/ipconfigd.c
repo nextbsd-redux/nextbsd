@@ -13,11 +13,17 @@
  * iter 1 — daemon skeleton. main + signal handling + getifaddrs
  * interface enumeration + bootstrap_check_in for
  * com.apple.IPConfiguration + a sleep loop that holds the service
- * port until SIGTERM. No DHCP yet — that lands in iter 2
- * (DHCPDISCOVER/OFFER over BPF) and iter 3 (full INIT → BOUND with
- * SIOCSIFADDR + default route). Marker IPCFG-BOOT-OK is emitted by
- * the separate `ipconfigtest` client (bootstrap_look_up against
- * this service) — same pattern hwregd / configd iter 1 use.
+ * port until SIGTERM. Marker IPCFG-BOOT-OK is emitted by the
+ * separate `ipconfigtest` client (bootstrap_look_up against this
+ * service) — same pattern hwregd / configd iter 1 use.
+ *
+ * iter 2 — one-shot DHCPv4 DISCOVER/OFFER probe (dhcp_discover.c).
+ * After bootstrap_check_in, ipconfigd picks the first non-loopback
+ * Ethernet interface, brings it up, opens BPF, sends DHCPDISCOVER
+ * and waits for a DHCPOFFER. Logs IPCFG-DISCOVER-OK/FAIL to stderr
+ * (run.sh cats the stderr file post-boot so the marker reaches the
+ * boot-test console). Full INIT → BOUND with SIOCSIFADDR + the
+ * default route is iter 3+.
  */
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -38,6 +44,8 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+
+#include "dhcp_discover.h"
 
 #define IPCFG_SERVICE_NAME	"com.apple.IPConfiguration"
 
@@ -147,9 +155,31 @@ main(int argc, char **argv)
 	}
 
 	/*
-	 * Hold the daemon alive. iter 1 has no MIG demux; later iters
-	 * replace this loop with a mach_msg(MACH_RCV_MSG ...) receive
-	 * over the service port (the configd / hwregd shape).
+	 * iter 2: one-shot DHCPv4 DISCOVER/OFFER probe on the first
+	 * non-loopback Ethernet interface (em0 in CI). Logs
+	 * IPCFG-DISCOVER-OK/FAIL via dhcp_discover_run's xlog. We do
+	 * not exit on failure — the daemon keeps the Mach service
+	 * registered either way; the marker is the test signal.
+	 * iter 3+ replaces this one-shot with the full INIT → BOUND
+	 * state machine.
+	 */
+	{
+		char ifname[IFNAMSIZ] = "";
+
+		if (dhcp_pick_interface(ifname, sizeof(ifname)) == 0) {
+			xlog("selected interface for DHCPv4 probe: %s",
+			    ifname);
+			(void)dhcp_discover_run(ifname);
+		} else {
+			xlog("IPCFG-DISCOVER-FAIL: no Ethernet interface "
+			    "found");
+		}
+	}
+
+	/*
+	 * Hold the daemon alive. iter 1/2 have no MIG demux; later
+	 * iters replace this loop with a mach_msg(MACH_RCV_MSG ...)
+	 * receive over the service port (the configd / hwregd shape).
 	 */
 	while (!got_term) {
 		(void)sleep(60);
