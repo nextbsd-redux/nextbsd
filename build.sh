@@ -1731,6 +1731,40 @@ test -x "$WORK/rootfs/usr/sbin/ipconfig" \
 echo "==> ipconfigd + ipconfigtest + ipconfigrpctest + ipconfig built"
 
 #
+# 3y. Phase K mDNSResponder iter 1 — daemon skeleton.
+#     Apple's Bonjour / zeroconf responder; iter 1 is the
+#     bootstrap_check_in shell (no vendored mDNS sources yet —
+#     iter 2 imports mDNSCore + mDNSPosix + mDNSShared and wires the
+#     engine). Same shape as ipconfigd / hwregd iter 1: prove the
+#     Mach plumbing + launchd plist + build infra first, THEN bring
+#     in 4 MB of Apple source. Marker MDNS-BOOT-OK from mdnstest.
+#     Plan: pkgdemon.github.io/freebsd-mdnsresponder-plan.html
+#
+echo "==> Phase K: building mDNSResponder (src/mDNSResponder)"
+make -C "$ROOT/src/mDNSResponder" \
+     DESTDIR="$WORK/rootfs" \
+     SYSROOT="$WORK/rootfs" \
+     all install
+test -x "$WORK/rootfs/usr/sbin/mDNSResponder" \
+    || { echo "FAIL: /usr/sbin/mDNSResponder not installed or not executable"; exit 1; }
+
+# mdnstest — iter 1 liveness probe. bootstrap_look_up for
+# com.apple.mDNSResponder; prints MDNS-BOOT-OK on success. run.sh
+# runs it and the marker gates in tests/boot-test.sh.
+echo "==> building mdnstest"
+cc -I"$ROOT/src/launchd/liblaunch" \
+   -I"$ROOT/src/launchd/freebsd-shims" \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/mdnstest" \
+   "$ROOT/src/mDNSResponder/mdnstest.c" \
+   -llaunch -lsystem_kernel
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/mdnstest" \
+    || { echo "FAIL: mdnstest not built"; exit 1; }
+echo "==> mDNSResponder + mdnstest built"
+
+#
 # 3z. purge build packages + clean pkg cache + tear down chroot.
 #     Runs LAST in the build phase, after every chroot-side build
 #     (libdispatch) has used cmake/ninja/clang. Build pkgs (cmake/ninja
