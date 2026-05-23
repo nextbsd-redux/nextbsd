@@ -472,22 +472,23 @@ progress.* FreeBSD-devd and FreeBSD-devmatch are not in the
 runtime image, so hot-plug `kldload`, device-arrival and
 link-state events have no provider. `hwregd` &mdash; a native
 hardware-registry daemon with an IOKit-shaped Mach-RPC API
-&mdash; closes that gap, and Apple's `IOKitUser` will sit on top
-as a thin facade (re-aimed at `hwregd` rather than a kernel
-IOService graph &mdash; there is no IOKit kernel here). hwregd
-Phase 0 (skeleton daemon, plist, `/dev/devctl` reader, Mach pub/sub)
-and Phase 1 (the structured registry + a 10-routine Mach-RPC
-query/watch/load API + PCI enrichment) have landed; the launchd
-`HardwareMatch` key has begun. `configd` &mdash; Apple's
-SystemConfiguration daemon, hosting the `SCDynamicStore` key/value
-store &mdash; has a feature-complete server over Mach IPC, and the
-CF-typed `SystemConfiguration` client framework on top of it
-(`libSystemConfiguration`: the `SCDynamicStore` client API, the
-`SCPreferences` persistent-configuration API, and the
-`SCNetworkConfiguration` network-configuration object model) is
-complete. The IOKitUser facade (`ioreg`) and `IPConfiguration`
-(network config, the proper replacement for the interim `dhclient`
-setup) follow.
+&mdash; closes that gap; **`libIOKit`** sits on top as a thin
+CF-flavored facade re-aimed at `hwregd` (no IOKit kernel here).
+hwregd Phase 0 (skeleton daemon, plist, `/dev/devctl` reader,
+Mach pub/sub) and Phase 1 (structured registry + 10-routine
+Mach-RPC query/watch/load API + PCI enrichment) have landed.
+`configd` &mdash; Apple's SystemConfiguration daemon, hosting the
+`SCDynamicStore` key/value store &mdash; has a feature-complete
+server over Mach IPC, and the CF-typed `SystemConfiguration`
+client framework on top of it (`libSystemConfiguration`: the
+`SCDynamicStore` client API, the `SCPreferences`
+persistent-configuration API, and the `SCNetworkConfiguration`
+network-configuration object model) is complete. **libIOKit**
+(`ioreg(8)` works, `IONotificationPort` works) and
+**`IPConfiguration`** (DHCPv4 INIT &rarr; BOUND with RENEWING/
+REBINDING, SCDynamicStore publish, MIG RPC surface &mdash; the
+proper replacement for the interim `dhclient` setup) have both
+shipped their first ports.
 Full design: the
 [hardware registry + IOKit porting plan](https://pkgdemon.github.io/freebsd-hardware-registry-iokit-plan.html).
 
@@ -601,13 +602,164 @@ VLAN / link-aggregation / bridging virtual interfaces under
 `/VirtualNetworkInterfaces`. Each iteration is exercised in the QEMU
 boot test against the guest's configured e1000 NIC.
 
-**Next:** the IOKitUser facade (`ioreg`) and `IPConfiguration` (the
-proper replacement for the interim `dhclient` setup).
-Deferred: USB / thermal property enrichment in hwregd; lifting
+**Next:** IPConfiguration iter 6 &mdash; ARP conflict detection
+(RFC&nbsp;5227), then DHCPv6 + RA / SLAAC; the `ipconfig(8)` CLI
+port follows. Beyond IPConfiguration: `mDNSResponder` and
+`DiskArbitration` remain on the Phase K shopping list.
+Deferred: USB / thermal property enrichment in hwregd; libIOKit
+K3 (powerd / `IOPMAssertion*`) and K4 (HID/USB/audio); lifting
 configd's 8&nbsp;KiB cap (needs the kernel's out-of-line allocator
 fixed); configd's `notifyviafd` and `snapshot` routines (no consumer /
-fileport support needed). Build/test runs on the `bsd01` VirtualBox VM
+fileport support needed); IPConfiguration's per-interface worker
+threads + BPF&rarr;kqueue (no multi-iface / hot-plug consumer yet).
+Build/test runs on the `bsd01` VirtualBox VM
 (interactive serial console reachable via the `joe-windows` host).
+
+### Phase K &mdash; libIOKit (IOKit userland facade over hwregd) complete K1+K2 (2026-05-22)
+
+**libIOKit** &mdash; a thin CF-flavored client library that re-aims
+Apple's IOKit userland API at `hwregd`'s `hwreg.defs` Mach RPC.
+**Not** a port of Apple's `IOKitUser` source: `IOKitUser`'s MIG
+calls decompose to a kernel `device.defs` surface this repo has no
+kernel for, so the facade replicates the Apple-shape public API
+(`<IOKit/IOKitLib.h>`) over hwregd's userland registry instead. The
+plan's two userland milestones &mdash; **K1** (read-only registry
+walk + `ioreg(8)`) and **K2** (device-arrival notifications)
+&mdash; both shipped:
+
+- **iter 1** &mdash; library skeleton + read-only registry walk.
+  `IORegistryGetRootEntry`, `IORegistryEntryGetChildIterator`,
+  `IOIteratorNext`, `IORegistryEntryGetName`, `IORegistryEntryGetPath`
+  (paths prefixed `IOService:`), `IOObjectRetain` / `Release` (atomic
+  client-side refcount). `io_object_t` is an **opaque pointer** to a
+  client-side handle, not `mach_port_t` &mdash; Apple's typedef
+  assumes a kernel `IOService` ref; there is no IOKit kernel here.
+  Installs `/usr/lib/system/libIOKit.so` + `/usr/include/IOKit/`.
+  `IOKIT-WALK` CI marker.
+- **iter 2** &mdash; properties + matching. `IORegistryEntryCreateCFProperty`
+  / `CreateCFProperties` unpack hwregd's nvlist property bag via
+  `nvlist_unpack` into a `CFDictionary`. `IOServiceMatching` builds a
+  criteria dictionary, `IOServiceGetMatchingService(s)` consume it
+  over `hwreg_lookup` (Apple's "consume one matching ref" contract is
+  preserved). `IOKIT-MATCH`.
+- **iter 3** &mdash; `ioreg(8)` tool. The **K1 success marker** from
+  the plan: `ioreg -l` produces a recursive tree dump (name + class +
+  props) in Apple's output format; `-c CLASS`, `-k KEY`, `-n NAME`,
+  `-x` flags follow. Walks the facade only, never touches `hwreg.defs`
+  directly. `IOKIT-IOREG`.
+- **iter 4** &mdash; K2 notifications. `IONotificationPortCreate`,
+  `IOServiceAddMatchingNotification`, `IOServiceAddInterestNotification`,
+  `IODispatchCalloutFromMessage` over `hwreg_watch`. Each port owns
+  one Mach receive right + a **private pthread** running a raw
+  `mach_msg(MACH_RCV_MSG | MACH_RCV_TIMEOUT, 500&nbsp;ms)` loop &mdash;
+  *not* a libdispatch `DISPATCH_SOURCE_TYPE_MACH_RECV` source, because
+  the latter is unreliable under this port's libdispatch (the
+  task&nbsp;#41 limitation `hwregd` and configd also hit). Multiple
+  watches per port fan in; the receive thread re-matches event text
+  client-side and `dispatch_async_f`'s the callout onto the caller's
+  queue. `IOKIT-NOTIFY`.
+
+**K3** (`powerd` / `IOPMAssertion*`) and **K4** (HID / USB / audio
+families) remain **deferred** per the plan &mdash; port when a real
+consumer needs them. `IOServiceOpen` / `IOConnectCallMethod` stay in
+SKIP: there's no clean mapping without per-driver bridge code.
+
+A header-name collision is worth noting: `src/launchd/freebsd-shims/
+IOKit/IOKitLib.h` is an unrelated 4-function launchctl stub (returns
+null `IORegistryEntryFromPath`, etc.). libIOKit's Makefile orders
+`-I` flags so its own header wins for consumers of the real facade;
+the launchctl-internal shim and the real header are never in the
+same translation unit.
+
+### Phase K &mdash; IPConfiguration daemon (DHCPv4 first port) shipped (2026-05-23)
+
+**`IPConfiguration`** &mdash; Apple's network configuration daemon
+&mdash; is now ported as a standalone daemon (`/usr/sbin/ipconfigd`)
+under launchd's `com.apple.IPConfiguration` MachServices entry.
+Apple runs it as a `configd` plugin; this repo runs it standalone
+because `configd` here has no plugin loader. The daemon is the
+proper replacement for the interim `dhclient` setup the boot image
+used to ship with.
+
+Ported across six iterations (iter 1 through iter 5b) on the
+**Mach-IPC track**: real `mach_msg` MIG + `ipconfig.defs`, not the
+AF\_UNIX / GNUstep-DO design of the companion `freebsd-launchd`
+repo's IPConfiguration plan. Vendored upstream:
+`apple-oss-distributions/bootp`. Iterations:
+
+- **iter 1** &mdash; daemon skeleton. `getifaddrs(3)` interface
+  enumeration, `bootstrap_check_in` for `com.apple.IPConfiguration`,
+  sleep-until-SIGTERM loop. `IPCFG-BOOT`.
+- **iter 2** &mdash; DHCPDISCOVER / OFFER over BPF. `/dev/bpf`
+  (cloning device) + `BIOCSETIF` + crafted Ethernet/IP/UDP/DHCP
+  frame; `BIOCSRTIMEOUT` for the receive wait. `IPCFG-DISCOVER`.
+- **iter 3** &mdash; full RFC 2131 INIT &rarr; SELECTING &rarr;
+  REQUESTING &rarr; BOUND. Standard 4&nbsp;/&nbsp;8&nbsp;/&nbsp;16-second
+  retransmit ladder + &plusmn;1&nbsp;s jitter. `apply_lease.c` installs
+  the lease: `SIOCAIFADDR` for address + netmask + derived broadcast,
+  `PF_ROUTE` `RTM_ADD` for the default route via the offered router,
+  best-effort `/etc/resolv.conf` write for the DNS option. BPF reads
+  are signal-aware via a shared `got_term` flag so SIGTERM during a
+  multi-second retransmit window short-circuits the wait.
+  `IPCFG-BOUND`.
+- **iter 4** &mdash; SCDynamicStore publish + RFC 2131 §4.4.5
+  RENEWING&nbsp;/&nbsp;REBINDING lease loop. On BOUND, publish
+  `State:/Network/Service/&lt;UUID&gt;/IPv4` (+ optional `/DNS`) to
+  configd via libSystemConfiguration. The `&lt;UUID&gt;` is a
+  deterministic 8-4-4-4-12-hex string derived from the interface MAC
+  &mdash; stable across daemon restarts even without SCPreferences
+  persistence. Dictionary shape matches Apple's IPConfiguration
+  (`Addresses`, `SubnetMasks`, `Router`, `InterfaceName`,
+  `ServerIdentifier`; DNS via `ServerAddresses` in the sibling key).
+  Then the daemon enters the lease loop: T1 = lease/2, T2 = 0.875
+  &middot; lease, RENEWING/REBINDING send broadcast DHCPREQUEST in the
+  RFC 2131 §4.3.2 form (`ciaddr` set, no opt 50/54). `IPCFG-STORE`.
+- **iter 5a** &mdash; Mach-RPC surface. A worker pthread owns the
+  service receive right for `com.apple.IPConfiguration` and runs a
+  raw `mach_msg(MACH_RCV_MSG | MACH_RCV_TIMEOUT, 500&nbsp;ms)` loop
+  calling `ipconfig_server()` (the MIG demux for the slim 2-routine
+  `ipconfig.defs` subset). Main thread keeps doing DHCP + the lease
+  loop; the worker reads live state via a mutex-guarded `bound_state`.
+  Wire surface: **`ipconfig_if_count`** (int out) +
+  **`ipconfig_if_addr`** (`if_name` in, `ip_address_t` out +
+  `ipconfig_status_t`). `serverprefix _;` matches Apple, so
+  per-routine impl symbols are `_ipconfig_if_count` /
+  `_ipconfig_if_addr`; the demux fn is `ipconfig_server`. Apple's
+  `ServerAuditToken audit_token : audit_token_t` decorators are
+  dropped (no BSM identity in this port); xmlData / xmlDataOut /
+  dataOut would otherwise be `^ array []` out-of-line &mdash; broken
+  in this kernel, same trade configd / hwreg.defs took. `IPCFG-RPC`.
+- **iter 5b** &mdash; lease-renewal CI gate. iter 4 shipped the
+  RENEWING/REBINDING code, but QEMU SLIRP hands out an 86400&nbsp;s
+  lease, so T1 would be 12&nbsp;h &mdash; the code never fired in
+  CI. iter 5b adds the **`IPCONFIGD_FAST_LEASE`** environment knob
+  (range `[4, 86400]`, set to 10 via `EnvironmentVariables` in the
+  launchd plist) that caps the *effective* lease time used to derive
+  T1&nbsp;/&nbsp;T2 timer math &mdash; the value sent to
+  configd is unaffected, downstream consumers still see the server's
+  authoritative lease. On the first successful RENEWING-or-REBINDING
+  ACK, the daemon emits `IPCFG-RENEW-OK` once. SLIRP turns out to
+  accept the renewing-form REQUEST and ACK it, so the boot test
+  reliably sees five markers in order: `IPCFG-BOOT` &rarr;
+  `IPCFG-BOUND` &rarr; `IPCFG-STORE` &rarr; `IPCFG-RENEW` &rarr;
+  `IPCFG-RPC`.
+
+A small MIG-generated client stub (`ipconfigUser.c`) is linked into
+**`ipconfigrpctest`**, the CI test client that closes the loop:
+`bootstrap_look_up(com.apple.IPConfiguration)` &rarr;
+`ipconfig_if_count` (expects 1) &rarr; `ipconfig_if_addr("em0")`
+(expects 10.0.2.15, the SLIRP-assigned address) &rarr; prints
+`IPCFG-RPC-OK`.
+
+**Deferred** (port when a real consumer needs it): ARP conflict
+detection (RFC 5227); DHCPv6 + RA / SLAAC; IPv4LL; the `ipconfig(8)`
+CLI port; per-interface DHCP worker threads (`ipconfigd` only DHCPs
+em0 today; multi-interface fan-out is a hot-plug consumer story);
+the BPF receive path on `kqueue` `EVFILT_READ` instead of
+`BIOCSRTIMEOUT` (the timeout-driven loop already sleeps efficiently);
+the 18 other routines in Apple's `ipconfig.defs` (vendor by appending,
+not reordering &mdash; routine ORDER and msgh\_id values match Apple
+so iter&nbsp;6+ can grow the surface without breaking the wire).
 
 ## CoreFoundation for system services &mdash; swift-corelibs CF
 
