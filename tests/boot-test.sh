@@ -342,6 +342,24 @@ expect {
     "LAUNCHCTL-BUILD-OK" { puts "\nOK: /bin/launchctl execs + prints help" }
 }
 
+# LAUNCHCTL-LIST — runtime smoke. Guards against the print_jobs
+# NULL-Label segfault (fixed in support/launchctl.c; without the
+# fix, the first response entry missing Label crashed the walk).
+# Also guards against the deferred D-state-hang concern — run.sh
+# runs launchctl in a 30s budget and emits LIST-FAIL if it doesn't
+# exit cleanly.
+expect {
+    timeout {
+        puts "\nFAIL: LAUNCHCTL-LIST marker not seen"
+        exit 1
+    }
+    "LAUNCHCTL-LIST-FAIL" {
+        puts "\nFAIL: launchctl list did not complete cleanly"
+        exit 1
+    }
+    "LAUNCHCTL-LIST-OK" { puts "\nOK: launchctl list round-trips with launchd" }
+}
+
 # Stage 3+ Phase J runtime: syslogd + notifyd RunAtLoad via plists,
 # then syslog(1) post + read-back round-trip via Mach IPC into the
 # ASL store. See run.sh tail for the test sequence.

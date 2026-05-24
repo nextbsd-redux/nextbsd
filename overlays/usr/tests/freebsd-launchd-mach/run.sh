@@ -321,24 +321,44 @@ for lib in libCoreFoundation.so lib_FoundationICU.so liblaunch.so; do
     fi
 done
 
-# 3. Runtime invocation deferred. The mach.ko null-port-send patch
-#    (commit 0e380f6) DID land and IS active — no more
-#    "ipc_entry_lookup failed on 0" kernel print — but launchctl
-#    still hangs after the initial vproc_swap_integer call, likely
-#    on a follow-on Mach receive that's uninterruptible (D-state
-#    sleep). Even `timeout 10 /bin/launchctl help` blocks the
-#    shell pipeline forever because SIGKILL can't reap a process
-#    stuck in uninterruptible kernel sleep, and the `$()` capture
-#    waits for the child to exit.
-#
-#    Full launchctl runtime smoke needs at minimum:
-#      - launchd-as-PID-1 to provide a valid bootstrap_port, OR
-#      - additional mach.ko patches to make Mach receive
-#        interruptible-via-signal on init paths
-#
-#    Tracked in memory: mach-msg-send-to-null-port-hangs.
-
 echo "LAUNCHCTL-BUILD-OK: /bin/launchctl exists ($(stat -f%z /bin/launchctl) bytes), all libsystem deps resolve"
+
+# LAUNCHCTL-LIST — runtime smoke: `launchctl list` round-trips with
+# launchd over Mach and prints the job table. Guards against the
+# print_jobs NULL-Label segfault that was observed on bsd01 + on
+# disk-image boot (every job entry whose serialized response omits
+# Label crashed the walk). Run in the background with a kill budget
+# rather than `timeout(1)` — if launchctl ever hangs in an
+# uninterruptible Mach recv (the deferred concern documented in the
+# pre-2026-05-24 version of this block), SIGTERM can't reap it and
+# `$()` would block run.sh forever. The background pattern lets us
+# move on after the budget regardless of process state.
+echo "==> launchctl list"
+launchctl_out=/tmp/launchctl_list.out
+/bin/launchctl list > "$launchctl_out" 2>&1 &
+list_pid=$!
+i=0
+while [ "$i" -lt 30 ] && kill -0 "$list_pid" 2>/dev/null; do
+    sleep 1
+    i=$((i + 1))
+done
+if kill -0 "$list_pid" 2>/dev/null; then
+    kill -9 "$list_pid" 2>/dev/null || true
+    echo "=== /tmp/launchctl_list.out (partial) ==="
+    head -20 "$launchctl_out" 2>/dev/null || true
+    echo "=== end ==="
+    echo "LAUNCHCTL-LIST-FAIL: still running after 30s (likely D-state Mach recv)"
+else
+    if wait "$list_pid" 2>/dev/null; then list_rc=0; else list_rc=$?; fi
+    head -20 "$launchctl_out"
+    if [ "$list_rc" -eq 0 ] && grep -q "^PID" "$launchctl_out"; then
+        echo "LAUNCHCTL-LIST-OK: exit=0, $(wc -l < "$launchctl_out") line(s) of output"
+    elif [ "$list_rc" -eq 139 ]; then
+        echo "LAUNCHCTL-LIST-FAIL: segfault (signal 11) — print_jobs NULL deref?"
+    else
+        echo "LAUNCHCTL-LIST-FAIL: exit=$list_rc"
+    fi
+fi
 
 # 10. ASL runtime smoke (Phase J). Task #41 move_member wire-up
 # landed but a follow-on halt-after-bootstrap-remote regression is
