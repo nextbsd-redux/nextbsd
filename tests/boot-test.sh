@@ -394,6 +394,22 @@ expect {
     "HWREG-RPC-OK" { puts "\nOK: hwregd Mach-RPC registry query works" }
 }
 
+# HWREG-AUTOLOAD — hwregd boot-backlog autoload: after a 60s settle
+# window the daemon drains its deferred-match queue with kldload(2)
+# and logs the marker. run.sh polls hwregd.stderr for up to 90s, so
+# the global 480s timeout above is plenty.
+expect {
+    timeout {
+        puts "\nFAIL: HWREG-AUTOLOAD marker not seen"
+        exit 1
+    }
+    "HWREG-AUTOLOAD-FAIL" {
+        puts "\nFAIL: hwregd boot-backlog autoload drain did not run"
+        exit 1
+    }
+    "HWREG-AUTOLOAD-OK" { puts "\nOK: hwregd boot-backlog autoload drain ran" }
+}
+
 expect {
     timeout {
         puts "\nFAIL: CONFIGD-STORE marker not seen"

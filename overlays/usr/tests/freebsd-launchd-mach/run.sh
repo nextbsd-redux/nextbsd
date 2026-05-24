@@ -456,6 +456,36 @@ if [ ! -x "$hwregquery" ]; then
 fi
 "$hwregquery" || true	# marker (HWREG-RPC-OK/FAIL) gates in boot-test.sh
 
+# HWREG-AUTOLOAD — boot-backlog autoload drain: hwregd waits out a
+# 60s settle window before kldload(2)ing matched modules (avoids the
+# mid-boot lock contention that wedged earlier iters). At the flip to
+# live mode the queue is drained and the daemon logs HWREG-AUTOLOAD-OK
+# (even when the queue is empty — common in QEMU/SLIRP where every CI
+# device already has a built-in driver). Poll hwregd.stderr with a
+# generous timeout so a slow VM can still cross the 60s threshold.
+hwregd_log=/var/log/hwregd.stderr
+autoload_found=0
+i=0
+while [ "$i" -lt 90 ]; do
+    if grep -q "HWREG-AUTOLOAD-OK" "$hwregd_log" 2>/dev/null; then
+        autoload_found=1
+        break
+    fi
+    sleep 1
+    i=$((i + 1))
+done
+if [ "$autoload_found" -eq 1 ]; then
+    grep "HWREG-AUTOLOAD-OK" "$hwregd_log" | tail -1
+else
+    echo "=== HWREG-AUTOLOAD diagnostics ==="
+    echo "--- $hwregd_log (tail) ---"
+    tail -50 "$hwregd_log" 2>/dev/null || echo "(no $hwregd_log)"
+    echo "--- uptime ---"
+    uptime || true
+    echo "=== end diagnostics ==="
+    echo "HWREG-AUTOLOAD-FAIL: marker not seen within 90s"
+fi
+
 # CONFIGD-STORE — configd SCDynamicStore round-trip: open a session
 # with configd, set a key, read it back, remove it, all over the
 # config.defs Mach RPC. Proves the configd daemon + its store work
