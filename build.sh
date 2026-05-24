@@ -113,10 +113,11 @@ env ABI="${PKG_ABI}" \
 #    work; only the install/purge plumbing lives here — no inline build
 #    recipe (the previous gershwin/GNUstep build was removed).
 #
-RUNTIME_PKGS=$(grep -v '^[[:space:]]*#' "$ROOT/pkglist.txt"   2>/dev/null | grep -v '^[[:space:]]*$' || true)
-BUILD_PKGS=$(  grep -v '^[[:space:]]*#' "$ROOT/buildpkgs.txt" 2>/dev/null | grep -v '^[[:space:]]*$' || true)
+RUNTIME_PKGS=$(grep -v '^[[:space:]]*#' "$ROOT/pkglist.txt"    2>/dev/null | grep -v '^[[:space:]]*$' || true)
+DRIVER_PKGS=$( grep -v '^[[:space:]]*#' "$ROOT/driverpkgs.txt" 2>/dev/null | grep -v '^[[:space:]]*$' || true)
+BUILD_PKGS=$(  grep -v '^[[:space:]]*#' "$ROOT/buildpkgs.txt"  2>/dev/null | grep -v '^[[:space:]]*$' || true)
 
-if [ -n "$RUNTIME_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
+if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
     cp /etc/resolv.conf "$WORK/rootfs/etc/resolv.conf"
     mount -t devfs devfs "$WORK/rootfs/dev"
     cleanup_chroot() {
@@ -127,15 +128,24 @@ if [ -n "$RUNTIME_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
 
     chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes IGNORE_OSVERSION=yes pkg bootstrap -f
 
-    if [ -n "$RUNTIME_PKGS" ]; then
+    # Single combined install for runtime + drivers so the dep solver
+    # runs once. Drivers are logged as their own category for clarity,
+    # but go through the same pkg install. Both stay in the rootfs
+    # (only buildpkgs are purged later).
+    if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ]; then
         echo "==> installing runtime packages:"
-        echo "$RUNTIME_PKGS" | sed 's/^/    /'
+        if [ -n "$RUNTIME_PKGS" ]; then
+            echo "$RUNTIME_PKGS" | sed 's/^/    runtime  /'
+        fi
+        if [ -n "$DRIVER_PKGS" ]; then
+            echo "$DRIVER_PKGS" | sed 's/^/    driver   /'
+        fi
         # shellcheck disable=SC2086
         chroot "$WORK/rootfs" env \
             ASSUME_ALWAYS_YES=yes \
             IGNORE_OSVERSION=yes \
             LICENSES_ACCEPTED=NVIDIA \
-            pkg install -y $RUNTIME_PKGS
+            pkg install -y $RUNTIME_PKGS $DRIVER_PKGS
     fi
 
     if [ -n "$BUILD_PKGS" ]; then

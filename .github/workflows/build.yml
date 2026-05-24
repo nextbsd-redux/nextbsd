@@ -46,7 +46,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: distfiles
-          key: distfiles-${{ matrix.freebsd }}-${{ matrix.arch }}-${{ hashFiles('pkglist.txt') }}
+          key: distfiles-${{ matrix.freebsd }}-${{ matrix.arch }}-${{ hashFiles('pkglist.txt', 'driverpkgs.txt') }}
 
       - name: build ISO inside FreeBSD VM
         uses: vmactions/freebsd-vm@v1

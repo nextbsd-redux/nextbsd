@@ -1,0 +1,41 @@
+# driverpkgs.txt — device-driver kmod packages installed into the ISO.
+#
+# One pkg per line; lines starting with # are ignored. Same shape as
+# pkglist.txt / buildpkgs.txt — build.sh reads this separately so the
+# install log shows drivers as their own category, then hands the
+# combined list to `pkg install` in the chroot (kept in the rootfs,
+# NOT purged like buildpkgs.txt).
+#
+# These are the kernel modules hwregd autoloads on hot-plug and on
+# the boot-backlog drain (see src/hwregd/hwregd.c act_on_match +
+# drain_deferred_loads). /boot/loader.conf is intentionally minimal —
+# only root-mount drivers (ahci / nvme / virtio_* / mfi) plus mach.ko
+# — so every other device driver lives in /boot/modules where these
+# packages install, and hwregd kldload(2)s them on demand when the
+# kernel posts a nomatch event for matching hardware.
+#
+# NVIDIA needs LICENSES_ACCEPTED=NVIDIA — already set by build.sh's
+# chroot pkg-install env.
+
+# GPU DRM drivers (Intel, AMD). drm-latest tracks the FreeBSD ports
+# stack's latest stable graphics — pulls i915kms, amdgpu, radeonkms.
+drm-latest-kmod
+
+# GPU firmware blobs metaport — pulls all flavored gpu-firmware-*
+# subpackages so DRM drivers find microcode at attach time.
+gpu-firmware-kmod
+
+# Nvidia DRM kernel-mode setting + base driver. Loadable on demand;
+# hardware not present at kldload time is simply not attached.
+nvidia-drm-kmod
+
+# Realtek RTL8168/8169/8111 PCIe Ethernet — ported from Realtek's
+# Linux driver source, supersedes base re(4) for newer silicon.
+realtek-re-kmod
+
+# Microsoft USB touchpad driver (Surface Touch Cover et al.).
+utouch-kmod
+
+# WiFi firmware blobs metaport — pulls iwlwifi / rtw88 / rtw89
+# firmware. The drivers themselves ship in base.
+wifi-firmware-kmod
