@@ -2896,14 +2896,26 @@ start_stop_remove_cmd(int argc, char *const argv[])
 }
 
 void
-print_jobs(launch_data_t j, const char *key __attribute__((unused)), void *context __attribute__((unused)))
+print_jobs(launch_data_t j, const char *key, void *context __attribute__((unused)))
 {
-	static size_t depth = 0;
 	launch_data_t lo = launch_data_dict_lookup(j, LAUNCH_JOBKEY_LABEL);
 	launch_data_t pido = launch_data_dict_lookup(j, LAUNCH_JOBKEY_PID);
 	launch_data_t stato = launch_data_dict_lookup(j, LAUNCH_JOBKEY_LASTEXITSTATUS);
-	const char *label = launch_data_get_string(lo);
-	size_t i;
+	/*
+	 * Defensive: a malformed/partial response dict may omit Label
+	 * for some entries; the unconditional get_string on a NULL
+	 * lookup was an unguarded NULL deref that segfaulted the whole
+	 * `launchctl list` walk. Fall back to the dict iterator's `key`
+	 * (which IS the job's label in the all-jobs response) and only
+	 * give up if both are missing.
+	 */
+	const char *label = NULL;
+	if (lo != NULL)
+		label = launch_data_get_string(lo);
+	if (label == NULL)
+		label = key;
+	if (label == NULL)
+		label = "(unknown)";
 
 	if (pido) {
 		fprintf(stdout, "%lld\t-\t%s\n", launch_data_get_integer(pido), label);
@@ -2918,9 +2930,6 @@ print_jobs(launch_data_t j, const char *key __attribute__((unused)), void *conte
 		}
 	} else {
 		fprintf(stdout, "-\t-\t%s\n", label);
-	}
-	for (i = 0; i < depth; i++) {
-		fprintf(stdout, "\t");
 	}
 }
 
