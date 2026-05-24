@@ -765,9 +765,18 @@ kern_return_t	vm_map_copyin(
 	if (src_end < src_addr)
 		return KERN_INVALID_ADDRESS;
 
-	if (len < msg_ool_size_small || src_map == kernel_map)
-		return vm_map_copyin_internal(src_map, src_addr, len,
-										   src_destroy, copy_result);
+	/* Always use the kernel-buffer copy path. The object-sharing
+	 * branch below (vm_map_copyin_object) silently zero-fills on
+	 * receive because FreeBSD anon vm_objects are private/COW per
+	 * process and vm_map_copyout(vm_map_find) cannot actually share
+	 * the source pages. launchctl list (20 MB GETJOBS OOL response)
+	 * hit this and got 20 MB of zeros, then launch_data_unpack
+	 * returned EINVAL. Cost: a transient kernel kalloc the size of
+	 * the message body for the round-trip. Bounded by the kalloc
+	 * max; pathological huge messages fail KERN_RESOURCE_SHORTAGE
+	 * gracefully (same way the broken path failed silently). */
+	return vm_map_copyin_internal(src_map, src_addr, len,
+	                              src_destroy, copy_result);
 
 	/*
 	 *	Find the beginning of the region.

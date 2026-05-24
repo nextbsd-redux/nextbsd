@@ -618,11 +618,47 @@ mig_allocate(vm_address_t *addr, vm_size_t size)
 	return KERN_SUCCESS;
 }
 
+/*
+ * mig_deallocate — same shape of trap vm_deallocate already documents
+ * a few lines down: the same name gets called on buffers from two
+ * different allocators, and using one of them on the wrong source
+ * crashes hard.
+ *
+ *   - Server side (e.g. launchd PID 1 packing an OOL response):
+ *     mig_allocate above returns a malloc'd buffer; after the MIG
+ *     send the server mig_deallocate's that buffer. malloc -> free.
+ *   - Client side (e.g. launchctl receiving the OOL response): the
+ *     pointer is an INTERIOR offset into the kernel-handed-back
+ *     mmap'd Mach message body (not page-aligned, not the base of
+ *     anything our libc can free), and the size that comes back can
+ *     be the server's full payload, not the receive-buffer size.
+ *     free() on this walks jemalloc's arena metadata into garbage
+ *     and segfaults; munmap fails too (interior pointer).
+ *
+ * `launchctl list` (vproc_swap_complex -> mig_deallocate at the
+ * cleanup label) hit the client path and crashed in libc free
+ * walking arena state. Confirmed with lldb on bsd01: rdi was an
+ * interior pointer 0x5110 bytes into a 576 KiB rw- mmap region,
+ * declared size was 7.6 MiB (the server payload, larger than the
+ * actually-mapped region) — neither free nor munmap can do anything
+ * useful with that.
+ *
+ * Take the same trade vm_deallocate already takes: no-op + bounded
+ * leak. The server-side leak (launchd PID 1's malloc-based OOL
+ * response buffers) is the unbounded one if you measure it over
+ * months of daemon uptime; OOL responses are KB-to-low-MB each, so
+ * accumulation is measured in low-MB-per-day for an active system.
+ * The proper fix is to make mig_allocate mmap-based (matching
+ * vm_allocate) AND fix the OOL-receive path to hand back a true
+ * base pointer + true mapped size, so a real munmap can run on both
+ * sides. That's mach_msg surgery; do it when the leak budget shows
+ * up as a real problem, not before.
+ */
 kern_return_t
 mig_deallocate(vm_address_t addr, vm_size_t size)
 {
+	(void)addr;
 	(void)size;
-	free((void *)(uintptr_t)addr);
 	return KERN_SUCCESS;
 }
 
