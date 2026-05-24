@@ -674,59 +674,180 @@ vm_map_copyout_kernel_buffer(
 
 
 /*
- * vm_map_copyin — capture a user-space range into a vm_map_copy_t
- * the MIG send path then transports as OOL data.
+ *	vm_map_copyin_object:
  *
- * The historical Apple implementation had THREE branches:
- *   1. len < MSG_OOL_SIZE_SMALL → vm_map_copyin_internal (KERNEL_BUFFER
- *      copy, kalloc + copyinmap).
- *   2. src_map == kernel_map → same kernel-buffer path.
- *   3. len ≥ MSG_OOL_SIZE_SMALL on a user map → object-sharing path
- *      (lookup entry, clip, vm_object_reference, COW the source,
- *      vm_map_copyin_object). Cheap on Apple where vm_map_copyout
- *      maps the shared object into the destination process with the
- *      source's pages visible through it.
- *
- * Branch 3 is silently broken on FreeBSD: anon vm_objects are
- * private/COW per process, so when vm_map_copyout calls vm_map_find
- * to map the source's anon object into the destination, the
- * destination gets a fresh demand-zero view of the object, not the
- * source pages. launchctl list (20 MiB GETJOBS OOL response) hit
- * this and got 20 MiB of zeros; launch_data_unpack rejected it
- * with EINVAL at offset 24 (decoded type=0, default case).
- *
- * Until the OOL receive path is rewritten to actually share or copy
- * source pages cross-process, every caller goes through the
- * kernel-buffer copy. Cost: a transient kernel kalloc the size of
- * the message body for the round-trip. Bounded by the kalloc max;
- * pathological huge messages fail KERN_RESOURCE_SHORTAGE gracefully.
- * See bsd01 debug session 2026-05-23 in the commit log.
- *
- * The previous version of this function had the object-sharing
- * branch sitting unreachable below an early return; deleting it
- * here keeps the function's behavior obvious. When the proper VM
- * fix lands, the new path should reuse vm_map_copyin_object /
- * vm_object_reference / vm_map_protect from sys/vm — they're still
- * available in the kernel, just not from this file.
+ *	Create a copy object from an object.
+ *	Our caller donates an object reference.
  */
-kern_return_t
-vm_map_copyin(
-	vm_map_t		src_map,
-	vm_map_address_t	src_addr,
-	vm_map_size_t		len,
-	boolean_t		src_destroy,
-	vm_map_copy_t		*copy_result)
+
+static kern_return_t
+vm_map_copyin_object(
+	vm_object_t	object,
+	vm_offset_t	offset,		/* offset of region in object */
+	vm_size_t	size,		/* size of region in object */
+	vm_map_copy_t	*copy_result)	/* OUT */
 {
+	vm_map_copy_t	copy;		/* Resulting copy */
+
+	/*
+	 *	We drop the object into a special copy object
+	 *	that contains the object directly.
+	 */
+
+	copy = (vm_map_copy_t) malloc(sizeof(struct vm_map_copy), M_MACH_VM, M_WAITOK|M_ZERO);
+	copy->type = VM_MAP_COPY_OBJECT;
+	copy->cpy_object = object;
+
+	copy->offset = offset;
+	copy->size = size;
+
+	*copy_result = copy;
+	return(KERN_SUCCESS);
+}
+
+kern_return_t	vm_map_copyin(
+				vm_map_t			src_map,
+				vm_map_address_t	src_addr,
+				vm_map_size_t		len,
+				boolean_t			src_destroy,
+				vm_map_copy_t		*copy_result)
+{
+	vm_map_entry_t	tmp_entry;	/* Result of last map lookup --
+					 * in multi-level lookup, this
+					 * entry contains the actual
+					 * vm_object/offset.
+					 */
+	vm_map_entry_t	prev_entry, next_entry;
+	vm_object_t object;
+	vm_offset_t prev_end;
+
+	vm_offset_t	src_start;	/* Start of current entry --
+					 * where copy is taking place now
+					 */
+	vm_offset_t src_end;
+	vm_offset_t offset;
+
+	/*
+	 * three possibilities:
+	 * - len is less than  MSG_OOL_SIZE_SMALL:
+	 *   allocate memory and copyin with header
+	 * - len is greater but src_map is the special copy map:
+	 *   allocate just a header and point at src_addr
+	 * - len is greater:
+	 *     lookup entry
+	 *     while entry does not cover full range && entry changed:
+	 *       simplify entry
+	 *     if entry edges extend outside of range:
+	 *       clip
+	 *     if no object:
+	 *       add object
+	 *     reference object
+	 *     if src_destroy is not true:
+	 *       mark entry needs COW && NEEDS_COPY
+	 *       pmap_protect range
+	 *       create shadow object
+	 *     else:
+	 *       split object
+	 *       delete entry from source map
+	 *       if data is not aligned copy edge pages and insert
+	 *         into source map
+	 *     create map copy object w/ object
+	 */
+
+
 	if (len == 0) {
 		*copy_result = VM_MAP_COPY_NULL;
-		return (KERN_SUCCESS);
+		return(KERN_SUCCESS);
 	}
 
-	if (round_page(src_addr + len) < src_addr)
-		return (KERN_INVALID_ADDRESS);
+	src_start = trunc_page(src_addr);
+	src_end = round_page(src_addr + len);
+	if (src_end < src_addr)
+		return KERN_INVALID_ADDRESS;
 
-	return (vm_map_copyin_internal(src_map, src_addr, len,
-	    src_destroy, copy_result));
+	/* Always use the kernel-buffer copy path. The object-sharing
+	 * branch below (vm_map_copyin_object) silently zero-fills on
+	 * receive because FreeBSD anon vm_objects are private/COW per
+	 * process and vm_map_copyout(vm_map_find) cannot actually share
+	 * the source pages. launchctl list (20 MB GETJOBS OOL response)
+	 * hit this and got 20 MB of zeros, then launch_data_unpack
+	 * returned EINVAL. Cost: a transient kernel kalloc the size of
+	 * the message body for the round-trip. Bounded by the kalloc
+	 * max; pathological huge messages fail KERN_RESOURCE_SHORTAGE
+	 * gracefully (same way the broken path failed silently). */
+	return vm_map_copyin_internal(src_map, src_addr, len,
+	                              src_destroy, copy_result);
+
+	/*
+	 *	Find the beginning of the region.
+	 */
+	vm_map_lock(src_map);
+
+	if (!vm_map_lookup_entry(src_map, src_start, &tmp_entry)) {
+		vm_map_unlock(src_map);
+		return KERN_INVALID_ADDRESS;
+	}
+
+	prev_end = 0;
+	while (prev_end != tmp_entry->end  && tmp_entry->end < src_end) {
+		prev_end = tmp_entry->end;
+		prev_entry = vm_map_entry_pred(tmp_entry);
+		next_entry = vm_map_entry_succ(tmp_entry);
+		vm_map_try_merge_entries(src_map, prev_entry, tmp_entry);
+		vm_map_try_merge_entries(src_map, tmp_entry, next_entry);
+	}
+	/* only handle single map entry for now */
+	if (tmp_entry->end < src_end) {
+		vm_map_unlock(src_map);
+		return KERN_NOT_SUPPORTED;
+	}
+
+	object = tmp_entry->object.vm_object;
+
+	if (src_destroy) {
+		/*
+		 * The original code seems to be keeping the vm_object and pages
+		 * to create the copy object, but removing the object from src_map
+		 * by setting vm_object to NULL before vm_map_delete(). This smells
+		 * like a hack and causes a kernel page fault in 12.x.
+		 *
+		 * Instead, let's create a new entry with new_object and insert
+		 * it into src_map at new_addr. This seems to work and follows
+		 * the spirit of the original, destroying the memory at src_addr
+		 * while keeping a copy. Hopefully this is not a leak.
+		 *     -- mszoek
+		 */
+		offset = 0;
+		vm_map_clip_start(src_map, tmp_entry, src_start);
+		vm_map_clip_end(src_map, tmp_entry, src_end);
+		VM_OBJECT_WLOCK(object);
+		vm_object_reference_locked(object);
+		vm_object_split(tmp_entry);
+		/* this is now 'new_object' from vm_object_split */
+		object = tmp_entry->object.vm_object;
+		vm_object_reference_locked(object);
+		VM_OBJECT_WUNLOCK(object);
+		unsigned long size = src_end - src_start;
+		vm_offset_t new_addr = vm_map_findspace(src_map, 0, size);
+		vm_object_reference(object);
+		vm_map_insert(src_map, object, offset, new_addr, 
+					new_addr + size, VM_PROT_READ|VM_PROT_WRITE,
+					VM_PROT_READ|VM_PROT_WRITE, 0);
+		vm_map_unlock(src_map);
+		vm_map_remove(src_map, src_start, src_end);
+	} else {
+		offset = tmp_entry->offset;
+		vm_map_unlock(src_map);
+		vm_object_reference(object);
+		vm_map_protect(src_map, src_start, src_end, tmp_entry->protection & ~VM_PROT_WRITE, 0, VM_MAP_PROTECT_SET_PROT);
+		tmp_entry->eflags |= MAP_ENTRY_NEEDS_COPY | MAP_ENTRY_COW;
+	}
+
+	vm_map_copyin_object(object, offset, src_end - src_start, copy_result);
+	/* neither mach nor osx does anything to prevent information leakage
+	 * in unaligned sends
+	 */
+	return KERN_SUCCESS;
 }
 
 
