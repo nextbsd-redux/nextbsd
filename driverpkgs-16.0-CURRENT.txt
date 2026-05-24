@@ -1,0 +1,32 @@
+# driverpkgs-16.0-CURRENT.txt — driver kmods for FreeBSD 16.0-CURRENT.
+#
+# Picked up by build.sh when FREEBSD_VARIANT=16.0-CURRENT. See
+# driverpkgs-15.0-RELEASE.txt for the wider context (purpose, install
+# path, hwregd autoload).
+#
+# 16.0-CURRENT runs __FreeBSD_version 1600000+, so drm-latest-kmod
+# (Linux 6.9 DRM-KPI) — which IGNORE-gates on 1600018+ for this
+# branch — is loadable. Contents otherwise mirror 15-STABLE; revise
+# as kernel KPIs and ports tracking diverge.
+
+# GPU DRM drivers (Intel, AMD).
+drm-latest-kmod
+
+# GPU firmware blobs metaport.
+gpu-firmware-kmod
+
+# Nvidia DRM — COMMENTED OUT. See the rationale in
+# driverpkgs-15-STABLE.txt: both nvidia-drm-kmod variants pin
+# drm-66-kmod and pkg's solver drops drm-latest-kmod if we include
+# them. Restore once an upstream drm-latest-compatible Nvidia port
+# exists.
+#nvidia-drm-kmod
+
+# Realtek RTL8168/8169/8111 PCIe Ethernet.
+realtek-re-kmod
+
+# Microsoft USB touchpads.
+utouch-kmod
+
+# WiFi firmware blobs metaport.
+wifi-firmware-kmod

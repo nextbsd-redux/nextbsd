@@ -1,0 +1,36 @@
+# driverpkgs-15-STABLE.txt — driver kmods for FreeBSD 15-STABLE.
+#
+# Picked up by build.sh when FREEBSD_VARIANT=15-STABLE. The wider
+# context (purpose, install path, hwregd autoload) lives in
+# driverpkgs-15.0-RELEASE.txt — read that first if you're not sure
+# why these files exist.
+#
+# 15-STABLE was branched at __FreeBSD_version 1500064 and is well
+# past 1500509 by the time this file matters, so drm-latest-kmod
+# (Linux 6.9 DRM-KPI) is loadable here — that's the main reason this
+# variant exists as a separate list from 15.0-RELEASE.
+
+# GPU DRM drivers. drm-latest tracks the current upstream branch and
+# is the right pairing for newer GPUs on 15-STABLE.
+drm-latest-kmod
+
+# GPU firmware blobs metaport. Pure data; no drm-XX dep.
+gpu-firmware-kmod
+
+# Nvidia DRM — COMMENTED OUT on this variant. Both nvidia-drm-kmod
+# (stable) and nvidia-drm-kmod-devel pin nvidia-drm-66-kmod, which
+# transitively requires drm-66-kmod. Including any of those here would
+# make pkg drop drm-latest-kmod in favor of drm-66-kmod and we'd land
+# back on the 15.0-RELEASE shape. Restore once the Nvidia ports
+# maintainer publishes a drm-latest-compatible variant (or replace
+# with a vendored/local build).
+#nvidia-drm-kmod
+
+# Realtek RTL8168/8169/8111 PCIe Ethernet.
+realtek-re-kmod
+
+# Microsoft USB touchpads.
+utouch-kmod
+
+# WiFi firmware blobs metaport.
+wifi-firmware-kmod

@@ -39,7 +39,7 @@ mkdir -p "$WORK" "$OUT" "$DIST"
 chflags -R noschg "$WORK" 2>/dev/null || true
 rm -rf "$WORK"/* "$OUT"/*
 
-echo "==> build: FreeBSD $FREEBSD_VERSION ($ARCH), compress=$COMPRESS"
+echo "==> build: FreeBSD $FREEBSD_VERSION ($ARCH), compress=$COMPRESS, variant=${FREEBSD_VARIANT:-${FREEBSD_VERSION}-RELEASE}"
 
 #
 # 1. fetch src.txz.
@@ -113,9 +113,26 @@ env ABI="${PKG_ABI}" \
 #    work; only the install/purge plumbing lives here — no inline build
 #    recipe (the previous gershwin/GNUstep build was removed).
 #
-RUNTIME_PKGS=$(grep -v '^[[:space:]]*#' "$ROOT/pkglist.txt"    2>/dev/null | grep -v '^[[:space:]]*$' || true)
-DRIVER_PKGS=$( grep -v '^[[:space:]]*#' "$ROOT/driverpkgs.txt" 2>/dev/null | grep -v '^[[:space:]]*$' || true)
-BUILD_PKGS=$(  grep -v '^[[:space:]]*#' "$ROOT/buildpkgs.txt"  2>/dev/null | grep -v '^[[:space:]]*$' || true)
+# Driver kmod list is variant-keyed so different FreeBSD release trains
+# can pin the right kmod versions (drm-66-kmod for 15.0-RELEASE vs.
+# drm-latest-kmod for 15-STABLE / 16.0-CURRENT — the kernel DRM-KPI
+# only crosses the drm-latest threshold at __FreeBSD_version 1500509+).
+# Default to "${FREEBSD_VERSION}-RELEASE" so a bare FREEBSD_VERSION=15.0
+# (the matrix shape vmactions expects) resolves to driverpkgs-15.0-
+# RELEASE.txt without the caller having to set FREEBSD_VARIANT.
+: "${FREEBSD_VARIANT:=${FREEBSD_VERSION}-RELEASE}"
+DRIVER_PKGS_FILE="$ROOT/driverpkgs-${FREEBSD_VARIANT}.txt"
+if [ ! -f "$DRIVER_PKGS_FILE" ]; then
+    echo "ERROR: driver pkglist for FREEBSD_VARIANT=$FREEBSD_VARIANT not found" >&2
+    echo "       expected: $DRIVER_PKGS_FILE" >&2
+    echo "       create one or set FREEBSD_VARIANT to an existing variant" >&2
+    ls -1 "$ROOT"/driverpkgs-*.txt 2>/dev/null | sed 's|.*/||; s|^|       available: |' >&2
+    exit 1
+fi
+
+RUNTIME_PKGS=$(grep -v '^[[:space:]]*#' "$ROOT/pkglist.txt"        2>/dev/null | grep -v '^[[:space:]]*$' || true)
+DRIVER_PKGS=$( grep -v '^[[:space:]]*#' "$DRIVER_PKGS_FILE"        2>/dev/null | grep -v '^[[:space:]]*$' || true)
+BUILD_PKGS=$(  grep -v '^[[:space:]]*#' "$ROOT/buildpkgs.txt"      2>/dev/null | grep -v '^[[:space:]]*$' || true)
 
 if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
     cp /etc/resolv.conf "$WORK/rootfs/etc/resolv.conf"

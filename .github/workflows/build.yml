@@ -19,15 +19,24 @@ permissions:
 
 jobs:
   build:
-    name: build (FreeBSD ${{ matrix.freebsd }} ${{ matrix.arch }})
+    name: build (FreeBSD ${{ matrix.variant }} ${{ matrix.arch }})
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        freebsd: ['15.0']
-        arch: ['amd64']
-        compress: ['zstd']
+        # `freebsd` is what vmactions/freebsd-vm expects as its release
+        # tag (a bare "15.0" — it doesn't accept "-RELEASE" / "-STABLE"
+        # suffixes). `variant` is what build.sh + the driverpkgs-*.txt
+        # filename use to distinguish release trains (15.0-RELEASE vs.
+        # 15-STABLE vs. 16.0-CURRENT). The matrix entries below pair
+        # them; add a new include block when vmactions gains support
+        # for snapshot builds or when CI gains a non-vmactions runner.
+        include:
+          - freebsd: '15.0'
+            variant: '15.0-RELEASE'
+            arch: 'amd64'
+            compress: 'zstd'
     steps:
       - uses: actions/checkout@v4
 
@@ -46,7 +55,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: distfiles
-          key: distfiles-${{ matrix.freebsd }}-${{ matrix.arch }}-${{ hashFiles('pkglist.txt', 'driverpkgs.txt') }}
+          key: distfiles-${{ matrix.variant }}-${{ matrix.arch }}-${{ hashFiles('pkglist.txt', format('driverpkgs-{0}.txt', matrix.variant)) }}
 
       - name: build ISO inside FreeBSD VM
         uses: vmactions/freebsd-vm@v1
@@ -73,6 +82,7 @@ jobs:
           run: |
             set -eu
             export FREEBSD_VERSION=${{ matrix.freebsd }}
+            export FREEBSD_VARIANT=${{ matrix.variant }}
             export ARCH=${{ matrix.arch }}
             export COMPRESS=${{ matrix.compress }}
             sh build.sh
@@ -87,7 +97,7 @@ jobs:
       # The mach.ko tarball is gzip'd; the outer zip stores that too.
       - uses: actions/upload-artifact@v4
         with:
-          name: diskimg-${{ matrix.freebsd }}-${{ matrix.arch }}-${{ matrix.compress }}
+          name: diskimg-${{ matrix.variant }}-${{ matrix.arch }}-${{ matrix.compress }}
           path: |
             out/disk.img.zip
             out/mach.ko-FreeBSD-${{ matrix.freebsd }}-${{ matrix.arch }}.tar.gz
@@ -97,22 +107,24 @@ jobs:
           if-no-files-found: error
 
   test:
-    name: test (FreeBSD ${{ matrix.freebsd }} ${{ matrix.arch }})
+    name: test (FreeBSD ${{ matrix.variant }} ${{ matrix.arch }})
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        freebsd: ['15.0']
-        arch: ['amd64']
-        compress: ['zstd']
+        include:
+          - freebsd: '15.0'
+            variant: '15.0-RELEASE'
+            arch: 'amd64'
+            compress: 'zstd'
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
         with:
-          name: diskimg-${{ matrix.freebsd }}-${{ matrix.arch }}-${{ matrix.compress }}
+          name: diskimg-${{ matrix.variant }}-${{ matrix.arch }}-${{ matrix.compress }}
           path: out/
 
       - name: install qemu + expect
@@ -138,12 +150,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: boot-log-${{ matrix.freebsd }}-${{ matrix.arch }}
+          name: boot-log-${{ matrix.variant }}-${{ matrix.arch }}
           path: tests/boot.log
           if-no-files-found: ignore
 
   release:
-    name: release (FreeBSD ${{ matrix.freebsd }} ${{ matrix.arch }})
+    name: release (FreeBSD ${{ matrix.variant }} ${{ matrix.arch }})
     needs: [build, test]
     # Only publish when both jobs pass on a push to main. PRs and other
     # branches build + test but never publish.
@@ -154,15 +166,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        freebsd: ['15.0']
-        arch: ['amd64']
-        compress: ['zstd']
+        include:
+          - freebsd: '15.0'
+            variant: '15.0-RELEASE'
+            arch: 'amd64'
+            compress: 'zstd'
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
         with:
-          name: diskimg-${{ matrix.freebsd }}-${{ matrix.arch }}-${{ matrix.compress }}
+          name: diskimg-${{ matrix.variant }}-${{ matrix.arch }}-${{ matrix.compress }}
           path: out/
 
       - name: prepare release assets (rename to dated public names)
@@ -170,7 +184,7 @@ jobs:
         run: |
           set -eu
           DATE=$(date -u +%Y%m%d)
-          DATED_IMG="FreeBSD-${{ matrix.freebsd }}-${{ matrix.arch }}-mach-${DATE}.img.zip"
+          DATED_IMG="FreeBSD-${{ matrix.variant }}-${{ matrix.arch }}-mach-${DATE}.img.zip"
           DATED_KMOD="mach.ko-FreeBSD-${{ matrix.freebsd }}-${{ matrix.arch }}-${DATE}.tar.gz"
           cp out/disk.img.zip "out/${DATED_IMG}"
           cp "out/mach.ko-FreeBSD-${{ matrix.freebsd }}-${{ matrix.arch }}.tar.gz" \

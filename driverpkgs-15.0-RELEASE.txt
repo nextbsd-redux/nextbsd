@@ -1,10 +1,17 @@
-# driverpkgs.txt — device-driver kmod packages installed into the ISO.
+# driverpkgs-15.0-RELEASE.txt — driver kmods for FreeBSD 15.0-RELEASE.
 #
 # One pkg per line; lines starting with # are ignored. Same shape as
-# pkglist.txt / buildpkgs.txt — build.sh reads this separately so the
+# pkglist.txt / buildpkgs.txt — build.sh reads this (the variant
+# chosen by FREEBSD_VARIANT, default 15.0-RELEASE) separately so the
 # install log shows drivers as their own category, then hands the
 # combined list to `pkg install` in the chroot (kept in the rootfs,
 # NOT purged like buildpkgs.txt).
+#
+# Variant files exist so different FreeBSD release trains can pin the
+# right kmod versions — drm-66-kmod is canonical for 15.0-RELEASE,
+# drm-latest-kmod becomes loadable only when __FreeBSD_version reaches
+# 1500509+ (15-STABLE / 16.0-CURRENT). See driverpkgs-15-STABLE.txt
+# and driverpkgs-16.0-CURRENT.txt for the newer-kernel variants.
 #
 # These are the kernel modules hwregd autoloads on hot-plug and on
 # the boot-backlog drain (see src/hwregd/hwregd.c act_on_match +
@@ -17,16 +24,21 @@
 # NVIDIA needs LICENSES_ACCEPTED=NVIDIA — already set by build.sh's
 # chroot pkg-install env.
 
-# GPU DRM drivers (Intel, AMD). drm-latest tracks the FreeBSD ports
-# stack's latest stable graphics — pulls i915kms, amdgpu, radeonkms.
-drm-latest-kmod
+# GPU DRM drivers (Intel, AMD). drm-66-kmod is the LTS branch tracking
+# Linux 6.6 DRM-KPI and is the version FreeBSD 15.0-RELEASE's kernel
+# pairs with. drm-latest-kmod (Linux 6.9 DRM-KPI) needs kernel rev
+# 1500509+ (per its port's IGNORE check) — see the STABLE/CURRENT
+# variants. Pulls i915kms, amdgpu, radeonkms.
+drm-66-kmod
 
 # GPU firmware blobs metaport — pulls all flavored gpu-firmware-*
 # subpackages so DRM drivers find microcode at attach time.
 gpu-firmware-kmod
 
-# Nvidia DRM kernel-mode setting + base driver. Loadable on demand;
-# hardware not present at kldload time is simply not attached.
+# Nvidia DRM kernel-mode setting + base driver. Metaport that hard-
+# deps on nvidia-drm-66-kmod, which transitively pulls drm-66-kmod
+# — that's why this file pins drm-66 above (the alternative would be
+# pkg's solver dropping drm-latest in favor of the dep-required drm-66).
 nvidia-drm-kmod
 
 # Realtek RTL8168/8169/8111 PCIe Ethernet — ported from Realtek's
