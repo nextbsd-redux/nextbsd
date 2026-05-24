@@ -875,10 +875,11 @@ To build locally on FreeBSD:
 sh build.sh
 ```
 
-Produces `out/disk.img.gz` &mdash; a gzip-compressed bootable GPT
-disk image (BIOS + UEFI, read-write UFS root).
+Produces `out/disk.img.zip` &mdash; a DEFLATE-9 zip wrapping a
+bootable GPT disk image (BIOS + UEFI, read-write UFS root). Unzip
+with any platform's native tools.
 
 ## Releases
 
 Every push to `main` that passes build + boot test is published as a
-dated continuous release &mdash; the gzip-compressed GPT disk image.
+dated continuous release &mdash; the zip-wrapped GPT disk image.

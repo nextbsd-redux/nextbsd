@@ -5,7 +5,7 @@
 
 set -eu
 
-IMG=${1:?usage: boot-test.sh path/to/disk.img[.gz]}
+IMG=${1:?usage: boot-test.sh path/to/disk.img[.zip|.gz]}
 
 if [ ! -f "$IMG" ]; then
     echo "ERROR: $IMG not found"
@@ -16,9 +16,19 @@ mkdir -p tests
 LOG=tests/boot.log
 EXP=tests/boot.exp
 
-# Accept the published gzip-compressed image — decompress to a raw .img
-# that qemu can boot as a disk.
+# Accept the published image in any of: raw .img, .zip (current
+# published format — single-entry DEFLATE-9 archive containing
+# disk.img), .gz (legacy). Extract/decompress to a raw .img that
+# qemu can boot as a disk.
 case "$IMG" in
+*.zip)
+    RAW=tests/disk.img
+    echo "==> extracting $IMG -> $RAW"
+    # -p: write to stdout; pick the first (and only) entry by name.
+    # -o on unzip is overwrite — avoid the interactive prompt.
+    unzip -p "$IMG" disk.img > "$RAW"
+    IMG=$RAW
+    ;;
 *.gz)
     RAW=tests/disk.img
     echo "==> decompressing $IMG -> $RAW"

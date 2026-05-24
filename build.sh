@@ -3,7 +3,7 @@
 # + Mach IPC port. The image has a read-write UFS root (no cd9660, no
 # uzip, no unionfs): the kernel mounts the freebsd-ufs partition
 # directly and execs /sbin/launchd as PID 1. Boots BIOS and UEFI.
-# Runs on FreeBSD (host or vmactions VM). Produces out/disk.img.gz.
+# Runs on FreeBSD (host or vmactions VM). Produces out/disk.img.zip.
 #
 # Base comes from pkgbase (pkg.freebsd.org/FreeBSD:<major>:<arch>/
 # base_latest), curated via pkglist-base.txt — no full base.txz /
@@ -1934,12 +1934,15 @@ mkimg -s gpt -f raw \
 ls -lh "$WORK/disk.img"
 
 # 6d. compress for publishing — the sparse rw headroom compresses away.
-#     Ship disk.img.gz: gunzip then dd to storage, or boot directly in
-#     qemu / VirtualBox / any hypervisor.
-echo "==> gzip disk image"
-gzip -9 -c "$WORK/disk.img" > "$OUT/disk.img.gz"
-ls -lh "$OUT/disk.img.gz"
-sha256 "$OUT/disk.img.gz" 2>/dev/null || sha256sum "$OUT/disk.img.gz"
+#     Ship disk.img.zip: unzip then dd to storage, or boot directly in
+#     qemu / VirtualBox / any hypervisor. Zip (vs. gz) opens natively on
+#     every platform (Windows Explorer, macOS Finder, Linux file
+#     managers) without requiring a separate decompressor; size is
+#     within ~0.1% of gz since both use DEFLATE under the hood.
+echo "==> zip disk image"
+(cd "$WORK" && zip -9 "$OUT/disk.img.zip" disk.img)
+ls -lh "$OUT/disk.img.zip"
+sha256 "$OUT/disk.img.zip" 2>/dev/null || sha256sum "$OUT/disk.img.zip"
 
 # trim the multi-GB image intermediates — only out/ needs to survive
 # the post-build copyback.
@@ -1971,6 +1974,6 @@ ls -lh "$OUT/${MACHKO_BASENAME}.tar.gz"
 sha256 "$OUT/${MACHKO_BASENAME}.tar.gz" 2>/dev/null || sha256sum "$OUT/${MACHKO_BASENAME}.tar.gz"
 
 echo
-echo "==> disk image:    $(ls -lh "$OUT/disk.img.gz" | awk '{print $5}')  (disk.img.gz, gzip-compressed)"
+echo "==> disk image:    $(ls -lh "$OUT/disk.img.zip" | awk '{print $5}')  (disk.img.zip, DEFLATE-9)"
 echo "==> mach.ko tarball: $(ls -lh "$OUT/${MACHKO_BASENAME}.tar.gz" | awk '{print $5}')"
 echo "==> DONE"

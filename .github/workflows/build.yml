@@ -69,7 +69,7 @@ jobs:
           sync: rsync
           copyback: true
           prepare: |
-            pkg install -y bash git rsync
+            pkg install -y bash git rsync zip
           run: |
             set -eu
             export FREEBSD_VERSION=${{ matrix.freebsd }}
@@ -80,15 +80,19 @@ jobs:
       - name: artifact summary
         run: |
           ls -lh out/
-          (cd out && sha256sum *.img.gz *.tar.gz) | tee out/SHA256SUMS
+          (cd out && sha256sum *.img.zip *.tar.gz) | tee out/SHA256SUMS
 
+      # compression-level: 0 — disk.img.zip is already DEFLATE-9; the
+      # outer artifact zip just stores it (no recompression overhead).
+      # The mach.ko tarball is gzip'd; the outer zip stores that too.
       - uses: actions/upload-artifact@v4
         with:
           name: diskimg-${{ matrix.freebsd }}-${{ matrix.arch }}-${{ matrix.compress }}
           path: |
-            out/disk.img.gz
+            out/disk.img.zip
             out/mach.ko-FreeBSD-${{ matrix.freebsd }}-${{ matrix.arch }}.tar.gz
             out/SHA256SUMS
+          compression-level: 0
           retention-days: 14
           if-no-files-found: error
 
@@ -119,7 +123,7 @@ jobs:
       - name: boot test
         run: |
           chmod +x tests/boot-test.sh
-          ./tests/boot-test.sh out/disk.img.gz
+          ./tests/boot-test.sh out/disk.img.zip
 
       - name: dump [T39/T41] trace from boot log
         if: always()
@@ -166,9 +170,9 @@ jobs:
         run: |
           set -eu
           DATE=$(date -u +%Y%m%d)
-          DATED_IMG="FreeBSD-${{ matrix.freebsd }}-${{ matrix.arch }}-mach-${DATE}.img.gz"
+          DATED_IMG="FreeBSD-${{ matrix.freebsd }}-${{ matrix.arch }}-mach-${DATE}.img.zip"
           DATED_KMOD="mach.ko-FreeBSD-${{ matrix.freebsd }}-${{ matrix.arch }}-${DATE}.tar.gz"
-          cp out/disk.img.gz "out/${DATED_IMG}"
+          cp out/disk.img.zip "out/${DATED_IMG}"
           cp "out/mach.ko-FreeBSD-${{ matrix.freebsd }}-${{ matrix.arch }}.tar.gz" \
              "out/${DATED_KMOD}"
           ( cd out && sha256sum "${DATED_IMG}"  > "${DATED_IMG}.sha256" )
