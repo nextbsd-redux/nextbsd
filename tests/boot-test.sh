@@ -714,6 +714,27 @@ expect {
     }
 }
 
+# IPCFG-AUTOLOAD-SUB — iter 9 hwregd attach subscription. ipconfigd
+# subscribes to org.freebsd.hwregd's raw pub/sub bus at startup so
+# NICs that hwregd autoloads ~60s into boot still get DHCP'd. The
+# full attach→DHCP path isn't exercised in CI (em is built into the
+# kernel here so it's present at startup, not later autoloaded), but
+# this marker proves the subscription wiring is up — when a slimmed
+# kernel ships in a later iter, the same wiring carries the chain.
+expect {
+    timeout {
+        puts "\nFAIL: IPCFG-AUTOLOAD-SUB marker not seen"
+        exit 1
+    }
+    "IPCFG-AUTOLOAD-SUB-FAIL" {
+        puts "\nFAIL: ipconfigd hwregd subscription did not establish"
+        exit 1
+    }
+    "IPCFG-AUTOLOAD-SUB-OK" {
+        puts "\nOK: ipconfigd subscribed to hwregd attach events"
+    }
+}
+
 # IPCFG-ARP — iter 6 RFC 5227 ARP probe on the DHCPOFFER. Fires
 # after 3 successful (= no-reply) probes of the offered address;
 # precedes IPCFG-BOUND-OK in the timeline (probe runs between

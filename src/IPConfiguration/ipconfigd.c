@@ -35,6 +35,19 @@
  * bound_state.{c,h}; the main thread (DHCP + lease loop) writes it
  * on BOUND. iter 5a vendors 2 read-only routines (if_count,
  * if_addr); the full ipconfig.defs surface grows in iter 6+.
+ *
+ * iter 9 — react to NIC arrival via hwregd subscription.
+ * hwreg_subscribe.c bootstrap_look_up's org.freebsd.hwregd and
+ * subscribes to its raw pub/sub stream; on a `+` attach event the
+ * subscriber thread invokes on_attach_event(), which (if no NIC is
+ * yet bound) re-runs dhcp_pick_interface and calls
+ * dhcp_run_on_interface on the newly-visible NIC. Closes the "first
+ * boot on a NIC whose driver hwregd autoloads ~60s into boot" gap
+ * left by the iter "drain the deferred backlog" PR (#60). Marker
+ * IPCFG-AUTOLOAD-SUB-OK fires when the subscription is established
+ * (the autoload-then-DHCP end-to-end path isn't exercised in CI yet
+ * because the CI kernel still has `device em` built in — a separate
+ * iter that slims the kernel proves the full chain).
  */
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -58,6 +71,7 @@
 #include "apply_lease_v6.h"
 #include "bound_state.h"
 #include "dhcp_discover.h"
+#include "hwreg_subscribe.h"
 #include "lease_loop.h"
 #include "mach_service.h"
 #include "ra_listen.h"
@@ -160,17 +174,155 @@ read_lease_cap_env(void)
 	return ((uint32_t)v);
 }
 
+/*
+ * dhcp_run_on_interface — full DHCPv4 INIT → BOUND → publish → RA →
+ * lease loop on `ifname`. Extracted from main() so both the startup
+ * path and the hwregd subscriber callback (iter 9) can drive it.
+ *
+ * Blocks in lease_loop_run until SIGTERM; never returns from a fully
+ * successful path. On any failure the function returns cleanly and
+ * the caller decides what to do (typically: fall through to the
+ * sleep loop and wait for the next hwregd attach).
+ */
+static void
+dhcp_run_on_interface(const char *ifname, uint32_t lease_cap_secs)
+{
+	struct dhcp_lease lease;
+	struct sc_publish *pub;
+	char a[INET_ADDRSTRLEN], m[INET_ADDRSTRLEN];
+	char r[INET_ADDRSTRLEN], s[INET_ADDRSTRLEN];
+	struct ra_info ra;
+	int rar;
+
+	xlog("selected interface for DHCPv4: %s", ifname);
+	if (dhcp_lease_acquire(ifname, &lease) != 0) {
+		/* dhcp_lease_acquire logged IPCFG-BOUND-FAIL on its own line */
+		return;
+	}
+
+	if (apply_lease(ifname, &lease) != 0) {
+		xlog("apply_lease(%s) failed", ifname);
+		xlog("IPCFG-BOUND-FAIL");
+		return;
+	}
+
+	(void)inet_ntop(AF_INET, &lease.addr, a, sizeof(a));
+	(void)inet_ntop(AF_INET, &lease.netmask, m, sizeof(m));
+	(void)inet_ntop(AF_INET, &lease.router, r, sizeof(r));
+	(void)inet_ntop(AF_INET, &lease.server, s, sizeof(s));
+	xlog("bound: iface=%s addr=%s netmask=%s router=%s "
+	    "server=%s lease=%us",
+	    ifname, a, m, r, s, (unsigned)lease.lease_time);
+	/*
+	 * Make the lease visible to the Mach service worker before the
+	 * BOUND marker fires — so any client racing IPCFG-RPC-OK against
+	 * IPCFG-BOUND-OK sees the address it expects.
+	 */
+	bound_state_set(ifname, &lease);
+	xlog("IPCFG-BOUND-OK");
+
+	/*
+	 * Publish to configd. Failure is non-fatal: the daemon stays up,
+	 * the lease is already applied at the kernel level, but
+	 * observers watching State:/Network/Service/... won't see this
+	 * binding. CI marker IPCFG-STORE-FAIL flags it.
+	 */
+	pub = sc_publish_open("ipconfigd");
+	if (pub == NULL) {
+		xlog("IPCFG-STORE-FAIL: no configd session");
+		return;
+	}
+	if (sc_publish_ipv4(pub, ifname, &lease) != 0) {
+		xlog("IPCFG-STORE-FAIL: set State:/.../IPv4");
+		sc_publish_close(pub);
+		return;
+	}
+	xlog("IPCFG-STORE-OK");
+
+	/*
+	 * iter 7a: solicit + listen for one RA, derive a SLAAC address,
+	 * install it + the v6 default route, and publish
+	 * State:/.../IPv6. 15s budget — QEMU SLIRP answers within ms,
+	 * so a miss means RA isn't configured; we log IPCFG-RA-MISS and
+	 * continue with IPv4 only.
+	 *
+	 * Round-1 CI showed em0 has ND6_IFF_IFDISABLED set (this image's
+	 * net.inet6.ip6.auto_linklocal is 0, so the kernel never
+	 * auto-added a link-local). bring_v6_up clears IFDISABLED and
+	 * installs fe80::EUI-64 so the kernel can source-select the
+	 * link-local-scoped RS.
+	 */
+	(void)bring_v6_up(ifname);
+	rar = ra_acquire(ifname, 15000, &ra);
+	if (rar == 0) {
+		struct in6_addr v6;
+
+		if (apply_ra_lease(ifname, &ra, &v6) == 0) {
+			(void)sc_publish_ipv6(pub, ifname, &v6,
+			    ra.prefix_len, &ra.router_lladdr);
+			xlog("IPCFG-RA-OK");
+		} else {
+			xlog("IPCFG-RA-MISS: apply_ra_lease failed");
+		}
+	} else if (rar == 1) {
+		xlog("IPCFG-RA-MISS: no RA in 15s "
+		    "(SLIRP may not advertise IPv6)");
+	} else {
+		xlog("IPCFG-RA-MISS: ra_acquire fatal");
+	}
+
+	(void)lease_loop_run(ifname, &lease, pub, lease_cap_secs);
+	sc_publish_close(pub);
+}
+
+/*
+ * iter 9 hwregd-subscriber callback — invoked from the subscriber
+ * thread (hwreg_subscribe.c) when hwregd posts a `+` attach event.
+ * If we already have a binding (the startup-path picked an interface
+ * and is in lease_loop_run, or an earlier attach fired DHCP), skip:
+ * the iter is single-NIC-focused, multi-NIC fan-out is a later
+ * iter. Otherwise confirm the new device is an Ethernet (via
+ * dhcp_pick_interface which already filters AF_LINK + IFT_ETHER +
+ * !loopback — its "first match wins" rule means the just-attached
+ * NIC will be picked once it's in getifaddrs) and run the full
+ * DHCP+publish+lease loop on it.
+ */
+static void
+on_attach_event(const char *attached_ifname, uint32_t lease_cap_secs)
+{
+	char picked[IFNAMSIZ] = "";
+	char already[IFNAMSIZ] = "";
+
+	if (bound_state_any(already, sizeof(already))) {
+		xlog("attach(dev=%s): skipping — already bound on %s",
+		    attached_ifname, already);
+		return;
+	}
+
+	if (dhcp_pick_interface(picked, sizeof(picked)) != 0) {
+		xlog("attach(dev=%s): no Ethernet visible yet via "
+		    "getifaddrs — will retry on next event",
+		    attached_ifname);
+		return;
+	}
+
+	xlog("attach(dev=%s) — running DHCP on %s",
+	    attached_ifname, picked);
+	dhcp_run_on_interface(picked, lease_cap_secs);
+}
+
 int
 main(int argc, char **argv)
 {
 	struct sigaction sa;
 	uint32_t lease_cap_secs;
+	char ifname[IFNAMSIZ] = "";
 
 	(void)argc;
 	(void)argv;
 
-	xlog("ipconfigd starting (iter 7a — MIG service + DHCPv4 + "
-	    "RFC 5227 ARP + IPv6 RA/SLAAC)");
+	xlog("ipconfigd starting (iter 9 — MIG service + DHCPv4 + "
+	    "RFC 5227 ARP + IPv6 RA/SLAAC + hwregd attach subscriber)");
 
 	lease_cap_secs = read_lease_cap_env();
 
@@ -208,6 +360,17 @@ main(int argc, char **argv)
 		xlog("mach_service_start failed; RPC off");
 
 	/*
+	 * iter 9: start the hwregd attach subscriber BEFORE the initial
+	 * DHCP attempt so a NIC that hwregd autoloads while we're
+	 * starting up still goes through on_attach_event. The
+	 * subscription itself is unconditional (success on em0 → main
+	 * thread enters lease_loop_run and never returns; subscriber
+	 * thread idles but is harmless). Failure to subscribe is
+	 * non-fatal — DHCP on the startup-path NIC still runs.
+	 */
+	(void)hwreg_subscribe_start(on_attach_event, lease_cap_secs);
+
+	/*
 	 * iter 3: full DHCPv4 INIT → BOUND on the first non-loopback
 	 * Ethernet interface (em0 in CI). dhcp_lease_acquire runs the
 	 * SELECTING → REQUESTING → BOUND state machine; apply_lease
@@ -222,145 +385,21 @@ main(int argc, char **argv)
 	 * sleep until T1, RENEWING, on fail sleep to T2, REBINDING.
 	 *
 	 * Failure does NOT exit ipconfigd — the Mach service stays
-	 * registered (iter-1 IPCFG-BOOT still passes), and a future
-	 * iter's retry logic will pick up.
+	 * registered (iter-1 IPCFG-BOOT still passes), and iter 9's
+	 * hwregd subscriber will pick up if a NIC arrives later.
 	 */
-	{
-		char ifname[IFNAMSIZ] = "";
-
-		if (dhcp_pick_interface(ifname, sizeof(ifname)) != 0) {
-			xlog("no Ethernet interface found for DHCPv4");
-			xlog("IPCFG-BOUND-FAIL");
-		} else {
-			struct dhcp_lease lease;
-
-			xlog("selected interface for DHCPv4: %s", ifname);
-			if (dhcp_lease_acquire(ifname, &lease) == 0) {
-				char a[INET_ADDRSTRLEN], m[INET_ADDRSTRLEN];
-				char r[INET_ADDRSTRLEN], s[INET_ADDRSTRLEN];
-
-				if (apply_lease(ifname, &lease) != 0) {
-					xlog("apply_lease(%s) failed",
-					    ifname);
-					xlog("IPCFG-BOUND-FAIL");
-				} else {
-					struct sc_publish *pub;
-
-					(void)inet_ntop(AF_INET,
-					    &lease.addr, a, sizeof(a));
-					(void)inet_ntop(AF_INET,
-					    &lease.netmask, m, sizeof(m));
-					(void)inet_ntop(AF_INET,
-					    &lease.router, r, sizeof(r));
-					(void)inet_ntop(AF_INET,
-					    &lease.server, s, sizeof(s));
-					xlog("bound: iface=%s addr=%s "
-					    "netmask=%s router=%s "
-					    "server=%s lease=%us",
-					    ifname, a, m, r, s,
-					    (unsigned)lease.lease_time);
-					/*
-					 * Make the lease visible to the
-					 * Mach service worker before the
-					 * BOUND marker fires — so any
-					 * client racing IPCFG-RPC-OK
-					 * against IPCFG-BOUND-OK sees the
-					 * address it expects.
-					 */
-					bound_state_set(ifname, &lease);
-					xlog("IPCFG-BOUND-OK");
-
-					/*
-					 * Publish to configd. Failure is
-					 * non-fatal: the daemon stays up,
-					 * the lease is already applied at
-					 * the kernel level, but observers
-					 * watching State:/Network/Service/.
-					 * won't see this binding. CI marker
-					 * IPCFG-STORE-FAIL flags it.
-					 */
-					pub = sc_publish_open("ipconfigd");
-					if (pub == NULL) {
-						xlog("IPCFG-STORE-FAIL: "
-						    "no configd session");
-					} else if (sc_publish_ipv4(pub,
-					    ifname, &lease) != 0) {
-						xlog("IPCFG-STORE-FAIL: "
-						    "set State:/.../IPv4");
-					} else {
-						struct ra_info ra;
-						int rar;
-
-						xlog("IPCFG-STORE-OK");
-
-						/*
-						 * iter 7a: solicit + listen for
-						 * one RA, derive a SLAAC address,
-						 * install it + the v6 default
-						 * route, and publish State:/.../
-						 * IPv6. 15s budget — QEMU SLIRP
-						 * answers within ms, so a miss
-						 * means RA isn't configured;
-						 * we log IPCFG-RA-MISS and
-						 * continue with IPv4 only.
-						 *
-						 * Round-1 CI showed em0 has
-						 * ND6_IFF_IFDISABLED set (this
-						 * image's net.inet6.ip6.auto_
-						 * linklocal is 0, so the kernel
-						 * never auto-added a link-local).
-						 * bring_v6_up clears IFDISABLED
-						 * and installs fe80::EUI-64 so
-						 * the kernel can source-select
-						 * the link-local-scoped RS.
-						 */
-						(void)bring_v6_up(ifname);
-						rar = ra_acquire(ifname,
-						    15000, &ra);
-						if (rar == 0) {
-							struct in6_addr v6;
-
-							if (apply_ra_lease(
-							    ifname, &ra,
-							    &v6) == 0) {
-								(void)
-								sc_publish_ipv6(
-								    pub, ifname,
-								    &v6,
-								    ra.prefix_len,
-								    &ra.router_lladdr);
-								xlog("IPCFG-RA-OK");
-							} else {
-								xlog("IPCFG-RA-MISS: "
-								    "apply_ra_lease failed");
-							}
-						} else if (rar == 1) {
-							xlog("IPCFG-RA-MISS: "
-							    "no RA in 15s "
-							    "(SLIRP may not "
-							    "advertise IPv6)");
-						} else {
-							xlog("IPCFG-RA-MISS: "
-							    "ra_acquire fatal");
-						}
-
-						(void)lease_loop_run(ifname,
-						    &lease, pub,
-						    lease_cap_secs);
-					}
-					if (pub != NULL)
-						sc_publish_close(pub);
-				}
-			}
-			/* failure case: dhcp_lease_acquire already logged
-			 * the marker on its own line */
-		}
+	if (dhcp_pick_interface(ifname, sizeof(ifname)) != 0) {
+		xlog("no Ethernet interface found for DHCPv4 at startup "
+		    "— waiting for hwregd attach event");
+		xlog("IPCFG-BOUND-FAIL");
+	} else {
+		dhcp_run_on_interface(ifname, lease_cap_secs);
 	}
 
 	/*
-	 * Hold the daemon alive. iter 1/2 have no MIG demux; later
-	 * iters replace this loop with a mach_msg(MACH_RCV_MSG ...)
-	 * receive over the service port (the configd / hwregd shape).
+	 * Hold the daemon alive after a failed startup DHCP (or after
+	 * lease_loop_run unexpectedly returns). The hwregd subscriber
+	 * thread is still listening and will run DHCP if a NIC arrives.
 	 */
 	while (!got_term) {
 		(void)sleep(60);
