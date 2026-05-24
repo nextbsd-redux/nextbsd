@@ -17,16 +17,20 @@
  * receive EVENT messages. launchd HardwareMatch will be one client.
  *
  * Backlog vs. live: at startup the kernel hands hwregd a backlog of
- * `?` events buffered from early boot. kldload'ing for those wedged
- * the CI boot test — a matched driver's attach() then runs mid-boot
- * under kernel locks (the CI VM's offender was the ICH SMBus
- * controller -> ichsmb). So hwregd kldloads only for *live* events:
- * for HWREGD_SETTLE_SECONDS after startup it match-and-logs every
- * nomatch, then flips to live mode and kldloads on each subsequent
- * nomatch. The window is time-based, not "until devctl goes quiet" —
- * a chronically noisy devctl (e.g. a flaky drive spamming CAM error
- * events) must not pin hwregd in backlog mode forever. Boot-time
- * drivers are the loader's job; hot-plug is hwregd's.
+ * `?` events buffered from early boot. kldload'ing those mid-boot
+ * wedged the CI boot test — a matched driver's attach() then runs
+ * under kernel locks the boot probe still holds (the CI VM's
+ * offender was the ICH SMBus controller -> ichsmb). So hwregd waits
+ * out a settle window before touching the kernel: for the first
+ * HWREGD_SETTLE_SECONDS of uptime, each nomatch is match-and-logged
+ * and the claiming module is queued (deduped) in a small in-process
+ * list; on the flip to live mode the queue is drained with kldload(2)
+ * in one pass, then each subsequent nomatch is kldload'd inline.
+ * The window is time-based, not "until devctl goes quiet" — a
+ * chronically noisy devctl (e.g. a flaky drive spamming CAM error
+ * events) must not pin hwregd in backlog mode forever. By the time
+ * the window elapses the kernel's boot-time device probe is done,
+ * so the deferred attach()es no longer contend with it.
  *
  * The hints-matching machinery — read_linker_hints / search_hints
  * and the pnpinfo helpers (getint, getstr, pnpval_as_int,
@@ -170,10 +174,25 @@ static void *hints_end;
 
 /*
  * false for the first HWREGD_SETTLE_SECONDS of uptime (the boot-
- * settle window). hwregd kldloads only in live mode; matches during
- * the window are logged but not loaded — see act_on_match().
+ * settle window). hwregd kldloads inline only in live mode; matches
+ * during the window are logged + queued in deferred_mods[] and then
+ * drained in one pass at the flip — see act_on_match() and
+ * drain_deferred_loads().
  */
 static bool live_mode = false;
+
+/*
+ * Backlog-of-matches queue. During the settle window each module
+ * name a nomatch resolves to is appended here (deduped). At the flip
+ * to live mode drain_deferred_loads() walks the queue and kldload(2)s
+ * each entry. 64 slots × 32 bytes = 2 KiB — comfortably more than the
+ * handful of PCI/USB device classes typical hardware needs a driver
+ * for at boot.
+ */
+#define HWREGD_DEFERRED_MAX	64
+#define HWREGD_DEFERRED_MODLEN	32
+static char	deferred_mods[HWREGD_DEFERRED_MAX][HWREGD_DEFERRED_MODLEN];
+static int	n_deferred;
 
 static void
 on_signal(int sig)
@@ -364,12 +383,37 @@ notify_watchers(char kind, const char *devname)
 }
 
 /*
+ * Append `mod` to the deferred backlog queue, deduping by name. Used
+ * during the settle window so we don't kldload(2) mid-boot; the queue
+ * is drained at the flip to live mode by drain_deferred_loads().
+ */
+static void
+defer_match(const char *mod)
+{
+	int i;
+
+	for (i = 0; i < n_deferred; i++) {
+		if (strcmp(deferred_mods[i], mod) == 0)
+			return;
+	}
+	if (n_deferred >= HWREGD_DEFERRED_MAX) {
+		xlog("deferred backlog full (%d slots) — dropping '%s'",
+		    HWREGD_DEFERRED_MAX, mod);
+		return;
+	}
+	strlcpy(deferred_mods[n_deferred], mod,
+	    sizeof(deferred_mods[n_deferred]));
+	n_deferred++;
+}
+
+/*
  * Act on a module that linker.hints says claims a nomatched device.
  * "kernel" is the pseudo-module for built-in drivers — nothing to
- * load. In live mode (hot-plug) the module is kldload(2)ed; during
- * the boot backlog it is only logged — kldloading mid-boot wedges
- * the boot (a driver attach runs under kernel locks; see the file
- * header). EEXIST (already loaded) is a normal, expected outcome.
+ * load. In live mode (hot-plug) the module is kldload(2)ed inline;
+ * during the boot backlog the module name is queued for the drain
+ * at live-mode flip — kldloading mid-boot wedges the boot (a driver
+ * attach runs under kernel locks; see the file header). EEXIST
+ * (already loaded) is a normal, expected outcome.
  */
 static void
 act_on_match(const char *mod)
@@ -379,7 +423,8 @@ act_on_match(const char *mod)
 
 	if (!live_mode) {
 		xlog("match: module '%s' claims this device "
-		    "(boot backlog — not loaded)", mod);
+		    "(boot backlog — queued for autoload)", mod);
+		defer_match(mod);
 		return;
 	}
 
@@ -391,6 +436,43 @@ act_on_match(const char *mod)
 	} else {
 		xlog("kldload(%s): loaded", mod);
 	}
+}
+
+/*
+ * Drain the boot-backlog deferred-match queue: kldload(2) each unique
+ * module a settle-window nomatch resolved to. Called exactly once at
+ * the flip to live mode; the kernel's boot probe is done by then so
+ * the driver attach()es no longer contend with it. The function emits
+ * the HWREG-AUTOLOAD-OK marker unconditionally (even when the queue
+ * is empty — common in QEMU/SLIRP where every CI device already has
+ * a built-in driver) so CI can prove the drain ran.
+ */
+static void
+drain_deferred_loads(void)
+{
+	int i, loaded = 0, existing = 0, failed = 0;
+
+	xlog("draining %d deferred boot-backlog match(es)", n_deferred);
+	for (i = 0; i < n_deferred; i++) {
+		if (kldload(deferred_mods[i]) < 0) {
+			if (errno == EEXIST) {
+				xlog("kldload(%s): already loaded",
+				    deferred_mods[i]);
+				existing++;
+			} else {
+				xlog("kldload(%s) failed: %s",
+				    deferred_mods[i], strerror(errno));
+				failed++;
+			}
+		} else {
+			xlog("kldload(%s): loaded", deferred_mods[i]);
+			loaded++;
+		}
+	}
+	n_deferred = 0;
+	xlog("HWREG-AUTOLOAD-OK: drained queue "
+	    "(loaded=%d already=%d failed=%d)",
+	    loaded, existing, failed);
 }
 
 /* --- linker.hints reader (ported from devmatch.c) ----------------- */
@@ -1534,6 +1616,7 @@ main(int argc, char **argv)
 			live_mode = true;
 			xlog("boot-settle window (%ds) elapsed — live mode: "
 			    "hot-plug autoload enabled", HWREGD_SETTLE_SECONDS);
+			drain_deferred_loads();
 		}
 
 		fd_set rfds;
