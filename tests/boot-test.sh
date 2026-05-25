@@ -974,19 +974,22 @@ expect {
     }
 }
 
-# HOSTNAME-CHECK — issue #63 baseline. Observation-only: the marker
-# must appear (so we catch a run.sh regression that drops the line),
-# but the *value* is not asserted yet because hostnamed iter 1 hasn't
-# landed. The full "HOSTNAME-CHECK: <name>" line is in the CI log via
-# log_user 1; today that name is "Amnesiac", and after #63 ships a
-# follow-up tightens this to reject "Amnesiac".
+# HOSTNAMED — issue #63 iter 1 gate. hostnametest reads ComputerName
+# back from Setup:/System, HostName + LocalHostName from
+# Setup:/Network/HostNames, and gethostname(3) from the kernel; emits
+# HOSTNAMED-OK only when all three agree AND the value isn't
+# "Amnesiac". HOSTNAMED-FAIL fires on any mismatch / unset / placeholder.
 expect {
     timeout {
-        puts "\nFAIL: HOSTNAME-CHECK marker not seen"
+        puts "\nFAIL: HOSTNAMED marker not seen"
         exit 1
     }
-    "HOSTNAME-CHECK:" {
-        puts "\nOK: HOSTNAME-CHECK marker present (value observation-only until #63 lands)"
+    "HOSTNAMED-FAIL" {
+        puts "\nFAIL: hostnamed did not publish a usable hostname"
+        exit 1
+    }
+    "HOSTNAMED-OK" {
+        puts "\nOK: hostnamed synthesized + published (SCDynamicStore + kernel agree, value != Amnesiac)"
     }
 }
 

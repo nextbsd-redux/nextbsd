@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.apple.hostnamed</string>
+
+	<!-- One-shot at boot. iter 1 synthesizes the hostname, publishes
+	     it to SCDynamicStore + kernel + notifyd, then exits. No
+	     persistent loop, no MachServices (no RPC surface yet — iter 3+
+	     adds SCPreferences integration). KeepAlive=false so launchd
+	     doesn't keep relaunching the one-shot.
+
+	     Plan: https://pkgdemon.github.io/freebsd-hostnamed-plan.html
+	     Issue: #63 -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/sbin/hostnamed</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<false/>
+
+	<!-- Capture stderr for post-mortem + the HOSTNAMED-OK marker
+	     visibility from the on-image test runner. -->
+	<key>StandardErrorPath</key>
+	<string>/var/log/hostnamed.stderr</string>
+	<key>StandardOutPath</key>
+	<string>/var/log/hostnamed.stderr</string>
+
+	<!-- System session — runs as root before any user logs in. Same
+	     scope as configd / hwregd / notifyd / mDNSResponder. -->
+	<key>LimitLoadToSessionType</key>
+	<string>System</string>
+</dict>
+</plist>

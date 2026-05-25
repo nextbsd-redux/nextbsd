@@ -935,12 +935,23 @@ else
     esac
 fi
 
-# HOSTNAME-CHECK — issue #63 baseline. Today no hostnamed runs at boot
-# so this prints "Amnesiac" (FreeBSD's default-unset placeholder); after
-# hostnamed iter 1 lands it should print the synthesized hostname. The
-# marker is observation-only here so this lands ahead of the daemon —
-# boot-test.sh requires the marker but does not assert on the value.
-hostname_now=$(hostname 2>/dev/null || echo "<hostname(1) failed>")
-echo "HOSTNAME-CHECK: ${hostname_now}"
+# HOSTNAMED — issue #63 iter 1. hostnamed is a one-shot RunAtLoad
+# daemon (com.apple.hostnamed.plist) that has already fired by the
+# time we reach this point in run.sh. Echo the kernel hostname for
+# visibility, dump the daemon's stderr for post-mortem, then run
+# hostnametest to verify the SCDynamicStore round-trip + that
+# gethostname(3) is no longer "Amnesiac". The HOSTNAMED-OK /
+# HOSTNAMED-FAIL marker comes from hostnametest itself.
+echo "==> hostnamed: kernel hostname now '$(hostname 2>/dev/null)'"
+if [ -f /var/log/hostnamed.stderr ]; then
+    echo "--- /var/log/hostnamed.stderr ---"
+    cat /var/log/hostnamed.stderr
+    echo "--- end hostnamed.stderr ---"
+fi
+if [ -x /usr/tests/freebsd-launchd-mach/hostnametest ]; then
+    /usr/tests/freebsd-launchd-mach/hostnametest
+else
+    echo "HOSTNAMED-FAIL: hostnametest binary not installed"
+fi
 
 exit 0

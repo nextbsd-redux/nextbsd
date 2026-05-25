@@ -1855,6 +1855,42 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/datest" \
 echo "==> diskarbitrationd + datest built"
 
 #
+# 3x. Phase K hostnamed iter 1 — synthesize + publish hostname at boot.
+#     Replaces FreeBSD's "Amnesiac" default-unset placeholder. One-shot
+#     daemon (RunAtLoad / KeepAlive=false): reads SMBIOS + NIC MAC +
+#     kern.hostuuid, composes "${slug}-${suffix}", publishes to
+#     SCDynamicStore Setup:/System + Setup:/Network/HostNames,
+#     sethostname(2), notify_post("com.apple.system.hostname"). No MIG
+#     surface (no RPC) — same shape minus the bootstrap_check_in loop.
+#     Plan: pkgdemon.github.io/freebsd-hostnamed-plan.html  (issue #63)
+#
+echo "==> Phase K: building hostnamed (src/hostnamed)"
+make -C "$ROOT/src/hostnamed" \
+     DESTDIR="$WORK/rootfs" \
+     SYSROOT="$WORK/rootfs" \
+     all install
+test -x "$WORK/rootfs/usr/sbin/hostnamed" \
+    || { echo "FAIL: /usr/sbin/hostnamed not installed or not executable"; exit 1; }
+
+# hostnametest — readback smoke test. Reads ComputerName + HostName +
+# LocalHostName back from SCDynamicStore and asserts gethostname(3) is
+# not "Amnesiac". Emits the HOSTNAMED-OK / HOSTNAMED-FAIL marker that
+# tests/boot-test.sh gates on.
+echo "==> building hostnametest"
+cc -I"$ROOT/src/launchd/liblaunch" \
+   -I"$ROOT/src/launchd/freebsd-shims" \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hostnametest" \
+   "$ROOT/src/hostnamed/hostnametest.c" \
+   -lSystemConfiguration -lCoreFoundation -ldispatch -lBlocksRuntime \
+   -lsystem_kernel -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hostnametest" \
+    || { echo "FAIL: hostnametest not built"; exit 1; }
+echo "==> hostnamed + hostnametest built"
+
+#
 # 3z. purge build packages + clean pkg cache + tear down chroot.
 #     Runs LAST in the build phase, after every chroot-side build
 #     (libdispatch) has used cmake/ninja/clang. Build pkgs (cmake/ninja
