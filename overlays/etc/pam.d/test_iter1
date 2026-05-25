@@ -1,0 +1,10 @@
+# test_iter1 — fixture PAM service for the iter-1 ABI test
+# (pamframeworktest, issue #93). One module in the auth stack:
+# pam_deny.so always returns PAM_AUTH_ERR. Used only by
+# /usr/tests/freebsd-launchd-mach/pamframeworktest to prove our
+# vendored Apple OpenPAM-35 libpam.so.6 can dlopen our vendored
+# pam_deny.so via /usr/lib/pam/ and the full ABI round-trips.
+auth	required	pam_deny.so
+account	required	pam_deny.so
+session	required	pam_deny.so
+password	required	pam_deny.so
