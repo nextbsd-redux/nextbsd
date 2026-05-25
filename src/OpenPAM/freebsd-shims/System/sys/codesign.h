@@ -35,6 +35,8 @@
 
 /* Apple flag bits OpenPAM may reference. Same rationale. */
 #define CS_REQUIRE_LV		0x00002000
+#define CS_FORCED_LV		0x00000010
+#define CS_INSTALLER		0x00000008
 #define CS_VALID		0x00000001
 #define CS_HARD			0x00000100
 #define CS_KILL			0x00000200
