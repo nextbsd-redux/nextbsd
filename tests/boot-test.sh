@@ -974,6 +974,25 @@ expect {
     }
 }
 
+# HOSTNAMED — issue #63 iter 1 gate. hostnametest reads ComputerName
+# back from Setup:/System, HostName + LocalHostName from
+# Setup:/Network/HostNames, and gethostname(3) from the kernel; emits
+# HOSTNAMED-OK only when all three agree AND the value isn't
+# "Amnesiac". HOSTNAMED-FAIL fires on any mismatch / unset / placeholder.
+expect {
+    timeout {
+        puts "\nFAIL: HOSTNAMED marker not seen"
+        exit 1
+    }
+    "HOSTNAMED-FAIL" {
+        puts "\nFAIL: hostnamed did not publish a usable hostname"
+        exit 1
+    }
+    "HOSTNAMED-OK" {
+        puts "\nOK: hostnamed synthesized + published (SCDynamicStore + kernel agree, value != Amnesiac)"
+    }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"
