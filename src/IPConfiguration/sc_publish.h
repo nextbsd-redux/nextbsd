@@ -55,6 +55,21 @@ int	sc_publish_ipv6(struct sc_publish *p, const char *ifname,
 	    const struct in6_addr *router_lladdr);
 
 /*
+ * Publish DHCP state under State:/Network/Service/<UUID>/DHCP. Mirrors
+ * Apple's IPMonitor DHCP-options dict shape: per-option entries keyed
+ * "Option_<N>" (CFData on Apple; CFString for printable options like
+ * 12 here so consumers — hostnamed iter 3, mDNSResponder — can read
+ * directly without re-decoding), plus LeaseStartTime (CFNumber,
+ * CLOCK_MONOTONIC seconds at bind). Issue #88.
+ *
+ * The /DHCP key is always set on BOUND (so observers can subscribe to
+ * its appearance), but Option_12 entries only land when the lease
+ * actually carried a server-supplied host name. Returns 0 on success.
+ */
+int	sc_publish_dhcp(struct sc_publish *p, const char *ifname,
+	    const struct dhcp_lease *lease);
+
+/*
  * Remove the previously-published keys for `ifname`. Called on
  * lease loss (REBINDING also fails) so observers see the service
  * transition to "no v4".

@@ -29,6 +29,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>		/* clock_gettime(CLOCK_MONOTONIC) for /DHCP LeaseStartTime */
 #include <string.h>
 
 struct sc_publish {
@@ -268,6 +269,77 @@ sc_publish_ipv4(struct sc_publish *p, const char *ifname,
 		if (!ok)
 			xlog("SCDynamicStoreSetValue(DNS) failed: %s",
 			    SCErrorString(SCError()));
+	}
+	return (0);
+}
+
+int
+sc_publish_dhcp(struct sc_publish *p, const char *ifname,
+    const struct dhcp_lease *lease)
+{
+	CFMutableDictionaryRef dict;
+	CFStringRef key, k_lease, k_iface, k_opt12;
+	CFStringRef iface_str, host_str;
+	CFNumberRef lease_num;
+	struct timespec ts;
+	int32_t lease_start;
+	Boolean ok;
+
+	if (p == NULL || p->store == NULL || lease == NULL)
+		return (-1);
+
+	dict = CFDictionaryCreateMutable(NULL, 0,
+	    &kCFTypeDictionaryKeyCallBacks,
+	    &kCFTypeDictionaryValueCallBacks);
+	if (dict == NULL)
+		return (-1);
+
+	/* InterfaceName + LeaseStartTime are always set so the dict is
+	 * never empty — observers can watch for the /DHCP key to appear
+	 * even on a lease that didn't carry Option_12. LeaseStartTime is
+	 * CLOCK_MONOTONIC seconds at bind, matching what bound_state.c
+	 * already tracks; SCPrefs / IPMonitor consumers don't depend on
+	 * absolute wall-clock here. */
+	k_iface = mkstr("InterfaceName");
+	k_lease = mkstr("LeaseStartTime");
+	iface_str = mkstr(ifname);
+	(void)clock_gettime(CLOCK_MONOTONIC, &ts);
+	lease_start = (int32_t)ts.tv_sec;
+	lease_num = CFNumberCreate(NULL, kCFNumberSInt32Type, &lease_start);
+
+	if (k_iface != NULL && k_lease != NULL && iface_str != NULL &&
+	    lease_num != NULL) {
+		CFDictionarySetValue(dict, k_iface, iface_str);
+		CFDictionarySetValue(dict, k_lease, lease_num);
+	}
+
+	/* Option_12 (host name) — only added when the lease carried it.
+	 * Stored as CFString rather than CFData since the option is
+	 * printable per RFC 2132 §3.14 and hostnamed iter 3 reads it as
+	 * a string. Issue #88. */
+	k_opt12 = mkstr("Option_12");
+	host_str = NULL;
+	if (lease->host_name_len > 0 && k_opt12 != NULL) {
+		host_str = mkstr(lease->host_name);
+		if (host_str != NULL)
+			CFDictionarySetValue(dict, k_opt12, host_str);
+	}
+
+	key = make_key(ifname, "DHCP");
+	ok = SCDynamicStoreSetValue(p->store, key, dict);
+	CFRelease(key);
+	CFRelease(dict);
+	if (host_str != NULL) CFRelease(host_str);
+	if (k_opt12 != NULL) CFRelease(k_opt12);
+	if (lease_num != NULL) CFRelease(lease_num);
+	if (iface_str != NULL) CFRelease(iface_str);
+	if (k_lease != NULL) CFRelease(k_lease);
+	if (k_iface != NULL) CFRelease(k_iface);
+
+	if (!ok) {
+		xlog("SCDynamicStoreSetValue(DHCP) failed: %s",
+		    SCErrorString(SCError()));
+		return (-1);
 	}
 	return (0);
 }

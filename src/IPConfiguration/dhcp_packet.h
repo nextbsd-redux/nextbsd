@@ -79,6 +79,10 @@ struct dhcp {
  */
 #define DHCP_LEASE_MAX_DNS	4
 
+/* DHCP option 12 max length per RFC 2132 §3.14. +1 for terminating NUL
+ * so the buffer is always safe to pass to printf / strncpy. */
+#define DHCP_LEASE_MAX_HOSTNAME	256
+
 struct dhcp_lease {
 	struct in_addr	addr;		/* yiaddr from the ACK */
 	struct in_addr	netmask;	/* option 1 (default 255.0.0.0) */
@@ -87,6 +91,12 @@ struct dhcp_lease {
 	uint32_t	lease_time;	/* option 51 (seconds) */
 	struct in_addr	dns[DHCP_LEASE_MAX_DNS];
 	unsigned	dns_count;
+	/* Option 12 host name — server-supplied client name. Issue #88;
+	 * hostnamed iter 3 reads State:/Network/Service/<UUID>/DHCP/Option_12
+	 * to fold this into its precedence chain. host_name_len = 0 means
+	 * the option was absent from the lease. */
+	char		host_name[DHCP_LEASE_MAX_HOSTNAME];
+	unsigned	host_name_len;
 };
 
 #endif /* _IPCFG_DHCP_PACKET_H_ */
