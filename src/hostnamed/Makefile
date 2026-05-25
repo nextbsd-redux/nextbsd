@@ -25,15 +25,21 @@ SRCS=		hostnamed.c
 WARNS=		0
 NO_MAN=		yes
 
-CFLAGS+=	-O2 -pipe
+# -fblocks: CoreFoundation public headers (CFCalendarPriv.h,
+# ForSwiftFoundationOnly.h) declare block-typed APIs and refuse to
+# compile without it. Same flag IPConfiguration / configd use.
+CFLAGS+=	-O2 -pipe -fblocks
 CFLAGS+=	-Wall -Wextra -Wshadow -Wstrict-prototypes
 CFLAGS+=	-Wmissing-prototypes -Wpointer-arith
 
-# liblaunch / freebsd-shims pulled for parity with other daemons even
+# liblaunch / launchd-shims pulled for parity with other daemons even
 # though iter 1 doesn't call bootstrap_check_in — the CF umbrella
-# transitively wants the same shim availability macros.
+# transitively wants the same shim availability macros. libnotify
+# freebsd-shims provides os/base.h, which notify.h includes for the
+# Apple os/object.h ABI; notifyd / syslogd take the same -I path.
 CFLAGS+=	-I${.CURDIR}/../launchd/liblaunch
 CFLAGS+=	-I${.CURDIR}/../launchd/freebsd-shims
+CFLAGS+=	-I${.CURDIR}/../libnotify/freebsd-shims
 
 SYSROOT?=
 .if !empty(SYSROOT)

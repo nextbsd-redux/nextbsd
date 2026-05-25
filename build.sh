@@ -1877,7 +1877,11 @@ test -x "$WORK/rootfs/usr/sbin/hostnamed" \
 # not "Amnesiac". Emits the HOSTNAMED-OK / HOSTNAMED-FAIL marker that
 # tests/boot-test.sh gates on.
 echo "==> building hostnametest"
-cc -I"$ROOT/src/launchd/liblaunch" \
+# -fblocks: CF umbrella headers (CFCalendarPriv.h, ForSwiftFoundationOnly.h)
+# declare block-typed APIs and require it. Same fix carried in the
+# IPConfiguration / configd / hostnamed Makefiles.
+cc -fblocks \
+   -I"$ROOT/src/launchd/liblaunch" \
    -I"$ROOT/src/launchd/freebsd-shims" \
    -I"$WORK/rootfs/usr/include" \
    -L"$WORK/rootfs/usr/lib/system" \
