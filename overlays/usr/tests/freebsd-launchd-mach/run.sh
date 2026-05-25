@@ -935,4 +935,12 @@ else
     esac
 fi
 
+# HOSTNAME-CHECK — issue #63 baseline. Today no hostnamed runs at boot
+# so this prints "Amnesiac" (FreeBSD's default-unset placeholder); after
+# hostnamed iter 1 lands it should print the synthesized hostname. The
+# marker is observation-only here so this lands ahead of the daemon —
+# boot-test.sh requires the marker but does not assert on the value.
+hostname_now=$(hostname 2>/dev/null || echo "<hostname(1) failed>")
+echo "HOSTNAME-CHECK: ${hostname_now}"
+
 exit 0

@@ -974,6 +974,22 @@ expect {
     }
 }
 
+# HOSTNAME-CHECK — issue #63 baseline. Observation-only: the marker
+# must appear (so we catch a run.sh regression that drops the line),
+# but the *value* is not asserted yet because hostnamed iter 1 hasn't
+# landed. The full "HOSTNAME-CHECK: <name>" line is in the CI log via
+# log_user 1; today that name is "Amnesiac", and after #63 ships a
+# follow-up tightens this to reject "Amnesiac".
+expect {
+    timeout {
+        puts "\nFAIL: HOSTNAME-CHECK marker not seen"
+        exit 1
+    }
+    "HOSTNAME-CHECK:" {
+        puts "\nOK: HOSTNAME-CHECK marker present (value observation-only until #63 lands)"
+    }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"
