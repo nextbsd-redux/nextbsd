@@ -40,6 +40,7 @@ CFLAGS_COMMON =	-fPIC -O2 -pipe \
 		-I${.CURDIR}/openpam \
 		-I${.CURDIR}/openpam/include \
 		-I${.CURDIR}/openpam/lib \
+		-I${.CURDIR}/freebsd-shims \
 		-DHAVE_CONFIG_H \
 		-DLT_OBJDIR='"libs/"'
 
