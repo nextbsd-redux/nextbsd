@@ -490,6 +490,20 @@ parse_dhcp_reply(const uint8_t *frame, size_t frame_len,
 		lease->dns_count = n;
 	}
 
+	/* 12 host name — server-supplied client name. Per RFC 2132 §3.14
+	 * this is a plain string (NOT NUL-terminated on the wire). Truncate
+	 * any over-length value to DHCP_LEASE_MAX_HOSTNAME - 1 so we keep
+	 * room for a terminator; sc_publish_dhcp converts to CFString.
+	 * Issue #88. */
+	v = dhcp_option(opts, opts_len, DHCP_OPT_HOST_NAME, &l);
+	if (v != NULL && l > 0) {
+		unsigned n = (l < DHCP_LEASE_MAX_HOSTNAME - 1)
+		    ? (unsigned)l : (DHCP_LEASE_MAX_HOSTNAME - 1);
+		(void)memcpy(lease->host_name, v, n);
+		lease->host_name[n] = '\0';
+		lease->host_name_len = n;
+	}
+
 	return (1);
 }
 

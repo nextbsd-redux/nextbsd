@@ -809,6 +809,25 @@ expect {
     }
 }
 
+# IPCFG-DHCP — issue #88. ipconfigd publishes State:/Network/Service/<UUID>/DHCP
+# carrying InterfaceName + LeaseStartTime (always), and Option_12
+# (host name, only when the lease supplied it). SLIRP doesn't ship
+# Option_12 so the marker just proves the dict shape is correct;
+# hostnamed iter 3 is the first consumer that reads the value.
+expect {
+    timeout {
+        puts "\nFAIL: IPCFG-DHCP marker not seen"
+        exit 1
+    }
+    "IPCFG-DHCP-FAIL" {
+        puts "\nFAIL: ipconfigd /DHCP publish failed"
+        exit 1
+    }
+    "IPCFG-DHCP-OK" {
+        puts "\nOK: ipconfigd published State:/Network/Service/.../DHCP (consumer surface for hostnamed iter 3)"
+    }
+}
+
 # IPCFG-RA — iter 7a IPv6 Router Advertisement + SLAAC. ipconfigd
 # sends an ND_ROUTER_SOLICIT to ff02::2 on em0, waits up to 15s for
 # an RA, derives a SLAAC address (EUI-64 over the PIO's prefix),

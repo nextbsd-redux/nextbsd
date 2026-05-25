@@ -240,6 +240,23 @@ dhcp_run_on_interface(const char *ifname, uint32_t lease_cap_secs)
 	xlog("IPCFG-STORE-OK");
 
 	/*
+	 * Issue #88: publish State:/Network/Service/<UUID>/DHCP carrying
+	 * InterfaceName + LeaseStartTime, and Option_12 (host name) when
+	 * the lease supplied it. SLIRP doesn't ship Option_12 so the
+	 * marker proves the key/dict shape is correct; hostnamed iter 3
+	 * is the first consumer that reads it. Failure is non-fatal —
+	 * the IPv4 publish already succeeded.
+	 */
+	if (sc_publish_dhcp(pub, ifname, &lease) != 0) {
+		xlog("IPCFG-DHCP-FAIL: set State:/.../DHCP");
+	} else {
+		xlog("IPCFG-DHCP-OK: published /DHCP "
+		    "(Option_12 %s)",
+		    lease.host_name_len > 0
+		        ? lease.host_name : "absent");
+	}
+
+	/*
 	 * iter 7a: solicit + listen for one RA, derive a SLAAC address,
 	 * install it + the v6 default route, and publish
 	 * State:/.../IPv6. 15s budget — QEMU SLIRP answers within ms,

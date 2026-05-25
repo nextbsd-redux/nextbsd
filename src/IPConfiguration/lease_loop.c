@@ -116,9 +116,15 @@ lease_loop_run(const char *ifname, struct dhcp_lease *lease,
 			*lease = renewed;
 			lease_secs = cap_lease(lease->lease_time,
 			    lease_cap_secs);
-			if (pub != NULL &&
-			    sc_publish_ipv4(pub, ifname, lease) != 0)
-				xlog("RENEWING: re-publish failed (continuing)");
+			if (pub != NULL) {
+				if (sc_publish_ipv4(pub, ifname, lease) != 0)
+					xlog("RENEWING: re-publish failed (continuing)");
+				/* Issue #88: refresh /DHCP on renewal so
+				 * LeaseStartTime advances and Option_12
+				 * tracks any server-side change. */
+				if (sc_publish_dhcp(pub, ifname, lease) != 0)
+					xlog("RENEWING: /DHCP re-publish failed (continuing)");
+			}
 			xlog("RENEWING -> BOUND (server lease=%us, "
 			    "effective=%us)",
 			    (unsigned)lease->lease_time, lease_secs);
@@ -139,9 +145,12 @@ lease_loop_run(const char *ifname, struct dhcp_lease *lease,
 			*lease = renewed;
 			lease_secs = cap_lease(lease->lease_time,
 			    lease_cap_secs);
-			if (pub != NULL &&
-			    sc_publish_ipv4(pub, ifname, lease) != 0)
-				xlog("REBINDING: re-publish failed (continuing)");
+			if (pub != NULL) {
+				if (sc_publish_ipv4(pub, ifname, lease) != 0)
+					xlog("REBINDING: re-publish failed (continuing)");
+				if (sc_publish_dhcp(pub, ifname, lease) != 0)
+					xlog("REBINDING: /DHCP re-publish failed (continuing)");
+			}
 			xlog("REBINDING -> BOUND (server lease=%us, "
 			    "effective=%us)",
 			    (unsigned)lease->lease_time, lease_secs);
