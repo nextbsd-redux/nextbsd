@@ -82,72 +82,107 @@ out:
 }
 
 int
-main(void)
+main(int argc, char **argv)
 {
 	SCDynamicStoreRef store = NULL;
 	CFStringRef session = NULL;
 	char *cn = NULL, *hn = NULL, *lhn = NULL;
 	char kn[KERN_LIMIT];
+	const char *expected;
+	const char *ok_marker, *fail_marker, *mode_label;
 	int rc = 1;
+
+	/*
+	 * Two modes:
+	 *   hostnametest                — iter 1 regression check: verify
+	 *                                 sources agree AND value isn't
+	 *                                 "Amnesiac". Emits HOSTNAMED-OK /
+	 *                                 HOSTNAMED-FAIL.
+	 *   hostnametest <expected>     — iter 2 (issue #86) Tier-2 read
+	 *                                 check: verify sources agree AND
+	 *                                 the published value equals
+	 *                                 <expected> (the fixture that
+	 *                                 hostnameprefset wrote to SCPrefs
+	 *                                 before hostnamed ran). Emits
+	 *                                 HOSTNAMED-PREFS-OK /
+	 *                                 HOSTNAMED-PREFS-FAIL.
+	 */
+	expected = (argc == 2) ? argv[1] : NULL;
+	if (expected != NULL) {
+		ok_marker   = "HOSTNAMED-PREFS-OK";
+		fail_marker = "HOSTNAMED-PREFS-FAIL";
+		mode_label  = "iter 2 SCPrefs read";
+	} else {
+		ok_marker   = "HOSTNAMED-OK";
+		fail_marker = "HOSTNAMED-FAIL";
+		mode_label  = "iter 1 synthesis";
+	}
 
 	session = CFStringCreateWithCString(NULL, "hostnametest",
 	    kCFStringEncodingUTF8);
 	if (session == NULL) {
-		(void)printf("HOSTNAMED-FAIL: CFStringCreate(session)\n");
+		(void)printf("%s: CFStringCreate(session)\n", fail_marker);
 		goto out;
 	}
 	store = SCDynamicStoreCreate(NULL, session, NULL, NULL);
 	if (store == NULL) {
-		(void)printf("HOSTNAMED-FAIL: SCDynamicStoreCreate "
-		    "(configd unreachable?)\n");
+		(void)printf("%s: SCDynamicStoreCreate "
+		    "(configd unreachable?)\n", fail_marker);
 		goto out;
 	}
 
 	cn = read_dict_string(store, "Setup:/System", "ComputerName");
 	if (cn == NULL || cn[0] == '\0') {
-		(void)printf("HOSTNAMED-FAIL: Setup:/System missing "
-		    "ComputerName\n");
+		(void)printf("%s: Setup:/System missing ComputerName\n",
+		    fail_marker);
 		goto out;
 	}
 
 	hn = read_dict_string(store, "Setup:/Network/HostNames", "HostName");
 	if (hn == NULL || hn[0] == '\0') {
-		(void)printf("HOSTNAMED-FAIL: Setup:/Network/HostNames "
-		    "missing HostName\n");
+		(void)printf("%s: Setup:/Network/HostNames missing "
+		    "HostName\n", fail_marker);
 		goto out;
 	}
 
 	lhn = read_dict_string(store, "Setup:/Network/HostNames",
 	    "LocalHostName");
 	if (lhn == NULL || lhn[0] == '\0') {
-		(void)printf("HOSTNAMED-FAIL: Setup:/Network/HostNames "
-		    "missing LocalHostName\n");
+		(void)printf("%s: Setup:/Network/HostNames missing "
+		    "LocalHostName\n", fail_marker);
 		goto out;
 	}
 
 	if (gethostname(kn, sizeof(kn)) != 0 || kn[0] == '\0') {
-		(void)printf("HOSTNAMED-FAIL: gethostname(3) returned "
-		    "nothing\n");
+		(void)printf("%s: gethostname(3) returned nothing\n",
+		    fail_marker);
 		goto out;
 	}
-	if (strcmp(kn, "Amnesiac") == 0) {
-		(void)printf("HOSTNAMED-FAIL: gethostname(3) still "
-		    "'Amnesiac' — hostnamed did not run or sethostname(2) "
-		    "failed\n");
+	if (expected == NULL && strcmp(kn, "Amnesiac") == 0) {
+		(void)printf("%s: gethostname(3) still 'Amnesiac' — "
+		    "hostnamed did not run or sethostname(2) failed\n",
+		    fail_marker);
 		goto out;
 	}
 
 	if (strcmp(cn, hn) != 0 || strcmp(cn, lhn) != 0 ||
 	    strcmp(cn, kn) != 0) {
-		(void)printf("HOSTNAMED-FAIL: sources disagree "
-		    "(ComputerName='%s' HostName='%s' LocalHostName='%s' "
-		    "kernel='%s')\n", cn, hn, lhn, kn);
+		(void)printf("%s: sources disagree (ComputerName='%s' "
+		    "HostName='%s' LocalHostName='%s' kernel='%s')\n",
+		    fail_marker, cn, hn, lhn, kn);
 		goto out;
 	}
 
-	(void)printf("HOSTNAMED-OK: hostname='%s' "
-	    "(Setup:/System + Setup:/Network/HostNames + kernel all agree)\n",
-	    cn);
+	if (expected != NULL && strcmp(cn, expected) != 0) {
+		(void)printf("%s: expected='%s' but published='%s' — "
+		    "Tier-2 SCPrefs read did not fire (synthesis still ran?)\n",
+		    fail_marker, expected, cn);
+		goto out;
+	}
+
+	(void)printf("%s: hostname='%s' (%s; "
+	    "Setup:/System + Setup:/Network/HostNames + kernel all agree)\n",
+	    ok_marker, cn, mode_label);
 	rc = 0;
 out:
 	free(cn);
