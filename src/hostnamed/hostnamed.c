@@ -25,6 +25,7 @@
  */
 
 #include <SystemConfiguration/SCDynamicStore.h>
+#include <SystemConfiguration/SCPreferences.h>
 #include <CoreFoundation/CoreFoundation.h>
 
 #include <sys/types.h>
@@ -319,31 +320,36 @@ derive_slug(char *out, size_t outsz)
 	xlog("slug fallback -> 'freebsd'");
 }
 
-/* Tier 1: kenv override. Whitelist [A-Za-z0-9 _.-]{1,253}; replace ' '
- * with '-' so the result is a valid hostname. Returns 1 if applied. */
+/* Whitelist + normalize a candidate hostname in-place. Allows
+ * [A-Za-z0-9 _.-]{1,253}; replaces spaces with '-' so the result is a
+ * valid kernel hostname. Returns 1 if the value passed validation and
+ * is now stored in out (NUL-terminated); 0 if rejected (out is
+ * untouched). Shared by Tier 1 (kenv override) and Tier 2 (SCPrefs
+ * ComputerName) so both apply the same gate. */
 static int
-try_override(char *out, size_t outsz)
+validate_and_normalize(const char *src, const char *source_label,
+    char *out, size_t outsz)
 {
 	char buf[256];
-	int n;
-	size_t i;
+	size_t i, len;
 
-	n = read_kenv("hostname.override", buf, sizeof(buf));
-	if (n <= 0)
+	if (src == NULL)
 		return (0);
-	/* Whitelist gate. */
+	len = strlen(src);
+	if (len == 0 || len > sizeof(buf) - 1 || len > 253) {
+		xlog("%s rejected: bad length %zu", source_label, len);
+		return (0);
+	}
+	(void)memcpy(buf, src, len);
+	buf[len] = '\0';
 	for (i = 0; buf[i] != '\0'; i++) {
 		unsigned char c = (unsigned char)buf[i];
 		if (!isalnum(c) && c != ' ' && c != '_' &&
 		    c != '.' && c != '-') {
-			xlog("hostname.override rejected: invalid char 0x%02x",
-			    (unsigned)c);
+			xlog("%s rejected: invalid char 0x%02x",
+			    source_label, (unsigned)c);
 			return (0);
 		}
-	}
-	if (i == 0 || i > 253) {
-		xlog("hostname.override rejected: bad length %zu", i);
-		return (0);
 	}
 	for (i = 0; buf[i] != '\0'; i++) {
 		if (buf[i] == ' ')
@@ -351,8 +357,79 @@ try_override(char *out, size_t outsz)
 	}
 	(void)strncpy(out, buf, outsz - 1);
 	out[outsz - 1] = '\0';
+	return (1);
+}
+
+/* Tier 1: kenv hostname.override (operator pre-boot pin). */
+static int
+try_override(char *out, size_t outsz)
+{
+	char buf[256];
+
+	if (read_kenv("hostname.override", buf, sizeof(buf)) <= 0)
+		return (0);
+	if (!validate_and_normalize(buf, "kenv hostname.override",
+	    out, outsz))
+		return (0);
 	xlog("hostname from kenv hostname.override -> '%s'", out);
 	return (1);
+}
+
+/* Tier 2: SCPreferences /System/System/ComputerName (user-set name via
+ * UI / scutil — beats synthesis). Opens the default preferences.plist
+ * (/Library/Preferences/SystemConfiguration/preferences.plist),
+ * drills the /System/System dict, reads the ComputerName string.
+ * Returns 1 if a valid name was found and stored in out; 0 otherwise.
+ * On any SC error or missing/empty/invalid value, falls through to
+ * synthesis — never aborts the daemon. Issue: #86 */
+static int
+try_scprefs(char *out, size_t outsz)
+{
+	SCPreferencesRef prefs = NULL;
+	CFStringRef session = NULL, path = NULL, key = NULL;
+	CFDictionaryRef sysdict;
+	CFStringRef cf_name;
+	char buf[256];
+	int rc = 0;
+
+	session = mkstr("com.apple.hostnamed");
+	path = mkstr("/System/System");
+	key = mkstr("ComputerName");
+	if (session == NULL || path == NULL || key == NULL)
+		goto out;
+
+	/* SCPreferencesCreate is lazy — it doesn't fail just because the
+	 * prefs file is missing. SCPreferencesPathGetValue will return
+	 * NULL in that case, and we silently fall through. */
+	prefs = SCPreferencesCreate(NULL, session, NULL);
+	if (prefs == NULL) {
+		xlog("try_scprefs: SCPreferencesCreate failed: %s "
+		    "(falling through to synthesis)",
+		    SCErrorString(SCError()));
+		goto out;
+	}
+	sysdict = SCPreferencesPathGetValue(prefs, path);
+	if (sysdict == NULL ||
+	    CFGetTypeID(sysdict) != CFDictionaryGetTypeID())
+		goto out;
+	cf_name = CFDictionaryGetValue(sysdict, key);
+	if (cf_name == NULL || CFGetTypeID(cf_name) != CFStringGetTypeID())
+		goto out;
+	if (!CFStringGetCString(cf_name, buf, sizeof(buf),
+	    kCFStringEncodingUTF8))
+		goto out;
+	if (!validate_and_normalize(buf,
+	    "SCPrefs /System/System/ComputerName", out, outsz))
+		goto out;
+	xlog("hostname from SCPrefs /System/System/ComputerName -> '%s'",
+	    out);
+	rc = 1;
+out:
+	if (prefs != NULL) CFRelease(prefs);
+	if (key != NULL) CFRelease(key);
+	if (path != NULL) CFRelease(path);
+	if (session != NULL) CFRelease(session);
+	return (rc);
 }
 
 /* Compose the final hostname into out (HOSTNAMED_MAX chars). */
@@ -363,6 +440,8 @@ synthesize(char *out, size_t outsz)
 	char suffix[SUFFIX_LEN + 1];
 
 	if (try_override(out, outsz))
+		return;
+	if (try_scprefs(out, outsz))
 		return;
 
 	derive_slug(slug, sizeof(slug));

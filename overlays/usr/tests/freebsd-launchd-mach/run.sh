@@ -935,28 +935,65 @@ else
     esac
 fi
 
-# HOSTNAMED — issue #63 iter 1. The plist's RunAtLoad is intentionally
-# disabled (see com.apple.hostnamed.plist comment): the launchd-port
-# RunAtLoad scan race wedges pam_xdg's /var/run/xdg bring-up and
-# breaks root login. Invoke hostnamed directly here, same workaround
-# syslogd's run.sh-side spawn uses, then run hostnametest to verify
-# the publish round-trip. A later iter restores RunAtLoad after the
-# launchd MachServices/checkin race is properly fixed.
-echo "==> hostnamed: kernel hostname BEFORE run = '$(hostname 2>/dev/null)'"
-if [ -x /usr/sbin/hostnamed ]; then
-    /usr/sbin/hostnamed > /var/log/hostnamed.stderr 2>&1
-    rc=$?
-    echo "--- /var/log/hostnamed.stderr (hostnamed exit=$rc) ---"
-    cat /var/log/hostnamed.stderr
-    echo "--- end hostnamed.stderr ---"
-else
-    echo "HOSTNAMED-FAIL: /usr/sbin/hostnamed not installed"
-fi
-echo "==> hostnamed: kernel hostname AFTER run  = '$(hostname 2>/dev/null)'"
+# HOSTNAMED — issue #63 (iter 1) + #86 (iter 2). The plist's RunAtLoad
+# is intentionally disabled (see com.apple.hostnamed.plist comment):
+# the launchd-port RunAtLoad scan race wedges pam_xdg's /var/run/xdg
+# bring-up and breaks root login. Invoke hostnamed directly here, same
+# workaround syslogd's run.sh-side spawn uses. A later iter restores
+# RunAtLoad after the launchd MachServices/checkin race is fixed.
+#
+# Two test rounds prove the precedence chain:
+#   ROUND 1 (iter 1 regression): no SCPrefs ComputerName set; hostnamed
+#     synthesizes "${slug}-${suffix}" from SMBIOS+MAC. hostnametest
+#     (no arg) emits HOSTNAMED-OK / HOSTNAMED-FAIL.
+#   ROUND 2 (iter 2 Tier-2 read): hostnameprefset writes a fixture
+#     ComputerName into SCPrefs; hostnamed re-reads, finds the prefs
+#     value, sethostname()s to it (bypassing synthesis). hostnametest
+#     with the same expected fixture emits HOSTNAMED-PREFS-OK /
+#     HOSTNAMED-PREFS-FAIL.
+
+run_hostnamed() {
+    label="$1"
+    echo "==> hostnamed [$label]: kernel hostname BEFORE = '$(hostname 2>/dev/null)'"
+    if [ -x /usr/sbin/hostnamed ]; then
+        /usr/sbin/hostnamed > /var/log/hostnamed.stderr 2>&1
+        rc=$?
+        echo "--- /var/log/hostnamed.stderr ($label, exit=$rc) ---"
+        cat /var/log/hostnamed.stderr
+        echo "--- end hostnamed.stderr ---"
+    else
+        echo "HOSTNAMED-FAIL: /usr/sbin/hostnamed not installed"
+        return 1
+    fi
+    echo "==> hostnamed [$label]: kernel hostname AFTER  = '$(hostname 2>/dev/null)'"
+}
+
+# ROUND 1: synthesis regression. Make sure no leftover SCPrefs ComputerName
+# from any earlier test cycle pollutes the result — the iter 1 path
+# should reach the slug+suffix synthesis branch.
+rm -f /Library/Preferences/SystemConfiguration/preferences.plist
+run_hostnamed "iter 1 synthesis"
 if [ -x /usr/tests/freebsd-launchd-mach/hostnametest ]; then
     /usr/tests/freebsd-launchd-mach/hostnametest
 else
     echo "HOSTNAMED-FAIL: hostnametest binary not installed"
+fi
+
+# ROUND 2: SCPrefs Tier-2 read (issue #86). Write a fixture ComputerName
+# into preferences.plist via hostnameprefset, re-run hostnamed (one-shot
+# — fresh process), then verify the published value matches the fixture.
+HOSTNAMED_FIXTURE="hostnamed-iter2-fixture"
+if [ -x /usr/tests/freebsd-launchd-mach/hostnameprefset ]; then
+    /usr/tests/freebsd-launchd-mach/hostnameprefset "$HOSTNAMED_FIXTURE"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "HOSTNAMED-PREFS-FAIL: hostnameprefset exit=$rc"
+    else
+        run_hostnamed "iter 2 SCPrefs read"
+        /usr/tests/freebsd-launchd-mach/hostnametest "$HOSTNAMED_FIXTURE"
+    fi
+else
+    echo "HOSTNAMED-PREFS-FAIL: hostnameprefset binary not installed"
 fi
 
 exit 0

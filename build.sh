@@ -1902,7 +1902,25 @@ cc -fblocks \
    -lsystem_kernel -lpthread
 test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hostnametest" \
     || { echo "FAIL: hostnametest not built"; exit 1; }
-echo "==> hostnamed + hostnametest built"
+
+# hostnameprefset — iter 2 (issue #86) CI fixture. Writes a known
+# ComputerName into SCPrefs via SCPreferencesPathSetValue +
+# SCPreferencesCommitChanges so the next hostnamed run exercises the
+# Tier-2 read path. Same -fblocks + CF/SC linkage as hostnametest.
+echo "==> building hostnameprefset"
+cc -fblocks \
+   -I"$ROOT/src/launchd/liblaunch" \
+   -I"$ROOT/src/launchd/freebsd-shims" \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hostnameprefset" \
+   "$ROOT/src/hostnamed/hostnameprefset.c" \
+   -lSystemConfiguration -lCoreFoundation -ldispatch -lBlocksRuntime \
+   -lsystem_kernel -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hostnameprefset" \
+    || { echo "FAIL: hostnameprefset not built"; exit 1; }
+echo "==> hostnamed + hostnametest + hostnameprefset built"
 
 #
 # 3z. purge build packages + clean pkg cache + tear down chroot.

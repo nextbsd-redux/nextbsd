@@ -974,11 +974,13 @@ expect {
     }
 }
 
-# HOSTNAMED — issue #63 iter 1 gate. hostnametest reads ComputerName
-# back from Setup:/System, HostName + LocalHostName from
-# Setup:/Network/HostNames, and gethostname(3) from the kernel; emits
-# HOSTNAMED-OK only when all three agree AND the value isn't
-# "Amnesiac". HOSTNAMED-FAIL fires on any mismatch / unset / placeholder.
+# HOSTNAMED — issue #63 iter 1 gate. ROUND 1 in run.sh: no SCPrefs
+# ComputerName set, hostnamed synthesizes "${slug}-${suffix}" from
+# SMBIOS + NIC MAC. hostnametest (no arg) reads ComputerName back from
+# Setup:/System, HostName + LocalHostName from Setup:/Network/HostNames,
+# and gethostname(3) from the kernel; emits HOSTNAMED-OK only when all
+# three agree AND the value isn't "Amnesiac". HOSTNAMED-FAIL fires on
+# any mismatch / unset / placeholder.
 expect {
     timeout {
         puts "\nFAIL: HOSTNAMED marker not seen"
@@ -990,6 +992,28 @@ expect {
     }
     "HOSTNAMED-OK" {
         puts "\nOK: hostnamed synthesized + published (SCDynamicStore + kernel agree, value != Amnesiac)"
+    }
+}
+
+# HOSTNAMED-PREFS — issue #86 iter 2 gate. ROUND 2 in run.sh:
+# hostnameprefset writes ComputerName="hostnamed-iter2-fixture" into
+# /Library/Preferences/SystemConfiguration/preferences.plist via the
+# SCPreferences API; hostnamed re-reads and uses the prefs value
+# instead of synthesizing; hostnametest with the fixture arg verifies
+# that all three publish surfaces (Setup:/System + Setup:/Network/HostNames
+# + kernel) carry exactly that value. HOSTNAMED-PREFS-FAIL fires if
+# Tier-2 SCPrefs read didn't fire and synthesis ran anyway.
+expect {
+    timeout {
+        puts "\nFAIL: HOSTNAMED-PREFS marker not seen"
+        exit 1
+    }
+    "HOSTNAMED-PREFS-FAIL" {
+        puts "\nFAIL: hostnamed Tier-2 SCPrefs read did not override synthesis"
+        exit 1
+    }
+    "HOSTNAMED-PREFS-OK" {
+        puts "\nOK: hostnamed Tier-2 SCPrefs ComputerName beats synthesis (kernel + Setup:/System + Setup:/Network/HostNames all carry the fixture value)"
     }
 }
 
