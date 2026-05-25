@@ -121,17 +121,27 @@ env ABI="${PKG_ABI}" \
 # (the matrix shape vmactions expects) resolves to driverpkgs-15.0-
 # RELEASE.txt without the caller having to set FREEBSD_VARIANT.
 : "${FREEBSD_VARIANT:=${FREEBSD_VERSION}-RELEASE}"
-DRIVER_PKGS_FILE="$ROOT/driverpkgs-${FREEBSD_VARIANT}.txt"
-if [ ! -f "$DRIVER_PKGS_FILE" ]; then
-    echo "ERROR: driver pkglist for FREEBSD_VARIANT=$FREEBSD_VARIANT not found" >&2
-    echo "       expected: $DRIVER_PKGS_FILE" >&2
-    echo "       create one or set FREEBSD_VARIANT to an existing variant" >&2
-    ls -1 "$ROOT"/driverpkgs-*.txt 2>/dev/null | sed 's|.*/||; s|^|       available: |' >&2
-    exit 1
-fi
+
+# DRIVER_PKGS — driver kmod install path (drm-66-kmod, nvidia-drm-kmod,
+# gpu-firmware-kmod, realtek-re-kmod, utouch-kmod, wifi-firmware-kmod).
+# Temporarily disabled to trim CI build time — the firmware+kmod set
+# adds several minutes per run to the chroot pkg install, and CI's
+# QEMU/SLIRP target doesn't exercise any of them. hwregd still
+# kldload(2)s any module that happens to live in /boot/modules; the
+# missing packages just mean those modules aren't present in the
+# rootfs at all on CI builds. Real-hardware images can re-enable by
+# uncommenting the validation + grep block below.
+#DRIVER_PKGS_FILE="$ROOT/driverpkgs-${FREEBSD_VARIANT}.txt"
+#if [ ! -f "$DRIVER_PKGS_FILE" ]; then
+#    echo "ERROR: driver pkglist for FREEBSD_VARIANT=$FREEBSD_VARIANT not found" >&2
+#    echo "       expected: $DRIVER_PKGS_FILE" >&2
+#    echo "       create one or set FREEBSD_VARIANT to an existing variant" >&2
+#    ls -1 "$ROOT"/driverpkgs-*.txt 2>/dev/null | sed 's|.*/||; s|^|       available: |' >&2
+#    exit 1
+#fi
 
 RUNTIME_PKGS=$(grep -v '^[[:space:]]*#' "$ROOT/pkglist.txt"        2>/dev/null | grep -v '^[[:space:]]*$' || true)
-DRIVER_PKGS=$( grep -v '^[[:space:]]*#' "$DRIVER_PKGS_FILE"        2>/dev/null | grep -v '^[[:space:]]*$' || true)
+DRIVER_PKGS=""  # re-enable: grep -v '^[[:space:]]*#' "$DRIVER_PKGS_FILE" 2>/dev/null | grep -v '^[[:space:]]*$' || true
 BUILD_PKGS=$(  grep -v '^[[:space:]]*#' "$ROOT/buildpkgs.txt"      2>/dev/null | grep -v '^[[:space:]]*$' || true)
 
 if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
