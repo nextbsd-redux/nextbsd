@@ -935,19 +935,24 @@ else
     esac
 fi
 
-# HOSTNAMED — issue #63 iter 1. hostnamed is a one-shot RunAtLoad
-# daemon (com.apple.hostnamed.plist) that has already fired by the
-# time we reach this point in run.sh. Echo the kernel hostname for
-# visibility, dump the daemon's stderr for post-mortem, then run
-# hostnametest to verify the SCDynamicStore round-trip + that
-# gethostname(3) is no longer "Amnesiac". The HOSTNAMED-OK /
-# HOSTNAMED-FAIL marker comes from hostnametest itself.
-echo "==> hostnamed: kernel hostname now '$(hostname 2>/dev/null)'"
-if [ -f /var/log/hostnamed.stderr ]; then
-    echo "--- /var/log/hostnamed.stderr ---"
+# HOSTNAMED — issue #63 iter 1. The plist's RunAtLoad is intentionally
+# disabled (see com.apple.hostnamed.plist comment): the launchd-port
+# RunAtLoad scan race wedges pam_xdg's /var/run/xdg bring-up and
+# breaks root login. Invoke hostnamed directly here, same workaround
+# syslogd's run.sh-side spawn uses, then run hostnametest to verify
+# the publish round-trip. A later iter restores RunAtLoad after the
+# launchd MachServices/checkin race is properly fixed.
+echo "==> hostnamed: kernel hostname BEFORE run = '$(hostname 2>/dev/null)'"
+if [ -x /usr/sbin/hostnamed ]; then
+    /usr/sbin/hostnamed > /var/log/hostnamed.stderr 2>&1
+    rc=$?
+    echo "--- /var/log/hostnamed.stderr (hostnamed exit=$rc) ---"
     cat /var/log/hostnamed.stderr
     echo "--- end hostnamed.stderr ---"
+else
+    echo "HOSTNAMED-FAIL: /usr/sbin/hostnamed not installed"
 fi
+echo "==> hostnamed: kernel hostname AFTER run  = '$(hostname 2>/dev/null)'"
 if [ -x /usr/tests/freebsd-launchd-mach/hostnametest ]; then
     /usr/tests/freebsd-launchd-mach/hostnametest
 else
