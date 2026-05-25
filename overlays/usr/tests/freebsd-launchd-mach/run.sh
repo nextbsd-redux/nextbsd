@@ -996,4 +996,25 @@ else
     echo "HOSTNAMED-PREFS-FAIL: hostnameprefset binary not installed"
 fi
 
+# ROUND 3: DHCP Tier-3a read (issue #90). hostnamedhcpset injects
+# Option_12 into the existing State:/Network/Service/<UUID>/DHCP dict
+# that ipconfigd published; with prefs.plist cleared and no kenv
+# override, hostnamed's precedence chain falls through to try_dhcp(),
+# which finds Option_12 and uses it. SLIRP doesn't supply Option_12
+# itself, so the fixture is the only way to exercise this tier in CI.
+HOSTNAMED_DHCP_FIXTURE="hostnamed-iter3a-fixture"
+rm -f /Library/Preferences/SystemConfiguration/preferences.plist
+if [ -x /usr/tests/freebsd-launchd-mach/hostnamedhcpset ]; then
+    /usr/tests/freebsd-launchd-mach/hostnamedhcpset "$HOSTNAMED_DHCP_FIXTURE"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "HOSTNAMED-DHCP-FAIL: hostnamedhcpset exit=$rc"
+    else
+        run_hostnamed "iter 3a DHCP read"
+        /usr/tests/freebsd-launchd-mach/hostnametest "$HOSTNAMED_DHCP_FIXTURE" DHCP
+    fi
+else
+    echo "HOSTNAMED-DHCP-FAIL: hostnamedhcpset binary not installed"
+fi
+
 exit 0

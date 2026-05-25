@@ -1036,6 +1036,28 @@ expect {
     }
 }
 
+# HOSTNAMED-DHCP — issue #90 iter 3a gate. ROUND 3 in run.sh:
+# hostnamedhcpset injects Option_12="hostnamed-iter3a-fixture" into
+# the live State:/Network/Service/<UUID>/DHCP dict that ipconfigd
+# published (issue #88). With preferences.plist cleared and no kenv
+# override, hostnamed's precedence chain falls through to try_dhcp(),
+# which finds Option_12 and uses it. hostnametest verifies all three
+# publish surfaces + the kernel hostname carry the fixture value
+# (proving DHCP beats synthesis but loses to SCPrefs and kenv).
+expect {
+    timeout {
+        puts "\nFAIL: HOSTNAMED-DHCP marker not seen"
+        exit 1
+    }
+    "HOSTNAMED-DHCP-FAIL" {
+        puts "\nFAIL: hostnamed Tier-3a DHCP read did not override synthesis"
+        exit 1
+    }
+    "HOSTNAMED-DHCP-OK" {
+        puts "\nOK: hostnamed Tier-3a DHCP Option_12 beats synthesis (kernel + Setup:/System + Setup:/Network/HostNames all carry the fixture value)"
+    }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"

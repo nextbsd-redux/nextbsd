@@ -1920,7 +1920,27 @@ cc -fblocks \
    -lsystem_kernel -lpthread
 test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hostnameprefset" \
     || { echo "FAIL: hostnameprefset not built"; exit 1; }
-echo "==> hostnamed + hostnametest + hostnameprefset built"
+
+# hostnamedhcpset — iter 3a (issue #90) CI fixture. Discovers the live
+# State:/Network/Service/<UUID>/DHCP key (already published by
+# ipconfigd per #88) and overlays an Option_12=<argv[1]> entry via
+# SCDynamicStoreSetValue so the next hostnamed run exercises the
+# Tier-3a DHCP read path. Same -fblocks + CF/SC linkage as
+# hostnametest / hostnameprefset.
+echo "==> building hostnamedhcpset"
+cc -fblocks \
+   -I"$ROOT/src/launchd/liblaunch" \
+   -I"$ROOT/src/launchd/freebsd-shims" \
+   -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hostnamedhcpset" \
+   "$ROOT/src/hostnamed/hostnamedhcpset.c" \
+   -lSystemConfiguration -lCoreFoundation -ldispatch -lBlocksRuntime \
+   -lsystem_kernel -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hostnamedhcpset" \
+    || { echo "FAIL: hostnamedhcpset not built"; exit 1; }
+echo "==> hostnamed + hostnametest + hostnameprefset + hostnamedhcpset built"
 
 #
 # 3z. purge build packages + clean pkg cache + tear down chroot.
