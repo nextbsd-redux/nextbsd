@@ -432,6 +432,91 @@ out:
 	return (rc);
 }
 
+/* Tier 3a: DHCP option 12 (host_name) — server-supplied name from the
+ * active lease. ipconfigd (issue #88) publishes
+ * State:/Network/Service/<UUID>/DHCP dicts; we enumerate via the regex
+ * pattern, read each dict's Option_12 (CFString), validate the first
+ * non-empty value via the shared whitelist, and use it. Returns 1 if
+ * a usable value was found, 0 otherwise. Any SC error / missing key /
+ * absent Option_12 / wrong type / rejected value falls through to
+ * synthesis — never aborts the daemon. Issue: #90 */
+static int
+try_dhcp(char *out, size_t outsz)
+{
+	SCDynamicStoreRef store = NULL;
+	CFStringRef session = NULL, pattern = NULL, k_opt12 = NULL;
+	CFArrayRef keys = NULL;
+	CFIndex i, n;
+	int rc = 0;
+
+	session = mkstr("com.apple.hostnamed");
+	/* POSIX-regex over the SCDynamicStore key namespace. Matches
+	 * any service UUID; iter 3a takes the first dict that carries a
+	 * non-empty Option_12. Iter 3b will use State:/Network/Global/IPv4
+	 * to identify the primary service and read only its /DHCP. */
+	pattern = mkstr("State:/Network/Service/[^/]+/DHCP");
+	k_opt12 = mkstr("Option_12");
+	if (session == NULL || pattern == NULL || k_opt12 == NULL)
+		goto out;
+
+	store = SCDynamicStoreCreate(NULL, session, NULL, NULL);
+	if (store == NULL) {
+		xlog("try_dhcp: SCDynamicStoreCreate failed: %s "
+		    "(falling through to synthesis)",
+		    SCErrorString(SCError()));
+		goto out;
+	}
+
+	keys = SCDynamicStoreCopyKeyList(store, pattern);
+	if (keys == NULL)
+		goto out;
+	n = CFArrayGetCount(keys);
+	for (i = 0; i < n; i++) {
+		CFStringRef key;
+		CFPropertyListRef plist;
+		CFStringRef cf_name;
+		char buf[256];
+
+		key = (CFStringRef)CFArrayGetValueAtIndex(keys, i);
+		if (key == NULL)
+			continue;
+		plist = SCDynamicStoreCopyValue(store, key);
+		if (plist == NULL)
+			continue;
+		if (CFGetTypeID(plist) != CFDictionaryGetTypeID()) {
+			CFRelease(plist);
+			continue;
+		}
+		cf_name = CFDictionaryGetValue((CFDictionaryRef)plist,
+		    k_opt12);
+		if (cf_name == NULL ||
+		    CFGetTypeID(cf_name) != CFStringGetTypeID()) {
+			CFRelease(plist);
+			continue;
+		}
+		if (!CFStringGetCString(cf_name, buf, sizeof(buf),
+		    kCFStringEncodingUTF8)) {
+			CFRelease(plist);
+			continue;
+		}
+		CFRelease(plist);
+		if (!validate_and_normalize(buf,
+		    "DHCP Option_12", out, outsz))
+			continue;
+		xlog("hostname from DHCP /Network/Service/.../DHCP/Option_12 "
+		    "-> '%s'", out);
+		rc = 1;
+		break;
+	}
+out:
+	if (keys != NULL) CFRelease(keys);
+	if (store != NULL) CFRelease(store);
+	if (k_opt12 != NULL) CFRelease(k_opt12);
+	if (pattern != NULL) CFRelease(pattern);
+	if (session != NULL) CFRelease(session);
+	return (rc);
+}
+
 /* Compose the final hostname into out (HOSTNAMED_MAX chars). */
 static void
 synthesize(char *out, size_t outsz)
@@ -442,6 +527,8 @@ synthesize(char *out, size_t outsz)
 	if (try_override(out, outsz))
 		return;
 	if (try_scprefs(out, outsz))
+		return;
+	if (try_dhcp(out, outsz))
 		return;
 
 	derive_slug(slug, sizeof(slug));

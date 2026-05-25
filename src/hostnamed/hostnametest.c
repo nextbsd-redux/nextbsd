@@ -90,25 +90,36 @@ main(int argc, char **argv)
 	char kn[KERN_LIMIT];
 	const char *expected;
 	const char *ok_marker, *fail_marker, *mode_label;
+	char ok_buf[64], fail_buf[64], mode_buf[64];
 	int rc = 1;
 
 	/*
-	 * Two modes:
-	 *   hostnametest                — iter 1 regression check: verify
-	 *                                 sources agree AND value isn't
-	 *                                 "Amnesiac". Emits HOSTNAMED-OK /
-	 *                                 HOSTNAMED-FAIL.
-	 *   hostnametest <expected>     — iter 2 (issue #86) Tier-2 read
-	 *                                 check: verify sources agree AND
-	 *                                 the published value equals
-	 *                                 <expected> (the fixture that
-	 *                                 hostnameprefset wrote to SCPrefs
-	 *                                 before hostnamed ran). Emits
-	 *                                 HOSTNAMED-PREFS-OK /
-	 *                                 HOSTNAMED-PREFS-FAIL.
+	 * Three modes:
+	 *   hostnametest
+	 *       iter-1 regression check: sources agree AND value isn't
+	 *       "Amnesiac". Emits HOSTNAMED-OK / HOSTNAMED-FAIL.
+	 *   hostnametest <expected>
+	 *       iter-2 (issue #86) SCPrefs Tier-2 check: sources agree AND
+	 *       value equals <expected> (the fixture hostnameprefset wrote
+	 *       before hostnamed ran). Emits HOSTNAMED-PREFS-OK / -FAIL.
+	 *   hostnametest <expected> <suffix>
+	 *       iter-3+ tier check: same as iter-2 verification but the
+	 *       marker label becomes HOSTNAMED-<SUFFIX>-OK / -FAIL. Used
+	 *       by iter-3a as `hostnametest <fixture> DHCP` to emit
+	 *       HOSTNAMED-DHCP-OK (issue #90).
 	 */
-	expected = (argc == 2) ? argv[1] : NULL;
-	if (expected != NULL) {
+	expected = (argc >= 2) ? argv[1] : NULL;
+	if (argc >= 3) {
+		(void)snprintf(ok_buf, sizeof(ok_buf),
+		    "HOSTNAMED-%s-OK", argv[2]);
+		(void)snprintf(fail_buf, sizeof(fail_buf),
+		    "HOSTNAMED-%s-FAIL", argv[2]);
+		(void)snprintf(mode_buf, sizeof(mode_buf),
+		    "iter 3+ %s read", argv[2]);
+		ok_marker   = ok_buf;
+		fail_marker = fail_buf;
+		mode_label  = mode_buf;
+	} else if (expected != NULL) {
 		ok_marker   = "HOSTNAMED-PREFS-OK";
 		fail_marker = "HOSTNAMED-PREFS-FAIL";
 		mode_label  = "iter 2 SCPrefs read";
@@ -175,8 +186,8 @@ main(int argc, char **argv)
 
 	if (expected != NULL && strcmp(cn, expected) != 0) {
 		(void)printf("%s: expected='%s' but published='%s' — "
-		    "Tier-2 SCPrefs read did not fire (synthesis still ran?)\n",
-		    fail_marker, expected, cn);
+		    "%s did not win (lower-precedence tier fired?)\n",
+		    fail_marker, expected, cn, mode_label);
 		goto out;
 	}
 
