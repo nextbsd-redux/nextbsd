@@ -39,7 +39,7 @@ CFLAGS+=	-Wmissing-prototypes -Wpointer-arith
 # Apple os/object.h ABI; notifyd / syslogd take the same -I path.
 CFLAGS+=	-I${.CURDIR}/../launchd/liblaunch
 CFLAGS+=	-I${.CURDIR}/../launchd/freebsd-shims
-CFLAGS+=	-I${.CURDIR}/../libnotify/freebsd-shims
+CFLAGS+=	-I${.CURDIR}/../Libnotify/freebsd-shims
 
 SYSROOT?=
 .if !empty(SYSROOT)
