@@ -25,7 +25,20 @@ FreeBSD-clibs-dev
 FreeBSD-libcompiler_rt-dev
 FreeBSD-libcompat-dev
 FreeBSD-libexecinfo-dev
-FreeBSD-pam-dev
+# FreeBSD-pam-dev — dropped at PAM port iter 3 (issue #97).
+# Project principle: never install pkgbase packages we replace
+# with Apple-source code in the build chroot. Installing them
+# pulls in their runtime siblings (FreeBSD-pam-dev → FreeBSD-pam
+# → FreeBSD-pam-lib) which then race our overlay/build at end
+# of build via pkg autoremove.
+#
+# Nothing in our tree consumes <security/pam_*.h> between pkg
+# install and our PAM iter 1: src/OpenPAM uses its own bundled
+# openpam/include/security/ via -I; src/pam_modules uses
+# -I ../OpenPAM/openpam/include; pamframeworktest +
+# pammodulestest build AFTER our OpenPAM `make install` writes
+# our headers into the sysroot.
+#FreeBSD-pam-dev
 FreeBSD-openssl-dev
 
 # Required for libdispatch's compile path: FreeBSD's own

@@ -81,12 +81,21 @@ FreeBSD-xz
 FreeBSD-bzip2
 
 # ---- pam / login ----
-# FreeBSD-pam-lib is just libpam.so. FreeBSD-pam is the modular auth
-# facility — ships /usr/lib/pam/pam_*.so (modules) and /etc/pam.d/*
-# (service configs). Without it, pam_start() fails with PAM_SYSTEM_ERR
-# ("System error") and login(1) wedges before prompting for password.
-FreeBSD-pam-lib
-FreeBSD-pam
+# Dropped at PAM port iter 3 (issue #97). Replaced end-to-end by
+# Apple-source PAM: src/OpenPAM (libpam.so.6 + pam_unix/pam_deny/
+# pam_permit, iter 1 PR #94) + src/pam_modules (pam_self/pam_rootok/
+# pam_uwtmp/pam_nologin/pam_env, iter 2 PR #96) + overlays/etc/pam.d/*
+# (login/su/sshd/sudo/passwd/cron/other/system, this iter).
+#
+# pkg may still drag FreeBSD-pam-lib in as a dep of FreeBSD-runtime;
+# if so, our build's `make install` for src/OpenPAM + src/pam_modules
+# overwrites its libpam.so.6 + module .so.6 files in place, and our
+# overlay /etc/pam.d/* references only modules we vendor — pam_xdg
+# and friends become unreachable even if their .so files survive on
+# disk. Plan: pkgdemon.github.io/freebsd-pam-port-plan.html
+#
+#FreeBSD-pam-lib
+#FreeBSD-pam
 
 # ---- transitive runtime libs (pinned so they don't get autoremoved) ----
 # libBlocksRuntime: dropped 2026-05-13 — we ship Block.h +

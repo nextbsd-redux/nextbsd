@@ -1049,4 +1049,24 @@ else
     echo "PAM-MODULES-FAIL: pammodulestest binary not installed"
 fi
 
+# PAM-LOGIN — PAM port iter 3 (issue #97). Round-trips through our
+# overlay /etc/pam.d/su: pam_rootok (root succeeds without password)
+# → pam_self (su to self ok) → include system (pam_unix auth, pam_unix
+# account, pam_uwtmp session, pam_unix password). All 4 facilities
+# must traverse successfully for `su root -c` to print the marker.
+# Indirectly verifies every other pam.d service that `include system`
+# works — pam_unix + pam_uwtmp + pam_nologin all load and execute.
+echo "==> PAM iter 3: ls -lh overlay /etc/pam.d/"
+ls -lh /etc/pam.d/ 2>/dev/null | head -15
+echo "==> PAM iter 3: pkg info FreeBSD-pam* status"
+pkg info FreeBSD-pam 2>&1 | head -3
+pkg info FreeBSD-pam-lib 2>&1 | head -3
+echo "==> PAM iter 3: su round-trip via overlay pam.d/su"
+out=$(su root -c "echo PAM-LOGIN-OK: su round-trip via pam_rootok + system stack" 2>&1)
+if echo "$out" | grep -q "PAM-LOGIN-OK"; then
+    echo "$out"
+else
+    echo "PAM-LOGIN-FAIL: su failed; output was: $out"
+fi
+
 exit 0

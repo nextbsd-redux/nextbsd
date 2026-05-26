@@ -173,6 +173,23 @@ if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
             IGNORE_OSVERSION=yes \
             LICENSES_ACCEPTED=NVIDIA \
             pkg install -y $RUNTIME_PKGS $DRIVER_PKGS
+
+        # Pin FreeBSD-pam* against pkg autoremove (PAM port iter 3,
+        # issue #97). We dropped them from pkglist-base.txt but pkg
+        # auto-installs them as deps of FreeBSD-runtime. The later
+        # `pkg autoremove` would then remove them (and their files
+        # at /usr/lib/pam_*.so.6 + /etc/pam.d/*) since no
+        # user-requested package needs them — which clobbers OUR
+        # OpenPAM + pam_modules + overlay-pam.d files at the same
+        # paths. Marking them non-automatic keeps autoremove away
+        # so our overlay/overwrite stays intact at runtime.
+        # `pkg set -A 0` = "this package is NOT automatic".
+        # `|| true` because pkg returns non-zero if the package
+        # isn't installed (e.g., on a future iter that re-adds it
+        # to pkglist explicitly).
+        chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
+            pkg set -y -A 0 -n FreeBSD-pam FreeBSD-pam-lib \
+                                FreeBSD-pam-dev 2>/dev/null || true
     fi
 
     if [ -n "$BUILD_PKGS" ]; then
