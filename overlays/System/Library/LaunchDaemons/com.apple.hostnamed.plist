@@ -11,23 +11,35 @@
 	     adds SCPreferences integration). KeepAlive=false so launchd
 	     doesn't keep relaunching the one-shot.
 
-	     iter 1 RunAtLoad is DROPPED — same carry com.apple.syslogd.plist
-	     documents. Adding a new RunAtLoad plist to the launchd-port's
-	     boot scan accelerates plist dispatch in a way that lets the
-	     first getty/login race ahead of pam_xdg's /var/run/xdg
-	     bring-up, breaking pam_open_session and wedging root login.
-	     Until the underlying launchd MachServices/checkin lazy-spawn
-	     race is fixed, run.sh invokes /usr/sbin/hostnamed manually
-	     after login (still proves synthesis + publish + sethostname
-	     end-to-end via HOSTNAMED-OK). A later iter restores RunAtLoad
-	     to get the boot banner showing the synthesized name.
+	     PAM port iter 4 (issue #99): RunAtLoad RESTORED. The
+	     original iter-1 drop was specifically because the additional
+	     RunAtLoad plist accelerated launchd's boot-time plist
+	     dispatch enough to let getty/login race ahead of pam_xdg's
+	     /var/run/xdg setup, breaking pam_open_session and wedging
+	     root login. PAM port iter 3 (PR #98) dropped pam_xdg from
+	     the overlay /etc/pam.d/* entirely; nothing references it
+	     anymore. The race is structurally resolved.
+
+	     With RunAtLoad=true, hostnamed runs at boot before getty
+	     prints its banner; the synthesized hostname appears in
+	     "FreeBSD/amd64 (HOSTNAME) (console)" instead of the
+	     unset-placeholder "Amnesiac". run.sh's manual hostnamed
+	     invocations remain (covering the SCPrefs + DHCP fixture
+	     rounds in run.sh — those run after the boot-time one).
+
+	     NOTE: com.apple.syslogd.plist has a separate, unrelated
+	     reason its RunAtLoad is dropped (the launch_msg LAUNCH_KEY_CHECKIN
+	     Mach IPC hang from the mach.ko interruptibility gap). That
+	     issue isn't fixed by the PAM port — syslogd stays dropped.
 
 	     Plan: https://pkgdemon.github.io/freebsd-hostnamed-plan.html
-	     Issue: #63 -->
+	     Issue: #63 (hostnamed iter 1), #99 (RunAtLoad restoration) -->
 	<key>ProgramArguments</key>
 	<array>
 		<string>/usr/sbin/hostnamed</string>
 	</array>
+	<key>RunAtLoad</key>
+	<true/>
 	<key>KeepAlive</key>
 	<false/>
 

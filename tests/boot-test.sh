@@ -148,7 +148,41 @@ expect "set launchd_trace=1"
 expect "OK "
 send "boot\r"
 
-# Stage 1: wait for the getty "login:" prompt. Boot is complete:
+# Stage 1a: capture getty's boot banner. PAM port iter 4 (issue #99)
+# restored RunAtLoad on com.apple.hostnamed.plist so hostnamed runs
+# at boot. Banner format: "FreeBSD/amd64 (HOSTNAME) (console)".
+#
+# This check is INFORMATIONAL, not gating. Both daemons (hostnamed
+# + getty) have RunAtLoad=true and launchd dispatches them in
+# parallel; getty's fork+exec+banner-print path (~10-30ms) finishes
+# before hostnamed's fork+exec+synthesize+sethostname path
+# (~30-100ms — kenv + SMBIOS + getifaddrs + crypt). The first-boot
+# banner consistently loses the race and shows 'Amnesiac'.
+#
+# What's actually working: kern.hostname IS set to the synthesized
+# value before login runs (verified by HOSTNAMED-OK and PAM-LOGIN-OK
+# downstream); second-getty-respawn (after logout) shows the
+# synthesized name. The banner-at-first-boot is purely cosmetic.
+#
+# Apple's macOS doesn't hit this because loginwindow reads the
+# hostname dynamically; FreeBSD getty captures it at print time.
+# Proper fix needs either launchd job ordering (no native mechanism)
+# or a getty patch to defer banner until kern.hostname stabilizes —
+# both out of scope for the PAM port.
+expect {
+    timeout {
+        puts "\nFAIL: boot banner not seen within 8 minutes"
+        exit 1
+    }
+    -re "FreeBSD/amd64 \\(Amnesiac\\) \\(console\\)" {
+        puts "\nWARN: BOOT-BANNER — first-boot banner shows 'Amnesiac' (getty/hostnamed race; cosmetic only)"
+    }
+    -re "FreeBSD/amd64 \\(\(\[A-Za-z0-9._-\]+\)\\) \\(console\\)" {
+        puts "\nOK: BOOT-BANNER-OK — synthesized hostname '$expect_out(1,string)' visible to getty (hostnamed won the race this run)"
+    }
+}
+
+# Stage 1b: wait for the getty "login:" prompt. Boot is complete:
 # loader preloaded mach.ko -> kernel mounts the freebsd-ufs root rw ->
 # /sbin/launchd as PID 1 -> getty plist -> login.
 expect {
