@@ -40,8 +40,19 @@
 /* Define to 1 if you have the <unistd.h> header file. */
 #define HAVE_UNISTD_H 1
 
-/* OpenPAM library major number */
-#define LIB_MAJ 2
+/* OpenPAM library major number.
+ *
+ * Apple's upstream sets this to 2 (macOS ships libpam.2.dylib).
+ * FreeBSD-pam ships pam_NAME.so.6 modules paired with libpam.so.6.
+ * openpam_dynamic_load() searches /usr/lib/pam/pam_NAME.so.${LIB_MAJ}
+ * first, then falls back to /usr/lib/pam/pam_NAME.so (unversioned).
+ * With LIB_MAJ=2 the search misses FreeBSD's .so.6 modules; both
+ * candidates ENOENT and login dies with "no pam_NAME.so found".
+ *
+ * Bumped to 6 so our libpam (also versioned as libpam.so.6 — see
+ * Makefile LIBPAM_SONAME) is consistent with the FreeBSD-pam
+ * modules it needs to load this iter for ABI verification. */
+#define LIB_MAJ 6
 
 /* Turn debugging on by default */
 /* #undef OPENPAM_DEBUG */
