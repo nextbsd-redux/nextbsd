@@ -330,7 +330,6 @@ for fbin in /bin/chflags /bin/mkdir /bin/mkfifo /bin/rmdir \
             /usr/bin/pathchk \
             /bin/dd /bin/ln /bin/rm \
             /usr/bin/cksum /usr/bin/compress \
-            /usr/bin/ipcrm /usr/bin/ipcs \
             /sbin/mknod /usr/bin/touch /usr/bin/truncate; do
     if [ ! -x "$fbin" ]; then
         echo "FILECMD-LEAF-FAIL: $fbin missing or not executable"
@@ -350,11 +349,11 @@ fi
 # from "FreeBSD-runtime's chflags is still in place."
 if [ $FILECMD_FAIL -eq 0 ]; then
     if strings /bin/chflags 2>/dev/null | grep -qi 'apple computer\|copyright.*apple\|opensource'; then
-        echo "FILECMD-LEAF-OK: 16/16 file_cmds binaries overlaid; /bin/chflags identifies as Apple's"
+        echo "FILECMD-LEAF-OK: 14/14 file_cmds binaries overlaid; /bin/chflags identifies as Apple's"
     else
         # Fall back: at minimum check that chflags works.
         if /bin/chflags 2>&1 | grep -q 'usage'; then
-            echo "FILECMD-LEAF-OK: 16/16 file_cmds binaries present; chflags responds to invocation (Apple identity not verifiable in strings — informational)"
+            echo "FILECMD-LEAF-OK: 14/14 file_cmds binaries present; chflags responds to invocation (Apple identity not verifiable in strings — informational)"
         else
             echo "FILECMD-LEAF-FAIL: chflags doesn't respond to invocation"
             FILECMD_FAIL=1

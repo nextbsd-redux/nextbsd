@@ -346,7 +346,6 @@ for FILECMD_BIN in /bin/chflags /bin/mkdir /bin/mkfifo /bin/rmdir \
                    /usr/bin/pathchk \
                    /bin/dd /bin/ln /bin/rm \
                    /usr/bin/cksum /usr/bin/compress \
-                   /usr/bin/ipcrm /usr/bin/ipcs \
                    /sbin/mknod /usr/bin/shar \
                    /usr/bin/touch /usr/bin/truncate; do
     if [ ! -x "$WORK/rootfs$FILECMD_BIN" ]; then

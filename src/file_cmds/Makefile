@@ -29,8 +29,14 @@ CFLAGS = -O2 -pipe
 
 ITER1_BINS = chflags/chflags mkdir/mkdir mkfifo/mkfifo rmdir/rmdir \
              pathchk/pathchk
-ITER2_BINS = cksum/cksum compress/compress dd/dd ipcrm/ipcrm \
-             ipcs/ipcs ln/ln mknod/mknod rm/rm \
+# ipcrm/ipcs DEFERRED — Apple's source uses XNU-specific kernel
+# struct layouts (struct msqid_kernel, struct shmid_kernel, union
+# semun shape) that FreeBSD's SysV IPC doesn't expose identically.
+# Would need a SysV-IPC shim layer. Not load-bearing (we use Mach
+# IPC, not SysV) — defer to iter 3+ alongside the libacl/fcopyfile
+# shim work.
+ITER2_BINS = cksum/cksum compress/compress dd/dd \
+             ln/ln mknod/mknod rm/rm \
              touch/touch truncate/truncate
 
 all: $(ITER1_BINS) $(ITER2_BINS)
@@ -69,13 +75,7 @@ dd/dd: dd/args.c dd/conv.c dd/conv_tab.c dd/dd.c \
 	cc $(CFLAGS) -o $@ dd/args.c dd/conv.c dd/conv_tab.c dd/dd.c \
 	    dd/misc.c dd/position.c -lutil
 
-# ipcrm: SysV IPC remove. Pure POSIX/SysV.
-ipcrm/ipcrm: ipcrm/ipcrm.c
-	cc $(CFLAGS) -o $@ ipcrm/ipcrm.c
-
-# ipcs: SysV IPC stat.
-ipcs/ipcs: ipcs/ipcs.c
-	cc $(CFLAGS) -o $@ ipcs/ipcs.c
+# ipcrm/ipcs DEFERRED — see ITER2_BINS comment above.
 
 # ln: POSIX symlink/hardlink.
 ln/ln: ln/ln.c
@@ -113,8 +113,7 @@ install: all
 	install -m 0555 rm/rm $(DESTDIR)/bin/rm
 	install -m 0555 cksum/cksum $(DESTDIR)/usr/bin/cksum
 	install -m 0555 compress/compress $(DESTDIR)/usr/bin/compress
-	install -m 0555 ipcrm/ipcrm $(DESTDIR)/usr/bin/ipcrm
-	install -m 0555 ipcs/ipcs $(DESTDIR)/usr/bin/ipcs
+	# ipcrm/ipcs DEFERRED — see ITER2_BINS comment above.
 	install -m 0555 mknod/mknod $(DESTDIR)/sbin/mknod
 	install -m 0555 touch/touch $(DESTDIR)/usr/bin/touch
 	install -m 0555 truncate/truncate $(DESTDIR)/usr/bin/truncate
