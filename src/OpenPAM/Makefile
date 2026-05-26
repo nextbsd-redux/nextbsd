@@ -101,17 +101,26 @@ ${LIBPAM_SONAME}: ${LIBPAM_OBJS}
 # single-file builds, link against libpam.so via -lpam if needed,
 # but the modules themselves don't call back into libpam, so plain
 # -shared is sufficient.
+# Module link deps: -lpam for OpenPAM's pam_set_data/pam_get_item
+# helpers the modules call back into. -lcrypt for pam_unix's
+# crypt(3) call (FreeBSD keeps crypt in libcrypt; without explicit
+# link the symbol resolves nowhere at dlopen time and the module
+# load fails silently → openpam_load_module says "no pam_X.so
+# found"). pam_deny / pam_permit don't strictly need either but
+# linking them keeps the modules uniform and harmless.
+PAM_MOD_LIBS =	-lpam -lcrypt
+
 pam_unix.so:	${.CURDIR}/openpam/modules/pam_unix/pam_unix.c
 	${CC} ${CFLAGS_COMMON} ${LDFLAGS_COMMON} \
-	    -shared -o ${.TARGET} ${.ALLSRC}
+	    -shared -o ${.TARGET} ${.ALLSRC} ${PAM_MOD_LIBS}
 
 pam_deny.so:	${.CURDIR}/openpam/modules/pam_deny/pam_deny.c
 	${CC} ${CFLAGS_COMMON} ${LDFLAGS_COMMON} \
-	    -shared -o ${.TARGET} ${.ALLSRC}
+	    -shared -o ${.TARGET} ${.ALLSRC} ${PAM_MOD_LIBS}
 
 pam_permit.so:	${.CURDIR}/openpam/modules/pam_permit/pam_permit.c
 	${CC} ${CFLAGS_COMMON} ${LDFLAGS_COMMON} \
-	    -shared -o ${.TARGET} ${.ALLSRC}
+	    -shared -o ${.TARGET} ${.ALLSRC} ${PAM_MOD_LIBS}
 
 install: all
 	install -d ${LIBDIR} ${PAMDIR} ${INCDIR}
