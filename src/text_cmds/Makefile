@@ -38,7 +38,7 @@ tail/tail: tail/forward.c tail/misc.c tail/read.c tail/reverse.c tail/tail.c
 	cc $(CFLAGS) -o $@ tail/forward.c tail/misc.c tail/read.c \
 	    tail/reverse.c tail/tail.c -lutil
 wc/wc: wc/wc.c
-	cc $(CFLAGS) -o $@ wc/wc.c
+	cc $(CFLAGS) -o $@ wc/wc.c -lxo
 # tr: 4 .c files (cmap, cset, str, tr).
 tr/tr: tr/cmap.c tr/cset.c tr/str.c tr/tr.c
 	cc $(CFLAGS) -o $@ tr/cmap.c tr/cset.c tr/str.c tr/tr.c
