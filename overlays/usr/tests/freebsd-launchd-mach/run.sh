@@ -294,7 +294,7 @@ fi
 # these would not exist (build.sh exits on per-tool make failure).
 for fbin in /usr/bin/fetch /usr/bin/file \
             /usr/bin/fstat /usr/bin/fuser \
-            /usr/bin/getent /usr/bin/hostid \
+            /usr/bin/getent \
             /usr/bin/kdump /usr/bin/ktrace /usr/bin/ktrdump \
             /usr/bin/ldd \
             /usr/bin/procstat /usr/bin/sockstat \
@@ -349,7 +349,7 @@ if [ $FBSDGLUE_FAIL -eq 0 ]; then
     kldstat_count=$(kldstat 2>/dev/null | wc -l | tr -d ' ')
     kenv_count=$(kenv 2>/dev/null | wc -l | tr -d ' ')
     mount_count=$(mount 2>/dev/null | wc -l | tr -d ' ')
-    echo "FBSDGLUE-OK: 42/42 fbsdglue binaries present + executable (camcontrol deferred); libsysdecode codegen-prereq path verified via truss; kldstat=${kldstat_count} kenv=${kenv_count} mount=${mount_count}; /rescue/ absent"
+    echo "FBSDGLUE-OK: 41/41 fbsdglue binaries present + executable (camcontrol + hostid deferred/dropped); libsysdecode codegen-prereq path verified via truss; kldstat=${kldstat_count} kenv=${kenv_count} mount=${mount_count}; /rescue/ absent"
 else
     exit 1
 fi

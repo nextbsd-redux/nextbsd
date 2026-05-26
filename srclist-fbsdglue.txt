@@ -64,7 +64,10 @@ usr.bin/fstat
 # fuser source lives at usr.bin/fstat (Makefile LINKs /usr/bin/fuser
 # to /usr/bin/fstat). CI iter 2 run 26459388127 surfaced this.
 usr.bin/getent
-usr.bin/hostid
+# hostid: NOT a binary on FreeBSD. Plan KEEP list had it as a
+# binary but FreeBSD's hostid is just /etc/rc.d/hostid (shell
+# script) that reads /etc/hostid (UUID file) into sysctl
+# kern.hostuuid. CI iter 2 run 26459641829 surfaced this. Dropped.
 usr.bin/kdump
 usr.bin/ktrace
 usr.bin/ktrdump
