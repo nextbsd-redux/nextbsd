@@ -1033,4 +1033,20 @@ else
     echo "PAM-FRAMEWORK-FAIL: pamframeworktest binary not installed"
 fi
 
+# PAM-MODULES — PAM port iter 2 (issue #95). dlopens each of the 5
+# vendored Apple standalone modules from /usr/lib/pam_NAME.so.6 and
+# verifies the canonical pam_sm_* entry point is present. Indirectly
+# verifies the existing post-login marker chain that was already
+# green in iter 1 STILL works (login now using OUR pam_self.so.6 +
+# pam_uwtmp.so.6 instead of FreeBSD's, with our libpam.so.6).
+echo "==> PAM iter 2: ls -lh /usr/lib/pam_{self,rootok,uwtmp,nologin,env}.so.6"
+ls -lh /usr/lib/pam_self.so.6 /usr/lib/pam_rootok.so.6 \
+       /usr/lib/pam_uwtmp.so.6 /usr/lib/pam_nologin.so.6 \
+       /usr/lib/pam_env.so.6 2>/dev/null
+if [ -x /usr/tests/freebsd-launchd-mach/pammodulestest ]; then
+    /usr/tests/freebsd-launchd-mach/pammodulestest
+else
+    echo "PAM-MODULES-FAIL: pammodulestest binary not installed"
+fi
+
 exit 0
