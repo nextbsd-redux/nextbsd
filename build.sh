@@ -221,21 +221,27 @@ tar -xJf "$DIST/src.txz" -C "$WORK/freebsd-src"
 
 #
 # 3a2. build the irreducibly-FreeBSD-only userland from /usr/src per
-#      srclist-fbsdglue.txt (#108 / #105a iter 1). The ~11 leaf binaries
-#      (kld* family, mount/umount/fsck, devfs, ldconfig, kenv,
-#      freebsd-version) have no Apple equivalent at all — kernel-bound
-#      platform glue. Overlay-overwrite their pkgbase paths with
-#      /usr/src builds so downstream Apple-repo PRs (#105b–#105g) can
-#      iterate the remaining ~155 Apple-replaceable paths, and #105h
-#      can finally drop FreeBSD-runtime entirely once srclist-fbsdglue.txt
-#      owns every non-Apple path the ISO needs.
+#      srclist-fbsdglue.txt. The 43 leaf binaries + 1 prereq lib
+#      (lib/libsysdecode for kdump/truss) have no Apple equivalent at
+#      all — kernel-bound platform glue (kld*, UFS, devfs, ldconfig,
+#      etc.) plus BSD-specific debug tooling (fstat/sockstat/procstat/
+#      ktrace/truss/ldd/etc.). Overlay-overwrite their pkgbase paths
+#      with /usr/src builds so downstream Apple-repo PRs (#105b-#105g)
+#      can iterate the remaining ~155 Apple-replaceable paths, and
+#      #105h can finally drop FreeBSD-runtime entirely once
+#      srclist-fbsdglue.txt owns every non-Apple path the ISO needs.
 #
-#      Iter 1 uses only Category A/B tools (leaf libc / standard libs,
-#      no codegen prereqs) so any mechanism failure is isolated from
-#      per-tool dep complications. PR #107 failed on rescue/rescue's
-#      lib/libifconfig codegen prereq; #109 (iter 2) will exercise
-#      codegen-prereq cases (kdump/truss link libsysdecode) after
-#      iter 1 proves the mechanism on simpler tools.
+#      Manifest is iterated in file order so prereq libs can be listed
+#      above consumers. lib/libsysdecode comes first so its mktables-
+#      generated headers (tables.h / tables_linux.h / ioctl.c) exist
+#      in $MAKEOBJDIRPREFIX when kdump+truss link against it. Same
+#      shape as the lib/libifconfig codegen-prereq that defeated
+#      PR #107 — this iter explicitly exercises that path.
+#
+#      Iter 1 (commit 62dd735) validated the mechanism on ~11
+#      Category A/B leaf tools with no codegen prereqs. Iter 2 (this
+#      change / #109 / #105a iter 2) extends to the full 43 entries
+#      and the codegen-prereq case.
 #
 #      MAKEOBJDIRPREFIX isolates obj dirs under $WORK (keeps /usr/obj
 #      on the builder clean). SRCCONF/__MAKE_CONF=/dev/null isolates
@@ -281,16 +287,20 @@ for DIR in $FBSDGLUE_LIST; do
         install DESTDIR="$WORK/rootfs"
 done
 
-# Confirm a few load-bearing binaries are actually present + executable
-# in the rootfs after the manifest run. Catches silent "make install"
-# no-ops (e.g., if a Makefile's PROG variable was renamed upstream).
-for KEY_BIN in /sbin/kldload /sbin/mount /bin/kenv; do
+# Confirm a few load-bearing binaries from each category are actually
+# present + executable in the rootfs after the manifest run. Catches
+# silent "make install" no-ops (e.g., if a Makefile's PROG variable
+# was renamed upstream).
+for KEY_BIN in /sbin/kldload /sbin/mount /bin/kenv \
+               /usr/bin/ldd /usr/sbin/pciconf; do
     if [ ! -x "$WORK/rootfs$KEY_BIN" ]; then
         echo "ERROR: fbsdglue manifest didn't install $KEY_BIN" >&2
         exit 1
     fi
 done
-ls -lh "$WORK/rootfs/sbin/kldload" "$WORK/rootfs/sbin/mount" "$WORK/rootfs/bin/kenv"
+ls -lh "$WORK/rootfs/sbin/kldload" "$WORK/rootfs/sbin/mount" \
+       "$WORK/rootfs/bin/kenv" "$WORK/rootfs/usr/bin/ldd" \
+       "$WORK/rootfs/usr/sbin/pciconf"
 
 #
 # 3b. build mach.ko against the freshly-extracted kernel sources and

@@ -244,36 +244,67 @@ else
     exit 1
 fi
 
-# 6.5. fbsdglue iter 1 (#108 / #105a iter 1). Validates the
-# srclist-fbsdglue.txt /usr/src-build mechanism that build.sh step 3a2
-# wires. The ~11 leaf binaries below are all Category A/B per the
-# srclist build plan §4 (leaf libc / standard libs, no codegen
-# prereqs) — so any failure must be in the mechanism itself rather
-# than per-tool dep complications.
+# 6.5. fbsdglue iter 2 (#109 / #105a iter 2). Validates srclist-
+# fbsdglue.txt — 25 entries covering boot-critical kernel-bound
+# platform glue + ldd + HW/FS introspection + user mgmt + save-
+# entropy. The BSD-debug toolkit (fstat/sockstat/procstat/kdump/
+# ktrace/strings/top/vmstat/etc.) is DEFERRED per the srclist build
+# plan §9.6.6 iteration log — nothing in current CI uses them, and
+# they pull in FreeBSD privatelib prereqs (libsysdecode, libelftc,
+# libprocstat, libmemstat) that aren't load-bearing for the Apple-
+# repo ports that follow.
 #
-# Per-binary check: file exists, is executable, and (for tools that
-# accept it) runs with a "harmless query" flag like --version,
-# --help, or -h. Catches silent install no-ops and unresolved-symbol
-# rtld failures.
+# Per-binary check: file exists, is executable. Catches silent
+# install no-ops and unresolved-symbol rtld failures.
 #
-# Also confirms /rescue/ does NOT exist on the ISO (FreeBSD-rescue
-# pkg dropped per Apple-shape; macOS has no /rescue/).
+# Also confirms /rescue/ does NOT exist on the ISO.
 #
 # Plan: https://pkgdemon.github.io/freebsd-srclist-build-plan.html
 FBSDGLUE_FAIL=0
+# bin/ + sbin/ (kernel-bound + UFS):
 for fbin in /bin/freebsd-version /bin/kenv \
-            /sbin/devfs /sbin/fsck \
+            /sbin/devfs /sbin/fsck /sbin/fsck_ffs \
             /sbin/kldconfig /sbin/kldload /sbin/kldstat /sbin/kldunload \
-            /sbin/ldconfig /sbin/mount /sbin/umount; do
+            /sbin/ldconfig /sbin/mount /sbin/newfs /sbin/tunefs /sbin/umount; do
     if [ ! -x "$fbin" ]; then
-        echo "FBSDGLUE-MIN-FAIL: $fbin missing or not executable"
+        echo "FBSDGLUE-FAIL: $fbin missing or not executable"
         ls -la "$fbin" 2>&1 || true
         FBSDGLUE_FAIL=1
     fi
 done
+# usr.bin/ldd is the one debug tool we keep — "why won't this .so
+# resolve" is the most common question during Apple-port work.
+if [ ! -x /usr/bin/ldd ]; then
+    echo "FBSDGLUE-FAIL: /usr/bin/ldd missing"
+    FBSDGLUE_FAIL=1
+fi
+# usr.sbin/ FreeBSD HW/FS introspection + user mgmt + libexec.
+for fbin in /usr/sbin/devctl /usr/sbin/diskinfo \
+            /usr/sbin/fstyp /usr/sbin/gstat \
+            /usr/sbin/kldxref /usr/sbin/pciconf /usr/sbin/pw \
+            /usr/libexec/save-entropy; do
+    if [ ! -x "$fbin" ]; then
+        echo "FBSDGLUE-FAIL: $fbin missing or not executable"
+        ls -la "$fbin" 2>&1 || true
+        FBSDGLUE_FAIL=1
+    fi
+done
+# nologin can land at /sbin/ or /usr/sbin/ depending on Makefile
+# BINDIR; usr.sbin/nologin Makefile LINKs to /sbin/nologin too.
+if [ ! -x /sbin/nologin ] && [ ! -x /usr/sbin/nologin ]; then
+    echo "FBSDGLUE-FAIL: nologin missing from /sbin/ AND /usr/sbin/"
+    ls -la /sbin/nologin /usr/sbin/nologin 2>&1 || true
+    FBSDGLUE_FAIL=1
+fi
+# crashinfo is a shell script — check for presence + readability.
+if [ ! -r /usr/sbin/crashinfo ]; then
+    echo "FBSDGLUE-FAIL: /usr/sbin/crashinfo missing"
+    ls -la /usr/sbin/crashinfo 2>&1 || true
+    FBSDGLUE_FAIL=1
+fi
 # Verify /rescue/ absent (FreeBSD-rescue pkg dropped — Apple-shape).
 if [ -d /rescue ]; then
-    echo "FBSDGLUE-MIN-FAIL: /rescue/ still exists; FreeBSD-rescue should have been dropped"
+    echo "FBSDGLUE-FAIL: /rescue/ still exists; FreeBSD-rescue should have been dropped"
     ls -la /rescue 2>&1 | head -5 || true
     FBSDGLUE_FAIL=1
 fi
@@ -282,7 +313,7 @@ if [ $FBSDGLUE_FAIL -eq 0 ]; then
     kldstat_count=$(kldstat 2>/dev/null | wc -l | tr -d ' ')
     kenv_count=$(kenv 2>/dev/null | wc -l | tr -d ' ')
     mount_count=$(mount 2>/dev/null | wc -l | tr -d ' ')
-    echo "FBSDGLUE-MIN-OK: 11/11 fbsdglue binaries present + executable; kldstat=${kldstat_count} kenv=${kenv_count} mount=${mount_count}; /rescue/ absent"
+    echo "FBSDGLUE-OK: 25/25 fbsdglue binaries present + executable; BSD-debug toolkit deferred; kldstat=${kldstat_count} kenv=${kenv_count} mount=${mount_count}; /rescue/ absent"
 else
     exit 1
 fi

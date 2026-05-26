@@ -1,32 +1,62 @@
-# srclist-fbsdglue.txt — irreducibly-FreeBSD-only /usr/src dirs that ship
-# on the live ISO from /usr/src builds (not from pkgbase pkgs).
+# srclist-fbsdglue.txt — irreducibly-FreeBSD-only /usr/src dirs that
+# ship on the live ISO from /usr/src builds (not from pkgbase pkgs).
 #
-# Iter 1 (#108 / #105a iter 1): MINIMAL validation set. ~11 boot-critical
-# leaf binaries — all Category A or B per the srclist build plan §4
-# (leaf libc / standard libs only, no codegen prereqs). Validates the
-# mechanism on tools that have *no* codegen prereqs, so any failure must
-# come from the mechanism itself rather than per-tool dep complications.
+# Iter 2 (#109 / #105a iter 2): minimal-shippable set. 25 entries
+# covering boot-critical kernel-bound platform glue (kld* family,
+# UFS mount/fsck/newfs, devfs, ldconfig) + essential dev-debug tool
+# (ldd for "why isn't this .so resolving") + FreeBSD HW/FS
+# introspection that has no Apple analogue (devctl, diskinfo, gstat,
+# pciconf) + user mgmt (pw, nologin) + post-panic forensics
+# (crashinfo) + entropy daemon helper (save-entropy).
 #
-# Iter 2 (#109 / #105a iter 2) will expand to the full ~44 entries
-# including the codegen-prereq cases (kdump/truss link libsysdecode).
+# DEFERRED 2026-05-26: the BSD-debug toolkit (fstat, sockstat,
+# procstat, fuser-as-LINK, kdump, ktrace, ktrdump, strings, systat,
+# top, truss, vmstat, file, fetch, getent). Nothing in current CI,
+# boot path, or test harness uses them; Apple-port work doesn't
+# trigger the FreeBSD privatelib chain (libsysdecode, libelftc,
+# libprocstat, libmemstat) they pull in. Add back later when an
+# actual debug session demands one — at which point the per-tool
+# privatelib prereq joins the manifest too.
 #
 # Plan: https://pkgdemon.github.io/freebsd-srclist-build-plan.html
 #
 # Per-line format: <relative path under /usr/src>; # for comments;
-# empty lines ignored. Iterated by build.sh in file order (so prereq
-# libs can be listed before consumers in later iters).
+# empty lines ignored. Iterated by build.sh step 3a2 in file order
+# (so prereq libs can be listed above consumers when needed).
 
 # --- bin/ ---
 bin/freebsd-version
 bin/kenv
 
-# --- sbin/ kernel-bound family (kld(4), VFS, devfs, rtld hint) ---
+# --- sbin/ kernel-bound (kld(4), VFS, devfs, rtld hint) + UFS family ---
+# (sbin/camcontrol DEFERRED — needs lib/libnvmf privatelib prereq;
+#  not load-bearing for CI virtio or daily dev.)
 sbin/devfs
 sbin/fsck
+sbin/fsck_ffs
 sbin/kldconfig
 sbin/kldload
 sbin/kldstat
 sbin/kldunload
 sbin/ldconfig
 sbin/mount
+sbin/newfs
+sbin/tunefs
 sbin/umount
+
+# --- usr.bin/ — minimal set; debug toolkit deferred (see comment) ---
+usr.bin/ldd
+
+# --- usr.sbin/ FreeBSD HW/FS introspection + user mgmt ---
+usr.sbin/crashinfo
+usr.sbin/devctl
+usr.sbin/diskinfo
+usr.sbin/fstyp
+usr.sbin/gstat
+usr.sbin/kldxref
+usr.sbin/nologin
+usr.sbin/pciconf
+usr.sbin/pw
+
+# --- libexec/ ---
+libexec/save-entropy

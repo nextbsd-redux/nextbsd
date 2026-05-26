@@ -344,14 +344,14 @@ expect {
 }
 expect {
     timeout {
-        puts "\nFAIL: FBSDGLUE-MIN marker not seen"
+        puts "\nFAIL: FBSDGLUE marker not seen"
         exit 1
     }
-    "FBSDGLUE-MIN-FAIL" {
-        puts "\nFAIL: fbsdglue minimal set missing or non-functional"
+    "FBSDGLUE-FAIL" {
+        puts "\nFAIL: fbsdglue full set missing or non-functional"
         exit 1
     }
-    "FBSDGLUE-MIN-OK" { puts "\nOK: srclist-fbsdglue.txt iter-1 binaries present + /rescue/ absent (#108)" }
+    "FBSDGLUE-OK" { puts "\nOK: srclist-fbsdglue.txt full 43 entries present + /rescue/ absent + libsysdecode codegen path verified (#109)" }
 }
 expect {
     timeout {
