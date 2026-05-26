@@ -22,7 +22,10 @@
 DESTDIR ?=
 CFLAGS = -O2 -pipe -D__dead=__dead2
 
-ITER1_BINS = tabs/tabs tty/tty whois/whois gencat/gencat lsvfs/lsvfs
+# gencat DEFERRED — needs Apple-internal <msgcat.h> header for NLS
+# catalog generation (not present on FreeBSD). Would need a shim
+# matching Apple's libc/nlsmsg internals. Not load-bearing — defer.
+ITER1_BINS = tabs/tabs tty/tty whois/whois lsvfs/lsvfs
 
 all: $(ITER1_BINS)
 
@@ -33,9 +36,7 @@ tty/tty: tty/tty.c
 	cc $(CFLAGS) -o $@ tty/tty.c
 whois/whois: whois/whois.c
 	cc $(CFLAGS) -o $@ whois/whois.c
-# gencat: gencat.c + genlib.c (multi-source).
-gencat/gencat: gencat/gencat.c gencat/genlib.c
-	cc $(CFLAGS) -o $@ gencat/gencat.c gencat/genlib.c
+# gencat DEFERRED — see ITER1_BINS comment above.
 lsvfs/lsvfs: lsvfs/lsvfs.c
 	cc $(CFLAGS) -o $@ lsvfs/lsvfs.c
 
@@ -44,7 +45,7 @@ install: all
 	install -m 0555 tabs/tabs $(DESTDIR)/usr/bin/tabs
 	install -m 0555 tty/tty $(DESTDIR)/usr/bin/tty
 	install -m 0555 whois/whois $(DESTDIR)/usr/bin/whois
-	install -m 0555 gencat/gencat $(DESTDIR)/usr/bin/gencat
+	# gencat DEFERRED — Apple-internal msgcat.h header missing.
 	install -m 0555 lsvfs/lsvfs $(DESTDIR)/usr/sbin/lsvfs
 
 clean:

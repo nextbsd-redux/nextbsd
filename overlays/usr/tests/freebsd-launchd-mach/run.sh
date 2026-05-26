@@ -440,7 +440,7 @@ fi
 # Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#adv_cmds
 ADVCMD_FAIL=0
 for fbin in /usr/bin/tabs /usr/bin/tty /usr/bin/whois \
-            /usr/bin/gencat /usr/sbin/lsvfs; do
+            /usr/sbin/lsvfs; do
     if [ ! -x "$fbin" ]; then
         echo "ADVCMD-LEAF-FAIL: $fbin missing or not executable"
         ls -la "$fbin" 2>&1 || true
@@ -451,7 +451,7 @@ done
 # loaded VFS modules).
 if [ $ADVCMD_FAIL -eq 0 ]; then
     if /usr/sbin/lsvfs >/dev/null 2>&1; then
-        echo "ADVCMD-LEAF-OK: 5/5 adv_cmds binaries overlaid (lsvfs runs cleanly)"
+        echo "ADVCMD-LEAF-OK: 4/4 adv_cmds binaries overlaid (lsvfs runs cleanly)"
     else
         echo "ADVCMD-LEAF-FAIL: lsvfs failed to enumerate VFS modules"
         ADVCMD_FAIL=1

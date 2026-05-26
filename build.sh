@@ -424,7 +424,7 @@ echo "==> building Apple adv_cmds (iter 1: 5 leaf tools)"
 make -C "$ROOT/src/adv_cmds" install DESTDIR="$WORK/rootfs"
 
 for ADVCMD_BIN in /usr/bin/tabs /usr/bin/tty /usr/bin/whois \
-                  /usr/bin/gencat /usr/sbin/lsvfs; do
+                  /usr/sbin/lsvfs; do
     if [ ! -x "$WORK/rootfs$ADVCMD_BIN" ]; then
         echo "ERROR: adv_cmds install didn't land $ADVCMD_BIN" >&2
         exit 1
