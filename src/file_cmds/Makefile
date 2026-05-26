@@ -23,16 +23,20 @@ CFLAGS = -O2 -pipe
 
 all: chflags/chflags mkdir/mkdir mkfifo/mkfifo rmdir/rmdir pathchk/pathchk
 
+# Explicit source path in each rule. ($< is gmake syntax; bmake
+# uses it only for implicit rules, where it means "current input
+# file", not "first prerequisite". To stay compatible with bmake's
+# explicit-rule semantics, just spell out the source.)
 chflags/chflags: chflags/chflags.c
-	cc $(CFLAGS) -o $@ $<
+	cc $(CFLAGS) -o $@ chflags/chflags.c
 mkdir/mkdir: mkdir/mkdir.c
-	cc $(CFLAGS) -o $@ $<
+	cc $(CFLAGS) -o $@ mkdir/mkdir.c
 mkfifo/mkfifo: mkfifo/mkfifo.c
-	cc $(CFLAGS) -o $@ $<
+	cc $(CFLAGS) -o $@ mkfifo/mkfifo.c
 rmdir/rmdir: rmdir/rmdir.c
-	cc $(CFLAGS) -o $@ $<
+	cc $(CFLAGS) -o $@ rmdir/rmdir.c
 pathchk/pathchk: pathchk/pathchk.c
-	cc $(CFLAGS) -o $@ $<
+	cc $(CFLAGS) -o $@ pathchk/pathchk.c
 
 install: all
 	mkdir -p $(DESTDIR)/bin $(DESTDIR)/usr/bin
