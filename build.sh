@@ -220,6 +220,57 @@ mkdir -p "$WORK/freebsd-src"
 tar -xJf "$DIST/src.txz" -C "$WORK/freebsd-src"
 
 #
+# 3a2. build /rescue/ from /usr/src per srclist-rescue.txt (issue #104).
+#      Drops the FreeBSD-rescue pkgbase package in favor of a per-line
+#      manifest of /usr/src directories that build.sh iterates. Proof
+#      of concept for the manifest-driven build pattern issue #105
+#      extends to FreeBSD-runtime + FreeBSD-utilities, and issue #106
+#      uses for the first per-tool Apple-source swap (getty).
+#
+#      /rescue/ is by design ONE statically-linked multi-call binary
+#      (crunchgen) with symlinks for each command name; srclist
+#      has a single entry (rescue/rescue). MAKEOBJDIRPREFIX is
+#      isolated under $WORK so we don't pollute /usr/obj on the
+#      builder. SRCCONF / __MAKE_CONF /dev/null isolates from any
+#      host /etc/src.conf that might disable rescue or set unwanted
+#      WITH_/WITHOUT_ flags.
+#
+echo "==> building /rescue/ from /usr/src per srclist-rescue.txt"
+RESCUE_LIST=$(grep -v '^[[:space:]]*#' "$ROOT/srclist-rescue.txt" 2>/dev/null \
+              | grep -v '^[[:space:]]*$' || true)
+if [ -z "$RESCUE_LIST" ]; then
+    echo "ERROR: srclist-rescue.txt is empty; refusing to skip /rescue/" >&2
+    exit 1
+fi
+
+SRCBUILD_OBJ="$WORK/srcbuild-obj"
+mkdir -p "$SRCBUILD_OBJ"
+SRCBUILD_MAKE_FLAGS="__MAKE_CONF=/dev/null SRCCONF=/dev/null \
+                     MK_MAN=no MK_TESTS=no"
+
+for DIR in $RESCUE_LIST; do
+    SRC="$WORK/freebsd-src/usr/src/$DIR"
+    if [ ! -d "$SRC" ]; then
+        echo "ERROR: srclist-rescue entry '$DIR' not under usr/src ($SRC)" >&2
+        exit 1
+    fi
+    echo "    src-build: $DIR"
+    # shellcheck disable=SC2086
+    env MAKEOBJDIRPREFIX="$SRCBUILD_OBJ" \
+        make -C "$SRC" $SRCBUILD_MAKE_FLAGS obj
+    # shellcheck disable=SC2086
+    env MAKEOBJDIRPREFIX="$SRCBUILD_OBJ" \
+        make -C "$SRC" $SRCBUILD_MAKE_FLAGS
+    # shellcheck disable=SC2086
+    env MAKEOBJDIRPREFIX="$SRCBUILD_OBJ" \
+        make -C "$SRC" $SRCBUILD_MAKE_FLAGS \
+        install DESTDIR="$WORK/rootfs"
+done
+
+ls -lh "$WORK/rootfs/rescue/rescue"
+echo "    /rescue/ entry count: $(ls "$WORK/rootfs/rescue/" | wc -l | tr -d ' ')"
+
+#
 # 3b. build mach.ko against the freshly-extracted kernel sources and
 #     install it into $WORK/rootfs/boot/kernel/mach.ko so it ships
 #     inside rootfs.uzip. Step 8 below also copies it onto the cd9660

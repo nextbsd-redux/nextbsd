@@ -344,6 +344,17 @@ expect {
 }
 expect {
     timeout {
+        puts "\nFAIL: RESCUE-SRC marker not seen"
+        exit 1
+    }
+    "RESCUE-SRC-FAIL" {
+        puts "\nFAIL: /rescue/ from src missing or non-functional"
+        exit 1
+    }
+    "RESCUE-SRC-OK" { puts "\nOK: /rescue/ built from /usr/src (issue #104)" }
+}
+expect {
+    timeout {
         puts "\nFAIL: LAUNCHD-BUILD marker not seen"
         exit 1
     }

@@ -1,0 +1,16 @@
+# srclist-rescue.txt — /usr/src directories to build into the rootfs
+# in lieu of the FreeBSD-rescue pkgbase package.
+#
+# Iterated by build.sh step 3a2. Per-line format: <relative path
+# under /usr/src>; lines starting with # or empty lines are ignored.
+#
+# Issue #104 — proof-of-concept for the manifest-driven /usr/src
+# build pattern that issue #105 extends to FreeBSD-runtime +
+# FreeBSD-utilities, and issue #106 uses for the first per-tool
+# Apple-source swap (getty from system_cmds).
+#
+# /rescue/ is by design ONE statically-linked multi-call binary built
+# via crunchgen, with symlinks for each command name (sh, ls, cp, mv,
+# mount, fsck, kldload, etc.). Single entry below.
+
+rescue/rescue

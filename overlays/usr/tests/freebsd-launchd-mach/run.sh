@@ -244,6 +244,28 @@ else
     exit 1
 fi
 
+# 6.5. rescue from src (issue #104): /rescue/ should exist with the
+# expected multi-call statically-linked binary plus per-command
+# symlinks. build.sh step 3a2 replaced the FreeBSD-rescue pkgbase
+# package with an in-build rebuild from /usr/src/rescue/rescue/.
+# Proves the manifest-driven /usr/src build mechanism that issue
+# #105 extends to FreeBSD-runtime + FreeBSD-utilities.
+if [ -x /rescue/rescue ] && [ -L /rescue/sh ]; then
+    if hello_out=$(/rescue/sh -c 'echo hello' 2>&1) && \
+       [ "$hello_out" = "hello" ]; then
+        rescue_count=$(ls /rescue/ 2>/dev/null | wc -l | tr -d ' ')
+        echo "RESCUE-SRC-OK: /rescue/ built from /usr/src (${rescue_count} entries)"
+    else
+        echo "RESCUE-SRC-FAIL: /rescue/sh -c 'echo hello' got: $hello_out"
+        ls -la /rescue/ 2>&1 | head -20 || true
+        exit 1
+    fi
+else
+    echo "RESCUE-SRC-FAIL: /rescue/rescue binary or /rescue/sh symlink missing"
+    ls -la /rescue/ 2>&1 | head -20 || true
+    exit 1
+fi
+
 # 7. launchd-842 daemon: must exec + reject non-PID-1 invocation.
 # launchd-842's main() (launchd.c:163) checks
 #   getpid() != 1 && getppid() != 1

@@ -30,13 +30,16 @@ FreeBSD-bootloader
 FreeBSD-kernel-generic
 
 # ---- /sbin/init + boot ----
-# rescue: /init.sh shebangs /rescue/sh and uses /rescue/{mount,mdconfig,
-#   chroot,kldload,init} pre-pivot.
+# rescue: DROPPED 2026-05-26 (issue #104). Replaced by an in-build
+#   rebuild of /rescue/ from /usr/src/rescue/rescue/ via build.sh
+#   step 3a2 + srclist-rescue.txt. Proof-of-concept for the
+#   manifest-driven /usr/src build pattern that issue #105 extends
+#   to FreeBSD-runtime + FreeBSD-utilities.
 # runtime: /sbin/halt, /sbin/reboot, basic boot binaries, plus the
 #   /sbin/init we *don't* use (init.sh exec's /sbin/launchd directly,
 #   bypassing init entirely -- see ramdisk/init.sh comment block).
 #   Also ships /usr/libexec/getty, /usr/bin/login, /bin/sh.
-FreeBSD-rescue
+#FreeBSD-rescue
 FreeBSD-runtime
 
 # ---- core libc + base userland ----
