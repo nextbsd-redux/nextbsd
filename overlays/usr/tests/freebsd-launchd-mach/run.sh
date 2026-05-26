@@ -434,6 +434,33 @@ if [ $TEXTCMD_FAIL -ne 0 ]; then
     exit 1
 fi
 
+# 6.9. adv_cmds iter 1 (#113 / #105d iter 1). Fourth Apple-userland-
+# cmds repo port. 5 leaf tools (tabs, tty, whois, gencat, lsvfs).
+#
+# Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#adv_cmds
+ADVCMD_FAIL=0
+for fbin in /usr/bin/tabs /usr/bin/tty /usr/bin/whois \
+            /usr/sbin/lsvfs; do
+    if [ ! -x "$fbin" ]; then
+        echo "ADVCMD-LEAF-FAIL: $fbin missing or not executable"
+        ls -la "$fbin" 2>&1 || true
+        ADVCMD_FAIL=1
+    fi
+done
+# Functional probe: lsvfs always succeeds (lists at least ufs/devfs
+# loaded VFS modules).
+if [ $ADVCMD_FAIL -eq 0 ]; then
+    if /usr/sbin/lsvfs >/dev/null 2>&1; then
+        echo "ADVCMD-LEAF-OK: 4/4 adv_cmds binaries overlaid (lsvfs runs cleanly)"
+    else
+        echo "ADVCMD-LEAF-FAIL: lsvfs failed to enumerate VFS modules"
+        ADVCMD_FAIL=1
+    fi
+fi
+if [ $ADVCMD_FAIL -ne 0 ]; then
+    exit 1
+fi
+
 # 7. launchd-842 daemon: must exec + reject non-PID-1 invocation.
 # launchd-842's main() (launchd.c:163) checks
 #   getpid() != 1 && getppid() != 1

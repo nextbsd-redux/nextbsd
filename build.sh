@@ -412,6 +412,28 @@ ls -lh "$WORK/rootfs/bin/cat" "$WORK/rootfs/usr/bin/head" \
        "$WORK/rootfs/usr/bin/tail" "$WORK/rootfs/usr/bin/tr"
 
 #
+# 3a6. build Apple adv_cmds (#113 / #105d iter 1). Fourth Apple-
+#      userland-cmds repo port. Vendored from apple-oss-distributions/
+#      adv_cmds@adv_cmds-237 at src/adv_cmds/. Iter 1 scope: 5 leaf
+#      tools (tabs, tty, whois, gencat, lsvfs) — no Apple-specific
+#      kernel-struct deps.
+#
+#      Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#adv_cmds
+#
+echo "==> building Apple adv_cmds (iter 1: 5 leaf tools)"
+make -C "$ROOT/src/adv_cmds" install DESTDIR="$WORK/rootfs"
+
+for ADVCMD_BIN in /usr/bin/tabs /usr/bin/tty /usr/bin/whois \
+                  /usr/sbin/lsvfs; do
+    if [ ! -x "$WORK/rootfs$ADVCMD_BIN" ]; then
+        echo "ERROR: adv_cmds install didn't land $ADVCMD_BIN" >&2
+        exit 1
+    fi
+done
+ls -lh "$WORK/rootfs/usr/bin/tty" "$WORK/rootfs/usr/bin/whois" \
+       "$WORK/rootfs/usr/sbin/lsvfs"
+
+#
 # 3b. build mach.ko against the freshly-extracted kernel sources and
 #     install it into $WORK/rootfs/boot/kernel/mach.ko so it ships
 #     inside rootfs.uzip. Step 8 below also copies it onto the cd9660
