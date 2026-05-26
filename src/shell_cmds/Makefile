@@ -54,7 +54,7 @@ basename/basename: basename/basename.c
 # Most are pure libc; jot/seq use libm; printf may use libxo (Apple
 # extension — skip if causes issues).
 apply/apply: apply/apply.c
-	cc $(CFLAGS) -o $@ apply/apply.c
+	cc $(CFLAGS) -o $@ apply/apply.c -lsbuf
 dirname/dirname: dirname/dirname.c
 	cc $(CFLAGS) -o $@ dirname/dirname.c
 # env: env.c + envopts.c (multi-source).
