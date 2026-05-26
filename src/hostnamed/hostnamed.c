@@ -651,6 +651,24 @@ main(int argc, char **argv)
 
 	synthesize(name, sizeof(name));
 
+	/*
+	 * sethostname(2) FIRST — moved here at PAM port iter 4 (#99) so
+	 * the kernel hostname is set as early as possible after fork+exec,
+	 * winning the race against getty's banner-print at boot. The
+	 * SCDynamicStore publishes below do ~50-80ms of CF allocation
+	 * work; without this reorder, getty (dispatched earlier in the
+	 * launchd plist scan) finishes its banner before sethostname()
+	 * gets called.
+	 *
+	 * sethostname() needs nothing CF-side, just the synthesized
+	 * string. Failure here is fatal (we can't continue with
+	 * publish_*) but extremely unlikely in practice.
+	 */
+	if (sethostname(name, (int)strlen(name)) != 0) {
+		xlog("HOSTNAMED-FAIL: sethostname: %s", strerror(errno));
+		goto out;
+	}
+
 	session = mkstr("com.apple.hostnamed");
 	if (session == NULL) {
 		xlog("HOSTNAMED-FAIL: CFStringCreate failed for session name");
@@ -669,11 +687,6 @@ main(int argc, char **argv)
 	}
 	if (publish_hostnames(store, name) != 0) {
 		xlog("HOSTNAMED-FAIL: publish_hostnames");
-		goto out;
-	}
-
-	if (sethostname(name, (int)strlen(name)) != 0) {
-		xlog("HOSTNAMED-FAIL: sethostname: %s", strerror(errno));
 		goto out;
 	}
 
