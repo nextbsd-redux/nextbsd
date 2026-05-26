@@ -33,7 +33,7 @@ INCDIR =	${DESTDIR}${PREFIX}/include/security
 # HAVE_* mismatch surfaces, override here rather than regenerating
 # via autoreconf.
 
-CFLAGS_COMMON =	-fPIC -O2 -pipe \
+CFLAGS_COMMON =	-fPIC -O2 -pipe -fblocks \
 		-Wno-deprecated-declarations \
 		-Wno-unused-parameter \
 		-Wno-unused-result \
@@ -48,9 +48,17 @@ SYSROOT ?=
 .if !empty(SYSROOT)
 CFLAGS_COMMON +=	-I${SYSROOT}/usr/include
 LDFLAGS_COMMON +=	-L${SYSROOT}/usr/lib \
+			-L${SYSROOT}/usr/lib/system \
 			-Wl,-rpath,/usr/lib \
+			-Wl,-rpath,/usr/lib/system \
 			-Wl,--allow-shlib-undefined
 .endif
+
+# openpam_dynamic.c uses dispatch_once + block syntax for one-time
+# init of an in-process module-cache mutex. libdispatch + Block
+# runtime live in /usr/lib/system/ (we vendor swift-corelibs
+# libdispatch + a Block runtime in libdispatch's bundled libs).
+LIBPAM_LIBS =	-ldispatch -lBlocksRuntime
 
 # Framework: every .c under openpam/lib/ except the static-linking-
 # only helper, which is only relevant when consumers link against
@@ -75,7 +83,7 @@ all:	${LIBPAM_SONAME} pam_unix.so pam_deny.so pam_permit.so
 
 ${LIBPAM_SONAME}: ${LIBPAM_OBJS}
 	${CC} ${LDFLAGS_COMMON} -shared -Wl,-soname,${LIBPAM_SONAME} \
-	    -o ${.TARGET} ${LIBPAM_OBJS}
+	    -o ${.TARGET} ${LIBPAM_OBJS} ${LIBPAM_LIBS}
 
 # Per-source compile. .OBJDIR doesn't apply here — we compile from
 # the source tree to the current dir. Bmake's transformation rule
