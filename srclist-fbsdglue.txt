@@ -23,11 +23,18 @@
 # Per-line format: <relative path under /usr/src>; # for comments;
 # empty lines ignored. Iterated by build.sh step 3a2 in file order.
 
-# --- prereq libs (built BEFORE consumers; populate obj-tree generated
-#     headers that consumers need at compile time) ---
+# --- prereq libs (built BEFORE consumers; populate obj-tree artifacts
+#     consumers need at compile time — generated headers or
+#     PIE-suffix static archives only present in obj-tree) ---
 # libsysdecode generates tables.h / tables_linux.h / ioctl.c via
 # mktables sh + mkioctls. Consumers kdump + truss link against it.
 lib/libsysdecode
+# libnvmf is a FreeBSD privatelib for NVMe-over-Fabrics, not
+# installed to /usr/lib by pkgbase. Its libnvmf_pie.a static archive
+# only exists in ${OBJTOP}/lib/libnvmf/ after a source build.
+# Consumer: sbin/camcontrol (CI iter-2 failure 26458819290 surfaced
+# this: "ld: error: unable to find library -lnvmf_pie").
+lib/libnvmf
 
 # --- bin/ ---
 bin/freebsd-version
