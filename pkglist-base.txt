@@ -30,13 +30,26 @@ FreeBSD-bootloader
 FreeBSD-kernel-generic
 
 # ---- /sbin/init + boot ----
-# rescue: /init.sh shebangs /rescue/sh and uses /rescue/{mount,mdconfig,
-#   chroot,kldload,init} pre-pivot.
-# runtime: /sbin/halt, /sbin/reboot, basic boot binaries, plus the
-#   /sbin/init we *don't* use (init.sh exec's /sbin/launchd directly,
-#   bypassing init entirely -- see ramdisk/init.sh comment block).
-#   Also ships /usr/libexec/getty, /usr/bin/login, /bin/sh.
-FreeBSD-rescue
+# rescue: DROPPED 2026-05-26 (#108 / #105a iter 1). Apple has no
+#   /rescue/ directory at all — macOS recovery is a separate Recovery
+#   APFS partition (recoveryOS), not a directory of statically-linked
+#   tools. Per architectural rule 3 ("don't invent things Apple
+#   doesn't do"), no replacement: /rescue/ simply doesn't exist on
+#   our ISO. Plan: https://pkgdemon.github.io/freebsd-srclist-build-plan.html §2
+#   Historical: #104 (closed not-planned), PR #107 (closed unmerged).
+#   The earlier /init.sh comment about /rescue/sh etc. was stale —
+#   current boot path is direct kernel → /sbin/launchd as PID 1.
+# runtime: STAYS INSTALLED. Source-of-truth pivots over the
+#   #105a iter 1 → #105g iter sequence (per srclist build plan §9.2):
+#   - The ~11 irreducibly-FreeBSD-only paths (kld*, mount/umount/fsck,
+#     devfs, ldconfig, kenv, freebsd-version) get rebuilt from /usr/src
+#     via srclist-fbsdglue.txt + build.sh step 3a2, overlay-overwriting
+#     pkgbase's same paths.
+#   - The remaining ~155 Apple-replaceable paths get overlaid by Apple
+#     binaries from the seven sequential Apple-repo PRs (#105b-#105g).
+#   - #105h commits to the final drop of FreeBSD-runtime from this list
+#     once every path it provides is either Apple-source or fbsdglue.
+#FreeBSD-rescue
 FreeBSD-runtime
 
 # ---- core libc + base userland ----

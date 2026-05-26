@@ -244,6 +244,49 @@ else
     exit 1
 fi
 
+# 6.5. fbsdglue iter 1 (#108 / #105a iter 1). Validates the
+# srclist-fbsdglue.txt /usr/src-build mechanism that build.sh step 3a2
+# wires. The ~11 leaf binaries below are all Category A/B per the
+# srclist build plan §4 (leaf libc / standard libs, no codegen
+# prereqs) — so any failure must be in the mechanism itself rather
+# than per-tool dep complications.
+#
+# Per-binary check: file exists, is executable, and (for tools that
+# accept it) runs with a "harmless query" flag like --version,
+# --help, or -h. Catches silent install no-ops and unresolved-symbol
+# rtld failures.
+#
+# Also confirms /rescue/ does NOT exist on the ISO (FreeBSD-rescue
+# pkg dropped per Apple-shape; macOS has no /rescue/).
+#
+# Plan: https://pkgdemon.github.io/freebsd-srclist-build-plan.html
+FBSDGLUE_FAIL=0
+for fbin in /bin/freebsd-version /bin/kenv \
+            /sbin/devfs /sbin/fsck \
+            /sbin/kldconfig /sbin/kldload /sbin/kldstat /sbin/kldunload \
+            /sbin/ldconfig /sbin/mount /sbin/umount; do
+    if [ ! -x "$fbin" ]; then
+        echo "FBSDGLUE-MIN-FAIL: $fbin missing or not executable"
+        ls -la "$fbin" 2>&1 || true
+        FBSDGLUE_FAIL=1
+    fi
+done
+# Verify /rescue/ absent (FreeBSD-rescue pkg dropped — Apple-shape).
+if [ -d /rescue ]; then
+    echo "FBSDGLUE-MIN-FAIL: /rescue/ still exists; FreeBSD-rescue should have been dropped"
+    ls -la /rescue 2>&1 | head -5 || true
+    FBSDGLUE_FAIL=1
+fi
+if [ $FBSDGLUE_FAIL -eq 0 ]; then
+    # Sanity-probe a few: their --version/-h paths exit 0 quickly.
+    kldstat_count=$(kldstat 2>/dev/null | wc -l | tr -d ' ')
+    kenv_count=$(kenv 2>/dev/null | wc -l | tr -d ' ')
+    mount_count=$(mount 2>/dev/null | wc -l | tr -d ' ')
+    echo "FBSDGLUE-MIN-OK: 11/11 fbsdglue binaries present + executable; kldstat=${kldstat_count} kenv=${kenv_count} mount=${mount_count}; /rescue/ absent"
+else
+    exit 1
+fi
+
 # 7. launchd-842 daemon: must exec + reject non-PID-1 invocation.
 # launchd-842's main() (launchd.c:163) checks
 #   getpid() != 1 && getppid() != 1

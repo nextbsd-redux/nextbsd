@@ -344,6 +344,17 @@ expect {
 }
 expect {
     timeout {
+        puts "\nFAIL: FBSDGLUE-MIN marker not seen"
+        exit 1
+    }
+    "FBSDGLUE-MIN-FAIL" {
+        puts "\nFAIL: fbsdglue minimal set missing or non-functional"
+        exit 1
+    }
+    "FBSDGLUE-MIN-OK" { puts "\nOK: srclist-fbsdglue.txt iter-1 binaries present + /rescue/ absent (#108)" }
+}
+expect {
+    timeout {
         puts "\nFAIL: LAUNCHD-BUILD marker not seen"
         exit 1
     }
