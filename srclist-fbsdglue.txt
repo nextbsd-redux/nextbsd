@@ -29,6 +29,12 @@
 # libsysdecode generates tables.h / tables_linux.h / ioctl.c via
 # mktables sh + mkioctls. Consumers kdump + truss link against it.
 lib/libsysdecode
+# libelftc is a FreeBSD privatelib (ELF toolchain helper). Its
+# libelftc_pie.a only exists in ${OBJTOP}/lib/libelftc/ after
+# source build. Consumer: usr.bin/strings (CI iter-2 run
+# 26459928204 surfaced this: "ld: error: unable to find library
+# -lelftc_pie").
+lib/libelftc
 
 # --- bin/ ---
 bin/freebsd-version
