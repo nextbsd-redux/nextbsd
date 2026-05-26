@@ -61,7 +61,8 @@ sbin/umount
 usr.bin/fetch
 usr.bin/file
 usr.bin/fstat
-usr.bin/fuser
+# fuser source lives at usr.bin/fstat (Makefile LINKs /usr/bin/fuser
+# to /usr/bin/fstat). CI iter 2 run 26459388127 surfaced this.
 usr.bin/getent
 usr.bin/hostid
 usr.bin/kdump
