@@ -1,0 +1,9 @@
+# /etc/pam.d/cron — cron(8) job execution context.
+#
+# Apple-source PAM port iter 3 (issue #97). Cron only opens the
+# account + session facilities; no auth (the parent cron daemon
+# is already running as root). Matches FreeBSD's stock layout.
+
+account		required	pam_nologin.so
+account		required	pam_unix.so
+session		required	pam_permit.so

@@ -1,0 +1,20 @@
+# /etc/pam.d/login — console login(1).
+#
+# Apple-source PAM port iter 3 (issue #97). Drops vs FreeBSD's
+# stock pam.d/login:
+#   pam_securetty  (no /etc/ttys "secure" enforcement; use sshd
+#                   PermitRootLogin / login.conf classes)
+
+# auth
+auth		sufficient	pam_self.so		no_warn
+auth		include		system
+
+# account
+account		required	pam_nologin.so
+account		include		system
+
+# session
+session		include		system
+
+# password
+password	include		system

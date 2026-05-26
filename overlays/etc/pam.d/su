@@ -1,0 +1,22 @@
+# /etc/pam.d/su — su(1) user switch.
+#
+# Apple-source PAM port iter 3 (issue #97). Drops vs FreeBSD's
+# stock pam.d/su:
+#   pam_group group=wheel  (we don't ship pam_group; pam_rootok +
+#                           pam_self at the top of the stack still
+#                           cover the wheel-only use case for the
+#                           typical "root + wheel members can su"
+#                           policy)
+
+# auth — root succeeds without password; user su'ing to themselves
+# succeeds without password; everyone else falls through to the
+# system stack (pam_unix password verification).
+auth		sufficient	pam_rootok.so		no_warn
+auth		sufficient	pam_self.so		no_warn
+auth		include		system
+
+# account
+account		include		system
+
+# session
+session		required	pam_permit.so

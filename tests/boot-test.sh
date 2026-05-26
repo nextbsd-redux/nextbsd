@@ -1101,6 +1101,28 @@ expect {
     }
 }
 
+# PAM-LOGIN — issue #97 iter 3 gate. `su root -c` round-trip exercises
+# our overlay /etc/pam.d/su: pam_rootok (top of auth stack) +
+# include system (pam_unix auth/account/password + pam_uwtmp session).
+# Existing post-login marker chain (login → MACH-SMOKE-OK → ...
+# → HOSTNAMED-DHCP-OK) ALREADY proved login through overlay
+# /etc/pam.d/login works at this point, but PAM-LOGIN-OK is the
+# explicit named gate that pam_rootok + the system include chain
+# round-trip cleanly.
+expect {
+    timeout {
+        puts "\nFAIL: PAM-LOGIN marker not seen"
+        exit 1
+    }
+    "PAM-LOGIN-FAIL" {
+        puts "\nFAIL: su round-trip via overlay pam.d/su broke"
+        exit 1
+    }
+    "PAM-LOGIN-OK" {
+        puts "\nOK: su round-trip via Apple-source pam.d/su + system stack works (pam_xdg is gone end-to-end)"
+    }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"

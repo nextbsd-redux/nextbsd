@@ -1,0 +1,27 @@
+# /etc/pam.d/system — common PAM rules included by login/su/sshd/etc.
+#
+# Apple-source PAM port iter 3 (issue #97). Uses only modules vendored
+# in iters 1+2 (3 from apple-oss-distributions/OpenPAM-35 + 5 from
+# apple-oss-distributions/pam_modules-217.100.6):
+#
+#   pam_unix, pam_deny, pam_permit, pam_self, pam_rootok,
+#   pam_uwtmp, pam_nologin, pam_env
+#
+# Drops, vs FreeBSD's stock /etc/pam.d/system:
+#   pam_login_access  (no /etc/login.access; use sshd/login.conf)
+#   pam_lastlog       (we don't ship it; last(1) lastlog-data empty)
+#   pam_xdg           (intentionally dropped — goal #2)
+
+# auth
+auth		required	pam_unix.so		no_warn try_first_pass nullok
+
+# account
+account		required	pam_unix.so
+
+# session — pam_uwtmp replaces pam_lastlog's session-tracking role;
+# utmp/wtmp still get updated so who(1) / last(1) (without lastlog)
+# stay functional.
+session		required	pam_uwtmp.so
+
+# password
+password	required	pam_unix.so		no_warn try_first_pass

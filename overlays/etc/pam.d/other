@@ -1,0 +1,17 @@
+# /etc/pam.d/other — catch-all default for any PAM service that
+# doesn't have its own /etc/pam.d/&lt;service&gt; file.
+#
+# Apple-source PAM port iter 3 (issue #97). Drops vs FreeBSD's
+# stock pam.d/other:
+#   pam_login_access  (use service-specific allow/deny configs)
+#
+# Deliberately strict: any unknown service authenticates via the
+# system stack (pam_unix), respects /etc/nologin, and grants
+# session via pam_permit. Apple's /etc/pam.d/other on macOS is
+# similar (account/session permit, auth opendirectory).
+
+auth		required	pam_unix.so		no_warn try_first_pass
+account		required	pam_nologin.so
+account		required	pam_unix.so
+session		required	pam_permit.so
+password	required	pam_permit.so
