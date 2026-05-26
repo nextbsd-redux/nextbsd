@@ -36,7 +36,7 @@ head/head: head/head.c
 # tail: 5 .c files (forward, misc, read, reverse, tail).
 tail/tail: tail/forward.c tail/misc.c tail/read.c tail/reverse.c tail/tail.c
 	cc $(CFLAGS) -o $@ tail/forward.c tail/misc.c tail/read.c \
-	    tail/reverse.c tail/tail.c
+	    tail/reverse.c tail/tail.c -lutil
 wc/wc: wc/wc.c
 	cc $(CFLAGS) -o $@ wc/wc.c
 # tr: 4 .c files (cmap, cset, str, tr).
