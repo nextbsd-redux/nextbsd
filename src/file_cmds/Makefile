@@ -62,11 +62,12 @@ compress/compress: compress/compress.c compress/zopen.c
 
 # dd: POSIX. Sources: args.c, conv.c, conv_tab.c, dd.c, misc.c,
 # position.c. (gen.c is a standalone test-data generator — has its
-# own main() and isn't linked into dd; skip it.)
+# own main() and isn't linked into dd; skip it.) Links libutil for
+# humanize_number().
 dd/dd: dd/args.c dd/conv.c dd/conv_tab.c dd/dd.c \
        dd/misc.c dd/position.c
 	cc $(CFLAGS) -o $@ dd/args.c dd/conv.c dd/conv_tab.c dd/dd.c \
-	    dd/misc.c dd/position.c
+	    dd/misc.c dd/position.c -lutil
 
 # ipcrm: SysV IPC remove. Pure POSIX/SysV.
 ipcrm/ipcrm: ipcrm/ipcrm.c
