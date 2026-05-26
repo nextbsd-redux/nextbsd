@@ -369,18 +369,25 @@ ls -lh "$WORK/rootfs/bin/chflags" "$WORK/rootfs/bin/rm" \
 #
 #      Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#shell_cmds
 #
-echo "==> building Apple shell_cmds (iter 1: 5 trivial leaf tools)"
+echo "==> building Apple shell_cmds (iter 2: 25 single-source POSIX tools)"
 make -C "$ROOT/src/shell_cmds" install DESTDIR="$WORK/rootfs"
 
 for SHELLCMD_BIN in /usr/bin/true /usr/bin/false \
-                    /bin/echo /bin/sleep /usr/bin/basename; do
+                    /bin/echo /bin/sleep /usr/bin/basename \
+                    /usr/bin/apply /usr/bin/dirname /usr/bin/env \
+                    /usr/bin/getopt /bin/hostname /usr/bin/jot \
+                    /bin/kill /usr/bin/logname /usr/bin/mktemp \
+                    /usr/bin/nice /usr/bin/nohup /usr/bin/printenv \
+                    /usr/bin/printf /bin/pwd /bin/realpath \
+                    /usr/bin/renice /usr/bin/tee /usr/bin/uname \
+                    /usr/bin/what /usr/bin/yes; do
     if [ ! -x "$WORK/rootfs$SHELLCMD_BIN" ]; then
         echo "ERROR: shell_cmds install didn't land $SHELLCMD_BIN" >&2
         exit 1
     fi
 done
 ls -lh "$WORK/rootfs/usr/bin/true" "$WORK/rootfs/bin/echo" \
-       "$WORK/rootfs/usr/bin/basename"
+       "$WORK/rootfs/usr/bin/printf" "$WORK/rootfs/bin/hostname"
 
 #
 # 3b. build mach.ko against the freshly-extracted kernel sources and
