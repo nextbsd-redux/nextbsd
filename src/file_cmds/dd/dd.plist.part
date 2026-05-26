@@ -1,0 +1,24 @@
+	<dict>
+		<key>OpenSourceProject</key>
+		<string>dd</string>
+		<key>OpenSourceVersion</key>
+		<string>2023-05-05</string>
+		<key>OpenSourceWebsiteURL</key>
+		<string>https://cgit.freebsd.org/src/tree/bin/dd?id=5807f35c541c26bbd91a3ae12506cd8dd8f20688</string>
+		<key>OpenSourceImportDate</key>
+		<string>2023-05-05</string>
+		<key>OpenSourceModifications</key>
+		<array>
+			<string>args.c: skip -- for conformance (3570289)</string>
+			<string>args.c, dd.1, dd.h: remove unsupported conv=fdatasync (78112040)</string>
+			<string>args.c: comment on missing size suffixes (78112040)</string>
+			<string>args.c: allow conforming combination of bs/ibs/obs (78112040)</string>
+			<string>dd.1: remove non-applicable refs/xrefs (78112040)</string>
+			<string>dd.c: remove capsicum support (78112040)</string>
+			<string>dd.c: MacOS uses enumeration for device type (3738100)</string>
+			<string>misc.c: change block verbiage back to record (78112040)</string>
+			<string>position.c: remove mtio usage (78112040)</string>
+		</array>
+		<key>OpenSourceLicense</key>
+		<string>bsd</string>
+	</dict>

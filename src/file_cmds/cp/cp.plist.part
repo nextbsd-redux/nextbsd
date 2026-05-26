@@ -1,0 +1,22 @@
+	<dict>
+		<key>OpenSourceProject</key>
+		<string>cp</string>
+		<key>OpenSourceVersion</key>
+		<string>2025-07-02</string>
+		<key>OpenSourceWebsiteURL</key>
+		<string>https://cgit.freebsd.org/src/tree/bin/cp?id=eb439266b433241cec9cbef44328b16056bd6ff7</string>
+		<key>OpenSourceImportDate</key>
+		<string>2025-07-02</string>
+		<key>OpenSourceModifications</key>
+		<array>
+			<string>cp.c: support extended attributes (3753267)</string>
+			<string>cp.1, cp.c, utils.c: support -c, use clonefile(2) (31646965)</string>
+			<string>cp.1, cp.c, utils.c: support -X, discard extended attributes (3875990)</string>
+			<string>utils.c: preserve holes when copying sparse files (29191655)</string>
+			<string>cp.1, cp.c, utils.c: support -S, don't preserve holes (108125880)</string>
+			<string>utils.c: additional symlink check (126480662)</string>
+			<string>utils.c: Avoid copying suppressed permissions (127230603)</string>
+		</array>
+		<key>OpenSourceLicense</key>
+		<string>bsd</string>
+	</dict>

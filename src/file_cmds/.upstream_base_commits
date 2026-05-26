@@ -1,0 +1,162 @@
+#freebsd = https://git.FreeBSD.org/src.git
+#netbsd-src = https://github.com/netbsd/src.git
+
+chflags/chflags.1	freebsd	bin/chflags/chflags.1	bc0d1102225f709770d3027309e15e35bdc8f405
+chflags/chflags.c	freebsd	bin/chflags/chflags.c	2dfa4b66b3d0caaaae6ce2df476b5615f8415a19
+
+chmod/chmod.1	freebsd	bin/chmod/chmod.1	244e58a2dfa22df1dadfe5e61e4905633b0c54cb
+chmod/chmod.c	freebsd	bin/chmod/chmod.c	2dfa4b66b3d0caaaae6ce2df476b5615f8415a19
+
+chown/chgrp.1	freebsd	usr.sbin/chown/chgrp.1	fbbd9655e5107c68e4e0146ff22b73d7350475bc
+chown/chown.8	freebsd	usr.sbin/chown/chown.8	0a9b374ecc85d483a52c2bfad548b1bbda496be3
+chown/chown.c	freebsd	usr.sbin/chown/chown.c	2dfa4b66b3d0caaaae6ce2df476b5615f8415a19
+
+cksum/cksum.1	freebsd	usr.bin/cksum/cksum.1	fbbd9655e5107c68e4e0146ff22b73d7350475bc
+cksum/cksum.c	freebsd	usr.bin/cksum/cksum.c	8a16b7a18f5d0b031f09832fd7752fba717e2a97
+cksum/crc.c	freebsd	usr.bin/cksum/crc.c	8a16b7a18f5d0b031f09832fd7752fba717e2a97
+cksum/crc32.c	freebsd	usr.bin/cksum/crc32.c	821df508e882ca532bec415852399c6558f22f7a
+cksum/print.c	freebsd	usr.bin/cksum/print.c	8a16b7a18f5d0b031f09832fd7752fba717e2a97
+cksum/sum1.c	freebsd	usr.bin/cksum/sum1.c	8a16b7a18f5d0b031f09832fd7752fba717e2a97
+cksum/sum2.c	freebsd	usr.bin/cksum/sum2.c	8a16b7a18f5d0b031f09832fd7752fba717e2a97
+cksum/extern.h	freebsd	usr.bin/cksum/extern.h	8a16b7a18f5d0b031f09832fd7752fba717e2a97
+
+compress/compress.1	freebsd	usr.bin/compress/compress.1	fc1e79740e4a83013aa0050fc95a991ec9c78e27
+compress/compress.c	freebsd	usr.bin/compress/compress.c	b63800ac8f4302b3337449a2e0448aa9bbd0114f
+compress/doc	freebsd	usr.bin/compress/doc	14517324d067fe946e847670396ac2b88dd94a77
+compress/zopen.3	freebsd	usr.bin/compress/zopen.3	fbbd9655e5107c68e4e0146ff22b73d7350475bc
+compress/zopen.c	freebsd	usr.bin/compress/zopen.c	8a16b7a18f5d0b031f09832fd7752fba717e2a97
+compress/zopen.h	freebsd	usr.bin/compress/zopen.h	1de7b4b805ddbf2429da511c053686ac4591ed89
+
+cp/cp.1	freebsd	bin/cp/cp.1	14783ce31437709f9c5778af32f7661a52407b6d
+cp/cp.c	freebsd	bin/cp/cp.c	eb439266b433241cec9cbef44328b16056bd6ff7
+cp/extern.h	freebsd	bin/cp/extern.h	b3fe9014c3214926e0347b891705aa2380f70f8c
+cp/utils.c	freebsd	bin/cp/utils.c	0e0df1fc6753567c0ba1dd81859073b5d59a5a33
+cp/tests/cp_test.sh	freebsd	bin/cp/tests/cp_test.sh	c9fcffff6c596b56484ce58b89850c5fef45acdc
+cp/tests/sparse.c	freebsd	bin/cp/tests/sparse.c	8b418c83d175fde3b1f65210509ddcf2ac248d9f
+
+
+dd/args.c	freebsd	bin/dd/args.c	f4b4526f233c5a84388390279fc40ef8ecaa359f
+dd/conv.c	freebsd	bin/dd/conv.c	8a16b7a18f5d0b031f09832fd7752fba717e2a97
+dd/conv_tab.c	freebsd	bin/dd/conv_tab.c	8a16b7a18f5d0b031f09832fd7752fba717e2a97
+dd/dd.1	freebsd	bin/dd/dd.1	f4b4526f233c5a84388390279fc40ef8ecaa359f
+dd/dd.c	freebsd	bin/dd/dd.c	5807f35c541c26bbd91a3ae12506cd8dd8f20688
+dd/dd.h	freebsd	bin/dd/dd.h	f4b4526f233c5a84388390279fc40ef8ecaa359f
+dd/extern.h	freebsd	bin/dd/extern.h	5807f35c541c26bbd91a3ae12506cd8dd8f20688
+dd/gen.c	freebsd	bin/dd/gen.c	cd1832fe92812ca2b8b8c4b26840806a31023baf
+dd/misc.c	freebsd	bin/dd/misc.c	5807f35c541c26bbd91a3ae12506cd8dd8f20688
+dd/position.c	freebsd	bin/dd/position.c	5807f35c541c26bbd91a3ae12506cd8dd8f20688
+dd/tests/dd2_test.sh	freebsd	bin/dd/tests/dd2_test.sh	5807f35c541c26bbd91a3ae12506cd8dd8f20688
+
+df/df.1	freebsd	bin/df/df.1	2eee44bd5ebcb88bf304215be1b0c68b6802a924
+df/df.c	freebsd	bin/df/df.c	c968598479917f52022b86d0089a9835ddcf2799
+
+du/du.1	freebsd	usr.bin/du/du.1	6d6d6c360322227ba838c53ed72d31937a425800
+du/du.c	freebsd	usr.bin/du/du.c	2dfa4b66b3d0caaaae6ce2df476b5615f8415a19
+
+gzip/gzexe	freebsd	usr.bin/gzip/gzexe	9a9ea25f4a3416fbc10f2a9fef3a482a1c4202e8
+gzip/gzexe.1	freebsd	usr.bin/gzip/gzexe.1	9a9ea25f4a3416fbc10f2a9fef3a482a1c4202e8
+gzip/gzip.1	freebsd	usr.bin/gzip/gzip.1	197884df8a9ef6e7a06b4dcf185a5d4098051651
+gzip/gzip.c	freebsd	usr.bin/gzip/gzip.c	4669f23ef76bd5ff7d122546ca5ed3e8575f1c73
+gzip/tests/foo.diff	freebsd	usr.bin/gzip/tests/foo.diff	5b7adeb1845c7491a655d2b2e1ab55d7b7b96a34
+gzip/tests/t_gzip.sh	freebsd	contrib/netbsd-tests/usr.bin/gzip/t_gzip.sh	57718be8fa0bd5edc11ab9a72e68cc71982939a6
+gzip/tests/zdiff_test.sh	freebsd	usr.bin/gzip/tests/zdiff_test.sh	5b7adeb1845c7491a655d2b2e1ab55d7b7b96a34
+gzip/unbzip2.c	freebsd	usr.bin/gzip/unbzip2.c	1de7b4b805ddbf2429da511c053686ac4591ed89
+gzip/unlz.c	freebsd	usr.bin/gzip/unlz.c	a0eb385c2e9c6ca70a8e2f6267782cdfb836bb25
+gzip/unpack.c	freebsd	usr.bin/gzip/unpack.c	a0eb385c2e9c6ca70a8e2f6267782cdfb836bb25
+gzip/unxz.c	freebsd	usr.bin/gzip/unxz.c	58135fbd8b68228678eb0ce38566aaf7ab1aad94
+gzip/zdiff	freebsd	usr.bin/gzip/zdiff	5b7adeb1845c7491a655d2b2e1ab55d7b7b96a34
+gzip/zdiff.1	freebsd	usr.bin/gzip/zdiff.1	be07528c53cd0aa3a8b5f9338f55148cac709ea8
+gzip/zforce	freebsd	usr.bin/gzip/zforce	9a9ea25f4a3416fbc10f2a9fef3a482a1c4202e8
+gzip/zforce.1	freebsd	usr.bin/gzip/zforce.1	9a9ea25f4a3416fbc10f2a9fef3a482a1c4202e8
+gzip/zmore	freebsd	usr.bin/gzip/zmore	060ea80ecb4587f4da9b95090fc8e5038ff6158e
+gzip/zmore.1	freebsd	usr.bin/gzip/zmore.1	060ea80ecb4587f4da9b95090fc8e5038ff6158e
+gzip/znew	freebsd	usr.bin/gzip/znew	a9f1ad5de1ce2ef7e719516a71946ac9bc55cc4a
+gzip/znew.1	freebsd	usr.bin/gzip/znew.1	9a9ea25f4a3416fbc10f2a9fef3a482a1c4202e8
+gzip/zuncompress.c	freebsd	usr.bin/gzip/zuncompress.c	216f72f1416cb23de8b64ae78702ed30638ca9a9
+
+ipcrm/ipcrm.1	freebsd	usr.bin/ipcrm/ipcrm.1	d51868a30a8782c6141eba40a30239d03f89ddee
+ipcrm/ipcrm.c	freebsd	usr.bin/ipcrm/ipcrm.c	75c1df31cff84d203a3711e12c3ab54057b4c89c
+
+ln/ln.1	freebsd	bin/ln/ln.1	90aea514c6249118e880d75972d063362f4bf492
+ln/ln.c	freebsd	bin/ln/ln.c	8ce85300c792ecfcb9a307577e3af96ea9a4544c
+ln/symlink.7	freebsd	bin/ln/symlink.7	90aea514c6249118e880d75972d063362f4bf492
+ln/tests/ln_test.sh	freebsd	bin/ln/tests/ln_test.sh	8ce85300c792ecfcb9a307577e3af96ea9a4544c
+
+ls/cmp.c	freebsd	bin/ls/cmp.c	8a16b7a18f5d0b031f09832fd7752fba717e2a97
+ls/extern.h	freebsd	bin/ls/extern.h	e10ba80063386211b1c74eb72b4fb0f4093e93c0
+ls/ls.1	freebsd	bin/ls/ls.1	05c207e9e040d21d72f490c1663a96060bb465e9
+ls/ls.c	freebsd	bin/ls/ls.c	3fee777ec5a2e91ffbd9b396e99edae386eb150e
+ls/ls.h	freebsd	bin/ls/ls.h	0fdf7fa846b1a1b1679e86812a1b08b8cb623604
+ls/print.c	freebsd	bin/ls/print.c	e10ba80063386211b1c74eb72b4fb0f4093e93c0
+ls/util.c	freebsd	bin/ls/util.c	e10ba80063386211b1c74eb72b4fb0f4093e93c0
+
+mkdir/mkdir.1	freebsd	bin/mkdir/mkdir.1	fbbd9655e5107c68e4e0146ff22b73d7350475bc
+mkdir/mkdir.c	freebsd	bin/mkdir/mkdir.c	8a16b7a18f5d0b031f09832fd7752fba717e2a97
+
+mkfifo/mkfifo.1	freebsd	usr.bin/mkfifo/mkfifo.1	fbbd9655e5107c68e4e0146ff22b73d7350475bc
+mkfifo/mkfifo.c	freebsd	usr.bin/mkfifo/mkfifo.c	8a16b7a18f5d0b031f09832fd7752fba717e2a97
+
+install/install.1	freebsd	usr.bin/xinstall/install.1	a0439a1b820fa0e742c00d095f5f5c06f5f19432
+install/xinstall.c	freebsd	usr.bin/xinstall/xinstall.c	000a533e6d1db9878296b32d1cc212e11a2cc718
+install/tests/install_test.sh	freebsd	usr.bin/xinstall/tests/install_test.sh	17dc7017d7375b3463d65adffe1eb980b0f86795
+
+mknod/mknod.8	netbsd-src	sbin/mknod/mknod.8	56b14ee00121a3a960d2fbe103c85e147ac57103
+mknod/mknod.c	netbsd-src	sbin/mknod/mknod.c	82d6c74c103b8f86833bfbcfbe0f88027f658b9c
+mknod/pack_dev.c	netbsd-src	sbin/mknod/pack_dev.c	7c50b071195db1a2b106fcebf5f4475683a2e57c
+mknod/pack_dev.h	netbsd-src	sbin/mknod/pack_dev.h	7c50b071195db1a2b106fcebf5f4475683a2e57c
+
+mv/mv.1	freebsd	bin/mv/mv.1	90aea514c6249118e880d75972d063362f4bf492
+mv/mv.c	freebsd	bin/mv/mv.c	dc6105ebedcf762d0c6b42785bb2a914f8ade12c
+mv/tests/mv_test.sh	freebsd	bin/mv/tests/mv_test.sh	d4fb5984ab0b96cc784c907e622deda910d020f2
+
+pathchk/pathchk.1	freebsd	usr.bin/pathchk/pathchk.1	8f3bd46654badc4318169b43e04d367ba23b1e5c
+pathchk/pathchk.c	freebsd	usr.bin/pathchk/pathchk.c	1de7b4b805ddbf2429da511c053686ac4591ed89
+
+pax/ar_io.c	freebsd	bin/pax/ar_io.c	e043f37205ffbde5627ff299ad25cd532f2956f0
+pax/ar_subs.c	freebsd	bin/pax/ar_subs.c	e043f37205ffbde5627ff299ad25cd532f2956f0
+pax/buf_subs.c	freebsd	bin/pax/buf_subs.c	e043f37205ffbde5627ff299ad25cd532f2956f0
+pax/cache.c	freebsd	bin/pax/cache.c	e043f37205ffbde5627ff299ad25cd532f2956f0
+pax/cache.h	freebsd	bin/pax/cache.h	90aea514c6249118e880d75972d063362f4bf492
+pax/cpio.c	freebsd	bin/pax/cpio.c	e043f37205ffbde5627ff299ad25cd532f2956f0
+pax/cpio.h	freebsd	bin/pax/cpio.h	90aea514c6249118e880d75972d063362f4bf492
+pax/extern.h	freebsd	bin/pax/extern.h	90aea514c6249118e880d75972d063362f4bf492
+pax/file_subs.c	freebsd	bin/pax/file_subs.c	681fd2bed8eaba88693867ba928a1c03a5b152cc
+pax/ftree.c	freebsd	bin/pax/ftree.c	e043f37205ffbde5627ff299ad25cd532f2956f0
+pax/ftree.h	freebsd	bin/pax/ftree.h	90aea514c6249118e880d75972d063362f4bf492
+pax/gen_subs.c	freebsd	bin/pax/gen_subs.c	e043f37205ffbde5627ff299ad25cd532f2956f0
+pax/getoldopt.c	freebsd	bin/pax/getoldopt.c	e043f37205ffbde5627ff299ad25cd532f2956f0
+pax/options.c	freebsd	bin/pax/options.c	e043f37205ffbde5627ff299ad25cd532f2956f0
+pax/options.h	freebsd	bin/pax/options.h	90aea514c6249118e880d75972d063362f4bf492
+pax/pat_rep.c	freebsd	bin/pax/pat_rep.c	e043f37205ffbde5627ff299ad25cd532f2956f0
+pax/pat_rep.h	freebsd	bin/pax/pat_rep.h	90aea514c6249118e880d75972d063362f4bf492
+pax/pax.1	freebsd	bin/pax/pax.1	90aea514c6249118e880d75972d063362f4bf492
+pax/pax.c	freebsd	bin/pax/pax.c	f0d6447c0b771cec9a8b47b1f829ec78f7e58ee4
+pax/pax.h	freebsd	bin/pax/pax.h	90aea514c6249118e880d75972d063362f4bf492
+pax/sel_subs.c	freebsd	bin/pax/sel_subs.c	e043f37205ffbde5627ff299ad25cd532f2956f0
+pax/sel_subs.h	freebsd	bin/pax/sel_subs.h	90aea514c6249118e880d75972d063362f4bf492
+pax/tables.c	freebsd	bin/pax/tables.c	e043f37205ffbde5627ff299ad25cd532f2956f0
+pax/tables.h	freebsd	bin/pax/tables.h	90aea514c6249118e880d75972d063362f4bf492
+pax/tar.c	freebsd	bin/pax/tar.c	e043f37205ffbde5627ff299ad25cd532f2956f0
+pax/tar.h	freebsd	bin/pax/tar.h	90aea514c6249118e880d75972d063362f4bf492
+pax/tests/legacy_test.pl	freebsd	bin/pax/tests/legacy_test.pl	d0b2dbfa0ecf2bbc9709efc5e20baf8e4b44bbbf
+pax/tty_subs.c	freebsd	bin/pax/tty_subs.c	e043f37205ffbde5627ff299ad25cd532f2956f0
+
+rm/rm.1	freebsd	bin/rm/rm.1	900c4ed3ca131f4985bfc0b7e073c5a7430cc2b0
+rm/rm.c	freebsd	bin/rm/rm.c	2dfa4b66b3d0caaaae6ce2df476b5615f8415a19
+
+rmdir/rmdir.1	freebsd	bin/rmdir/rmdir.1	fbbd9655e5107c68e4e0146ff22b73d7350475bc
+rmdir/rmdir.c	freebsd	bin/rmdir/rmdir.c	8a16b7a18f5d0b031f09832fd7752fba717e2a97
+
+shar/shar.1	freebsd	usr.bin/shar/shar.1	ab3cf2b4763d5efd1d18375c948fb86a159a3aa5
+shar/shar.sh	freebsd	usr.bin/shar/shar.sh	8a16b7a18f5d0b031f09832fd7752fba717e2a97
+
+stat/stat.1	freebsd	usr.bin/stat/stat.1	39aed6d61a86a7f96437e734f758dace9cf29e04
+stat/stat.c	freebsd	usr.bin/stat/stat.c	f35f34b153b5606e3dc54277273d6dcc2c16074c
+
+touch/touch.1	freebsd	usr.bin/touch/touch.1	2a1fb740484524abbbf0175a5cd26d7c66a621f5
+touch/touch.c	freebsd	usr.bin/touch/touch.c	8a16b7a18f5d0b031f09832fd7752fba717e2a97
+touch/tests/touch_test.sh	freebsd	usr.bin/touch/tests/touch_test.sh	74a4aa9b1517d92bfa85b0b1cd7d4c1262bb1ef9
+
+truncate/tests/truncate_test.sh	freebsd	usr.bin/truncate/tests/truncate_test.sh	10173270495e57efdb58bd1b91f976cf80d927ee
+truncate/truncate.1	freebsd	usr.bin/truncate/truncate.1	c2895f19347c21f3ebb853d417581603cb4fbba0
+truncate/truncate.c	freebsd	usr.bin/truncate/truncate.c	ec9eb9971445f0ad0e753f07d1f981cc30aeb2f8

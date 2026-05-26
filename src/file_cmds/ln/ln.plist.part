@@ -1,0 +1,17 @@
+	<dict>
+		<key>OpenSourceProject</key>
+		<string>ln</string>
+		<key>OpenSourceVersion</key>
+		<string>2025-04-15</string>
+		<key>OpenSourceWebsiteURL</key>
+		<string>https://cgit.freebsd.org/src/tree/bin/ln?id=8ce85300c792ecfcb9a307577e3af96ea9a4544c</string>
+		<key>OpenSourceImportDate</key>
+		<string>2025-04-15</string>
+		<key>OpenSourceModifications</key>
+		<array>
+			<string>symlink.7: lutimes(3) instead of lutimes(2) (5815743)</string>
+			<string>symlink.7: Darwin does not have lpathconf(2) (72902035)</string>
+		</array>
+		<key>OpenSourceLicense</key>
+		<string>bsd</string>
+	</dict>
