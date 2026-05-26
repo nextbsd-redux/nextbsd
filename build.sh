@@ -1989,6 +1989,38 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/pamframeworktest" \
     || { echo "FAIL: pamframeworktest not built"; exit 1; }
 
 #
+# 3y3. PAM port iter 2 — vendor 5 standalone Apple modules from
+#      apple-oss-distributions/pam_modules @ pam_modules-217.100.6
+#      (issue #95). Builds pam_self / pam_rootok / pam_uwtmp /
+#      pam_nologin / pam_env standalone modules, installs over
+#      FreeBSD-pam's same-named files at /usr/lib/pam_NAME.so.6.
+#      Iter 3 will swap /etc/pam.d/* and drop FreeBSD-pam.
+#
+echo "==> PAM iter 2: building 5 standalone Apple modules (src/pam_modules)"
+make -C "$ROOT/src/pam_modules" \
+     DESTDIR="$WORK/rootfs" \
+     PREFIX=/usr \
+     SYSROOT="$WORK/rootfs" \
+     all install
+for m in pam_self pam_rootok pam_uwtmp pam_nologin pam_env; do
+    test -f "$WORK/rootfs/usr/lib/$m.so.6" \
+        || { echo "FAIL: /usr/lib/$m.so.6 not installed"; exit 1; }
+done
+echo "==> 5 Apple PAM modules installed"
+
+# pammodulestest — iter 2 (issue #95) CI gate. dlopens each of the
+# 5 modules + verifies the canonical pam_sm_* entry point exists.
+# Emits PAM-MODULES-OK / PAM-MODULES-FAIL.
+echo "==> building pammodulestest"
+cc -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib" \
+   -Wl,-rpath,/usr/lib -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/pammodulestest" \
+   "$ROOT/src/pam_modules/pammodulestest.c"
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/pammodulestest" \
+    || { echo "FAIL: pammodulestest not built"; exit 1; }
+
+#
 # 3z. purge build packages + clean pkg cache + tear down chroot.
 #     Runs LAST in the build phase, after every chroot-side build
 #     (libdispatch) has used cmake/ninja/clang. Build pkgs (cmake/ninja

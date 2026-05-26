@@ -1082,6 +1082,25 @@ expect {
     }
 }
 
+# PAM-MODULES — issue #95 iter 2 gate. pammodulestest dlopens each
+# of the 5 vendored Apple standalone modules at /usr/lib/pam_NAME.so.6
+# and verifies the canonical pam_sm_* entry point is present.
+# Indirectly verifies the existing post-login marker chain stays
+# green with OUR pam_self.so.6 + pam_uwtmp.so.6 (used by getty/login).
+expect {
+    timeout {
+        puts "\nFAIL: PAM-MODULES marker not seen"
+        exit 1
+    }
+    "PAM-MODULES-FAIL" {
+        puts "\nFAIL: one or more Apple PAM standalone modules failed to load or expose required entry points"
+        exit 1
+    }
+    "PAM-MODULES-OK" {
+        puts "\nOK: 5 Apple PAM standalone modules (pam_self, pam_rootok, pam_uwtmp, pam_nologin, pam_env) loadable + ABI-valid"
+    }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"
