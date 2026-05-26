@@ -1,0 +1,10 @@
+analytics "com.apple.genwrap_test"
+
+application "foo"
+	cwdpath "bin/foo"
+	flag "a"
+	flag "b" arg
+	flag "count" "c" optional_arg
+	flag "C" optional_arg pattern "[0-9]{2,3}"
+	flag "d"
+	flag "t" "type" arg pattern "cat|dog|fish"

@@ -384,7 +384,18 @@ expect {
         puts "\nFAIL: text_cmds leaf binaries missing or non-functional"
         exit 1
     }
-    "TEXTCMD-LEAF-OK" { puts "\nOK: text_cmds iter 1 (5 leaf Apple stream tools overlaid + functional) (#114)" }
+    "TEXTCMD-LEAF-OK" { puts "\nOK: text_cmds Apple stream tools overlaid + functional (#114)" }
+}
+expect {
+    timeout {
+        puts "\nFAIL: ADVCMD-LEAF marker not seen"
+        exit 1
+    }
+    "ADVCMD-LEAF-FAIL" {
+        puts "\nFAIL: adv_cmds leaf binaries missing or non-functional"
+        exit 1
+    }
+    "ADVCMD-LEAF-OK" { puts "\nOK: adv_cmds iter 1 (5 leaf Apple tools overlaid) (#113)" }
 }
 expect {
     timeout {
