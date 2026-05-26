@@ -28,7 +28,7 @@ all: $(ITER1_BINS)
 
 # --- iter 1 (5 single-source-or-near-leaf tools) ---
 tabs/tabs: tabs/tabs.c
-	cc $(CFLAGS) -o $@ tabs/tabs.c
+	cc $(CFLAGS) -o $@ tabs/tabs.c -lncurses
 tty/tty: tty/tty.c
 	cc $(CFLAGS) -o $@ tty/tty.c
 whois/whois: whois/whois.c
