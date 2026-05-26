@@ -81,9 +81,11 @@ dd/dd: dd/args.c dd/conv.c dd/conv_tab.c dd/dd.c \
 ln/ln: ln/ln.c
 	cc $(CFLAGS) -o $@ ln/ln.c
 
-# mknod: POSIX. Sources: mknod.c, pack_dev.c.
+# mknod: POSIX. Sources: mknod.c, pack_dev.c. Apple uses __dead (NetBSD-
+# ism) for non-returning functions; FreeBSD has __dead2. -D__dead=__dead2
+# is the one-line bridge.
 mknod/mknod: mknod/mknod.c mknod/pack_dev.c
-	cc $(CFLAGS) -o $@ mknod/mknod.c mknod/pack_dev.c
+	cc $(CFLAGS) -D__dead=__dead2 -o $@ mknod/mknod.c mknod/pack_dev.c
 
 # rm: POSIX (with FreeBSD-style -P secure-overwrite extension).
 rm/rm: rm/rm.c
