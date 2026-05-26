@@ -390,6 +390,28 @@ ls -lh "$WORK/rootfs/usr/bin/true" "$WORK/rootfs/bin/echo" \
        "$WORK/rootfs/usr/bin/printf" "$WORK/rootfs/bin/hostname"
 
 #
+# 3a5. build Apple text_cmds (#114 / #105e iter 1). Third Apple-
+#      userland-cmds repo port. Vendored from apple-oss-distributions/
+#      text_cmds@text_cmds-199 at src/text_cmds/. Iter 1 scope: 5
+#      universally-used POSIX stream processors (cat, head, tail, wc,
+#      tr).
+#
+#      Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#text_cmds
+#
+echo "==> building Apple text_cmds (iter 1: 5 POSIX stream tools)"
+make -C "$ROOT/src/text_cmds" install DESTDIR="$WORK/rootfs"
+
+for TEXTCMD_BIN in /bin/cat /usr/bin/head /usr/bin/tail \
+                   /usr/bin/wc /usr/bin/tr; do
+    if [ ! -x "$WORK/rootfs$TEXTCMD_BIN" ]; then
+        echo "ERROR: text_cmds install didn't land $TEXTCMD_BIN" >&2
+        exit 1
+    fi
+done
+ls -lh "$WORK/rootfs/bin/cat" "$WORK/rootfs/usr/bin/head" \
+       "$WORK/rootfs/usr/bin/tail" "$WORK/rootfs/usr/bin/tr"
+
+#
 # 3b. build mach.ko against the freshly-extracted kernel sources and
 #     install it into $WORK/rootfs/boot/kernel/mach.ko so it ships
 #     inside rootfs.uzip. Step 8 below also copies it onto the cd9660
