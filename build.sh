@@ -290,18 +290,16 @@ done
 # Confirm a few load-bearing binaries from each category are actually
 # present + executable in the rootfs after the manifest run. Catches
 # silent "make install" no-ops (e.g., if a Makefile's PROG variable
-# was renamed upstream). Includes one libsysdecode-consumer (truss)
-# to verify the codegen-prereq path ran cleanly.
+# was renamed upstream).
 for KEY_BIN in /sbin/kldload /sbin/mount /bin/kenv \
-               /usr/bin/truss /usr/bin/kdump \
-               /usr/sbin/pciconf; do
+               /usr/bin/ldd /usr/sbin/pciconf; do
     if [ ! -x "$WORK/rootfs$KEY_BIN" ]; then
         echo "ERROR: fbsdglue manifest didn't install $KEY_BIN" >&2
         exit 1
     fi
 done
 ls -lh "$WORK/rootfs/sbin/kldload" "$WORK/rootfs/sbin/mount" \
-       "$WORK/rootfs/bin/kenv" "$WORK/rootfs/usr/bin/truss" \
+       "$WORK/rootfs/bin/kenv" "$WORK/rootfs/usr/bin/ldd" \
        "$WORK/rootfs/usr/sbin/pciconf"
 
 #

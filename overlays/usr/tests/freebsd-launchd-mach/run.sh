@@ -244,81 +244,59 @@ else
     exit 1
 fi
 
-# 6.5. fbsdglue iter 2 (#109 / #105a iter 2). Validates the FULL
-# srclist-fbsdglue.txt — 43 entries spanning all KEEP verdicts from
-# the srclist build plan §9.5.1 (truly-FreeBSD-only set). Expands
-# iter 1's 11-binary check; includes the codegen-prereq cases
-# (kdump/truss link libsysdecode, which iter-1 didn't exercise).
+# 6.5. fbsdglue iter 2 (#109 / #105a iter 2). Validates srclist-
+# fbsdglue.txt — 25 entries covering boot-critical kernel-bound
+# platform glue + ldd + HW/FS introspection + user mgmt + save-
+# entropy. The BSD-debug toolkit (fstat/sockstat/procstat/kdump/
+# ktrace/strings/top/vmstat/etc.) is DEFERRED per the srclist build
+# plan §9.6.6 iteration log — nothing in current CI uses them, and
+# they pull in FreeBSD privatelib prereqs (libsysdecode, libelftc,
+# libprocstat, libmemstat) that aren't load-bearing for the Apple-
+# repo ports that follow.
 #
-# Per-binary check: file exists, is executable, and (for tools that
-# accept it) runs with a harmless query flag. Catches silent install
-# no-ops, unresolved-symbol rtld failures, and codegen-prereq mismatches
-# (e.g., if libsysdecode build didn't populate tables.h, truss/kdump
-# would either fail to compile in build.sh or fail to link at runtime).
+# Per-binary check: file exists, is executable. Catches silent
+# install no-ops and unresolved-symbol rtld failures.
 #
 # Also confirms /rescue/ does NOT exist on the ISO.
 #
 # Plan: https://pkgdemon.github.io/freebsd-srclist-build-plan.html
 FBSDGLUE_FAIL=0
-# Iter 1 minimal set (boot-critical):
+# bin/ + sbin/ (kernel-bound + UFS):
 for fbin in /bin/freebsd-version /bin/kenv \
-            /sbin/devfs /sbin/fsck \
+            /sbin/devfs /sbin/fsck /sbin/fsck_ffs \
             /sbin/kldconfig /sbin/kldload /sbin/kldstat /sbin/kldunload \
-            /sbin/ldconfig /sbin/mount /sbin/umount; do
+            /sbin/ldconfig /sbin/mount /sbin/newfs /sbin/tunefs /sbin/umount; do
     if [ ! -x "$fbin" ]; then
         echo "FBSDGLUE-FAIL: $fbin missing or not executable"
         ls -la "$fbin" 2>&1 || true
         FBSDGLUE_FAIL=1
     fi
 done
-# Iter 2 expansion: sbin UFS family + user mgmt
-# (camcontrol deferred — needs lib/libnvmf privatelib prereq;
-#  not load-bearing for our use, add back when a real consumer surfaces)
-for fbin in /sbin/fsck_ffs /sbin/newfs /sbin/tunefs; do
+# usr.bin/ldd is the one debug tool we keep — "why won't this .so
+# resolve" is the most common question during Apple-port work.
+if [ ! -x /usr/bin/ldd ]; then
+    echo "FBSDGLUE-FAIL: /usr/bin/ldd missing"
+    FBSDGLUE_FAIL=1
+fi
+# usr.sbin/ FreeBSD HW/FS introspection + user mgmt + libexec.
+for fbin in /usr/sbin/devctl /usr/sbin/diskinfo \
+            /usr/sbin/fstyp /usr/sbin/gstat \
+            /usr/sbin/kldxref /usr/sbin/pciconf /usr/sbin/pw \
+            /usr/libexec/save-entropy; do
     if [ ! -x "$fbin" ]; then
         echo "FBSDGLUE-FAIL: $fbin missing or not executable"
         ls -la "$fbin" 2>&1 || true
         FBSDGLUE_FAIL=1
     fi
 done
-# nologin can land at /sbin/ or /usr/sbin/ depending on Makefile BINDIR;
-# accept either:
+# nologin can land at /sbin/ or /usr/sbin/ depending on Makefile
+# BINDIR; usr.sbin/nologin Makefile LINKs to /sbin/nologin too.
 if [ ! -x /sbin/nologin ] && [ ! -x /usr/sbin/nologin ]; then
     echo "FBSDGLUE-FAIL: nologin missing from /sbin/ AND /usr/sbin/"
     ls -la /sbin/nologin /usr/sbin/nologin 2>&1 || true
     FBSDGLUE_FAIL=1
 fi
-# Iter 2 expansion: usr.bin debug + introspection tools.
-# kdump/truss exercise the libsysdecode codegen-prereq path —
-# if iter 2 ordered-manifest build failed to pre-build libsysdecode,
-# these would not exist (build.sh exits on per-tool make failure).
-for fbin in /usr/bin/fetch /usr/bin/file \
-            /usr/bin/fstat /usr/bin/fuser \
-            /usr/bin/getent \
-            /usr/bin/kdump /usr/bin/ktrace /usr/bin/ktrdump \
-            /usr/bin/ldd \
-            /usr/bin/procstat /usr/bin/sockstat \
-            /usr/bin/strings /usr/bin/systat \
-            /usr/bin/top /usr/bin/truss /usr/bin/vmstat; do
-    if [ ! -x "$fbin" ]; then
-        echo "FBSDGLUE-FAIL: $fbin missing or not executable"
-        ls -la "$fbin" 2>&1 || true
-        FBSDGLUE_FAIL=1
-    fi
-done
-# Iter 2 expansion: usr.sbin FreeBSD HW/FS introspection + libexec.
-for fbin in /usr/sbin/devctl /usr/sbin/diskinfo \
-            /usr/sbin/fstyp /usr/sbin/gstat \
-            /usr/sbin/kldxref /usr/sbin/pciconf /usr/sbin/pw \
-            /usr/libexec/save-entropy; do
-    # crashinfo is a shell script; check separately
-    if [ ! -x "$fbin" ]; then
-        echo "FBSDGLUE-FAIL: $fbin missing or not executable"
-        ls -la "$fbin" 2>&1 || true
-        FBSDGLUE_FAIL=1
-    fi
-done
-# crashinfo is a shell script — check for presence + readability
+# crashinfo is a shell script — check for presence + readability.
 if [ ! -r /usr/sbin/crashinfo ]; then
     echo "FBSDGLUE-FAIL: /usr/sbin/crashinfo missing"
     ls -la /usr/sbin/crashinfo 2>&1 || true
@@ -330,26 +308,12 @@ if [ -d /rescue ]; then
     ls -la /rescue 2>&1 | head -5 || true
     FBSDGLUE_FAIL=1
 fi
-# Probe libsysdecode-consumers explicitly — they're the codegen-prereq
-# canaries. If lib/libsysdecode didn't pre-build correctly, truss/kdump
-# either wouldn't exist (build.sh exits on make failure) or wouldn't
-# link (unresolved sysdecode_* symbols at rtld time).
-if [ $FBSDGLUE_FAIL -eq 0 ]; then
-    if ! /usr/bin/truss -d /bin/freebsd-version >/dev/null 2>&1; then
-        # truss self-test: trace freebsd-version (trivial command). If
-        # truss is fundamentally broken (rtld failure / sysdecode link
-        # mismatch), this fails. -d prints relative timestamps.
-        echo "FBSDGLUE-FAIL: truss couldn't trace /bin/freebsd-version"
-        /usr/bin/truss -d /bin/freebsd-version 2>&1 | head -10 || true
-        FBSDGLUE_FAIL=1
-    fi
-fi
 if [ $FBSDGLUE_FAIL -eq 0 ]; then
     # Sanity-probe a few: their --version/-h paths exit 0 quickly.
     kldstat_count=$(kldstat 2>/dev/null | wc -l | tr -d ' ')
     kenv_count=$(kenv 2>/dev/null | wc -l | tr -d ' ')
     mount_count=$(mount 2>/dev/null | wc -l | tr -d ' ')
-    echo "FBSDGLUE-OK: 41/41 fbsdglue binaries present + executable (camcontrol + hostid deferred/dropped); libsysdecode codegen-prereq path verified via truss; kldstat=${kldstat_count} kenv=${kenv_count} mount=${mount_count}; /rescue/ absent"
+    echo "FBSDGLUE-OK: 25/25 fbsdglue binaries present + executable; BSD-debug toolkit deferred; kldstat=${kldstat_count} kenv=${kenv_count} mount=${mount_count}; /rescue/ absent"
 else
     exit 1
 fi

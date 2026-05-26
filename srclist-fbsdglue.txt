@@ -1,50 +1,36 @@
-# srclist-fbsdglue.txt — irreducibly-FreeBSD-only /usr/src dirs that ship
-# on the live ISO from /usr/src builds (not from pkgbase pkgs).
+# srclist-fbsdglue.txt — irreducibly-FreeBSD-only /usr/src dirs that
+# ship on the live ISO from /usr/src builds (not from pkgbase pkgs).
 #
-# Iter 2 (#109 / #105a iter 2): FULL 43 entries. Expands iter 1's
-# minimal 11-entry validation set to cover all KEEP entries from the
-# srclist build plan §9.5.1 — the truly-FreeBSD-only set (kernel-bound
-# platform glue + BSD-specific debug tools with no Apple analogue).
+# Iter 2 (#109 / #105a iter 2): minimal-shippable set. 25 entries
+# covering boot-critical kernel-bound platform glue (kld* family,
+# UFS mount/fsck/newfs, devfs, ldconfig) + essential dev-debug tool
+# (ldd for "why isn't this .so resolving") + FreeBSD HW/FS
+# introspection that has no Apple analogue (devctl, diskinfo, gstat,
+# pciconf) + user mgmt (pw, nologin) + post-panic forensics
+# (crashinfo) + entropy daemon helper (save-entropy).
 #
-# Includes the codegen-prereq case (`kdump`/`truss` link `libsysdecode`
-# which has its own `mktables`-generated `tables.h` — same shape as
-# the `lib/libifconfig` prereq from PR #107). Manifest is iterated in
-# file order so prereq libs can be listed above consumers.
-#
-# Future iters will not need to expand this set — the next ~155
-# Apple-replaceable binaries land via Apple-userland-cmds repo ports
-# (#105b–#105g) via the OpenPAM iter-3 overlay-overwrite pattern,
-# not via this manifest. #105h finally drops FreeBSD-runtime/utilities/
-# pam-lib pkgs from pkglist-base.txt once srclist-fbsdglue.txt owns
-# every non-Apple path the ISO needs.
+# DEFERRED 2026-05-26: the BSD-debug toolkit (fstat, sockstat,
+# procstat, fuser-as-LINK, kdump, ktrace, ktrdump, strings, systat,
+# top, truss, vmstat, file, fetch, getent). Nothing in current CI,
+# boot path, or test harness uses them; Apple-port work doesn't
+# trigger the FreeBSD privatelib chain (libsysdecode, libelftc,
+# libprocstat, libmemstat) they pull in. Add back later when an
+# actual debug session demands one — at which point the per-tool
+# privatelib prereq joins the manifest too.
 #
 # Plan: https://pkgdemon.github.io/freebsd-srclist-build-plan.html
 #
 # Per-line format: <relative path under /usr/src>; # for comments;
-# empty lines ignored. Iterated by build.sh step 3a2 in file order.
-
-# --- prereq libs (built BEFORE consumers; populate obj-tree artifacts
-#     consumers need at compile time — generated headers or
-#     PIE-suffix static archives only present in obj-tree) ---
-# libsysdecode generates tables.h / tables_linux.h / ioctl.c via
-# mktables sh + mkioctls. Consumers kdump + truss link against it.
-lib/libsysdecode
-# libelftc is a FreeBSD privatelib (ELF toolchain helper). Its
-# libelftc_pie.a only exists in ${OBJTOP}/lib/libelftc/ after
-# source build. Consumer: usr.bin/strings (CI iter-2 run
-# 26459928204 surfaced this: "ld: error: unable to find library
-# -lelftc_pie").
-lib/libelftc
+# empty lines ignored. Iterated by build.sh step 3a2 in file order
+# (so prereq libs can be listed above consumers when needed).
 
 # --- bin/ ---
 bin/freebsd-version
 bin/kenv
 
 # --- sbin/ kernel-bound (kld(4), VFS, devfs, rtld hint) + UFS family ---
-# camcontrol DEFERRED 2026-05-26 — needs lib/libnvmf privatelib
-# prereq (NVMe-over-Fabrics), and isn't load-bearing for our use:
-# CI uses virtio (no CAM), real-hw dev work is marginal. Add back
-# in a follow-up if a real consumer surfaces.
+# (sbin/camcontrol DEFERRED — needs lib/libnvmf privatelib prereq;
+#  not load-bearing for CI virtio or daily dev.)
 sbin/devfs
 sbin/fsck
 sbin/fsck_ffs
@@ -57,34 +43,9 @@ sbin/mount
 sbin/newfs
 sbin/tunefs
 sbin/umount
-# nologin: SOURCE dir is usr.sbin/nologin (Makefile installs to
-# /usr/sbin/nologin AND LINKS to /sbin/nologin). Listed below in
-# usr.sbin/ section, not here.
 
-# --- usr.bin/ BSD-specific debug + introspection ---
-# (Apple has lsof / sample / dtrace / otool, different shape; ours
-#  expect BSD shape)
-usr.bin/fetch
-usr.bin/file
-usr.bin/fstat
-# fuser source lives at usr.bin/fstat (Makefile LINKs /usr/bin/fuser
-# to /usr/bin/fstat). CI iter 2 run 26459388127 surfaced this.
-usr.bin/getent
-# hostid: NOT a binary on FreeBSD. Plan KEEP list had it as a
-# binary but FreeBSD's hostid is just /etc/rc.d/hostid (shell
-# script) that reads /etc/hostid (UUID file) into sysctl
-# kern.hostuuid. CI iter 2 run 26459641829 surfaced this. Dropped.
-usr.bin/kdump
-usr.bin/ktrace
-usr.bin/ktrdump
+# --- usr.bin/ — minimal set; debug toolkit deferred (see comment) ---
 usr.bin/ldd
-usr.bin/procstat
-usr.bin/sockstat
-usr.bin/strings
-usr.bin/systat
-usr.bin/top
-usr.bin/truss
-usr.bin/vmstat
 
 # --- usr.sbin/ FreeBSD HW/FS introspection + user mgmt ---
 usr.sbin/crashinfo
@@ -93,10 +54,6 @@ usr.sbin/diskinfo
 usr.sbin/fstyp
 usr.sbin/gstat
 usr.sbin/kldxref
-# nologin source lives at usr.sbin/nologin (Makefile installs to
-# /usr/sbin/nologin AND LINKS to /sbin/nologin). Earlier iter 2
-# CI run failed with "sbin/nologin not under usr/src" because the
-# entry was wrong; corrected here.
 usr.sbin/nologin
 usr.sbin/pciconf
 usr.sbin/pw
