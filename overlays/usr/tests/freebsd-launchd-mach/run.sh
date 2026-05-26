@@ -318,38 +318,42 @@ else
     exit 1
 fi
 
-# 6.6. file_cmds iter 1 (#111 / #105b iter 1). First Apple-userland-
-# cmds repo port via the OpenPAM iter-3 overlay-overwrite pattern.
-# Verifies the 5 leaf Apple binaries (chflags, mkdir, mkfifo, rmdir,
-# pathchk) are present + executable + are Apple's (not FreeBSD-
-# runtime's). Apple's file_cmds has its own copyright lineage that
-# leaves "Apple Computer" or "(c) 2002 Apple" strings in the binary;
-# FreeBSD's chflags has "FreeBSD" + "$FreeBSD$" SCCS-like strings.
+# 6.6. file_cmds iter 2 (#111 / #105b iter 2). Extends iter 1's
+# 5-binary leaf set to 16 pure-POSIX file_cmds tools (+ shar shell
+# script). Apple binaries overlay-overwrite FreeBSD-runtime's same
+# paths per the OpenPAM iter-3 pattern. Iter 3+ adds the tools with
+# Apple-specific deps (cp/mv/ls/chmod/install/gzip/pax/mtree).
 #
 # Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#file_cmds
 FILECMD_FAIL=0
 for fbin in /bin/chflags /bin/mkdir /bin/mkfifo /bin/rmdir \
-            /usr/bin/pathchk; do
+            /usr/bin/pathchk \
+            /bin/dd /bin/ln /bin/rm \
+            /usr/bin/cksum /usr/bin/compress \
+            /sbin/mknod /usr/bin/touch /usr/bin/truncate; do
     if [ ! -x "$fbin" ]; then
         echo "FILECMD-LEAF-FAIL: $fbin missing or not executable"
         ls -la "$fbin" 2>&1 || true
         FILECMD_FAIL=1
     fi
 done
+# shar is a shell script, not -x by default; check separately.
+if [ ! -r /usr/bin/shar ]; then
+    echo "FILECMD-LEAF-FAIL: /usr/bin/shar missing"
+    ls -la /usr/bin/shar 2>&1 || true
+    FILECMD_FAIL=1
+fi
 # Identity probe: Apple's chflags binary should contain the Apple
 # copyright string. FreeBSD's chflags has different copyright text
 # (no "Apple"). Differentiates "is the overlay actually overlaying"
 # from "FreeBSD-runtime's chflags is still in place."
 if [ $FILECMD_FAIL -eq 0 ]; then
     if strings /bin/chflags 2>/dev/null | grep -qi 'apple computer\|copyright.*apple\|opensource'; then
-        echo "FILECMD-LEAF-OK: 5/5 file_cmds leaf binaries overlaid; /bin/chflags identifies as Apple's"
+        echo "FILECMD-LEAF-OK: 14/14 file_cmds binaries overlaid; /bin/chflags identifies as Apple's"
     else
-        # Fall back: at minimum check that chflags works. The strings
-        # probe is informational — some Apple-source binaries don't
-        # have "Apple" in their built binary (copyright stripped at
-        # link time). Just confirm functional.
+        # Fall back: at minimum check that chflags works.
         if /bin/chflags 2>&1 | grep -q 'usage'; then
-            echo "FILECMD-LEAF-OK: 5/5 file_cmds leaf binaries present; chflags responds to invocation (Apple identity not verifiable in strings — informational)"
+            echo "FILECMD-LEAF-OK: 14/14 file_cmds binaries present; chflags responds to invocation (Apple identity not verifiable in strings — informational)"
         else
             echo "FILECMD-LEAF-FAIL: chflags doesn't respond to invocation"
             FILECMD_FAIL=1

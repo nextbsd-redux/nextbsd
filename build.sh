@@ -333,22 +333,28 @@ ls -lh "$WORK/rootfs/sbin/kldload" "$WORK/rootfs/sbin/mount" \
 #
 #      Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#file_cmds
 #
-echo "==> building Apple file_cmds (iter 1: 5 leaf tools)"
+echo "==> building Apple file_cmds (iter 2: 16 pure-POSIX tools)"
 make -C "$ROOT/src/file_cmds" install DESTDIR="$WORK/rootfs"
 
-# Confirm Apple binaries are present + identifiable as Apple's
-# (Apple's file_cmds strings contain "Apple Computer" or
-# "FreeBSD" with __FBSDID variants).
+# Confirm Apple binaries are present (iter 1 + iter 2). Apple's
+# file_cmds strings contain "Apple Computer" or apple-source
+# __APPLE__ guards; FreeBSD's same tools have "FreeBSD" + __FBSDID
+# variants. Boot-test marker probes binary identity for one
+# representative (chflags); per-path existence check here covers
+# silent install no-ops.
 for FILECMD_BIN in /bin/chflags /bin/mkdir /bin/mkfifo /bin/rmdir \
-                   /usr/bin/pathchk; do
+                   /usr/bin/pathchk \
+                   /bin/dd /bin/ln /bin/rm \
+                   /usr/bin/cksum /usr/bin/compress \
+                   /sbin/mknod /usr/bin/shar \
+                   /usr/bin/touch /usr/bin/truncate; do
     if [ ! -x "$WORK/rootfs$FILECMD_BIN" ]; then
         echo "ERROR: file_cmds install didn't land $FILECMD_BIN" >&2
         exit 1
     fi
 done
-ls -lh "$WORK/rootfs/bin/chflags" "$WORK/rootfs/bin/mkdir" \
-       "$WORK/rootfs/bin/mkfifo" "$WORK/rootfs/bin/rmdir" \
-       "$WORK/rootfs/usr/bin/pathchk"
+ls -lh "$WORK/rootfs/bin/chflags" "$WORK/rootfs/bin/rm" \
+       "$WORK/rootfs/usr/bin/touch" "$WORK/rootfs/sbin/mknod"
 
 #
 # 3b. build mach.ko against the freshly-extracted kernel sources and
