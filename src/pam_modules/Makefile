@@ -46,7 +46,8 @@ CFLAGS_COMMON =	-fPIC -O2 -pipe -fblocks \
 		-I${.CURDIR}/common \
 		-I${.CURDIR}/../OpenPAM/openpam/include \
 		-I${.CURDIR}/../OpenPAM/freebsd-shims \
-		-DLT_OBJDIR='"libs/"'
+		-DLT_OBJDIR='"libs/"' \
+		-DUTMPX_AUTOFILL_MASK=0
 
 SYSROOT ?=
 .if !empty(SYSROOT)
