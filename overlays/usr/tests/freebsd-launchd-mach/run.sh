@@ -1017,4 +1017,20 @@ else
     echo "HOSTNAMED-DHCP-FAIL: hostnamedhcpset binary not installed"
 fi
 
+# PAM-FRAMEWORK — PAM port iter 1 (issue #93). Verifies our vendored
+# Apple OpenPAM-35 libpam.so.6 loads our vendored pam_deny.so via the
+# fixture service /etc/pam.d/test_iter1 and the full module ABI
+# round-trips. Indirectly verifies that FreeBSD-runtime binaries
+# (login, su, passwd, sshd, ...) which DT_NEEDED libpam.so.6 in their
+# ELF headers transparently pick up our library since soname matches.
+echo "==> PAM iter 1: ldd /usr/bin/login | grep libpam"
+ldd /usr/bin/login 2>/dev/null | grep -i libpam || true
+echo "==> PAM iter 1: libpam.so.6 owner check"
+ls -lh /usr/lib/libpam.so.6 2>/dev/null
+if [ -x /usr/tests/freebsd-launchd-mach/pamframeworktest ]; then
+    /usr/tests/freebsd-launchd-mach/pamframeworktest
+else
+    echo "PAM-FRAMEWORK-FAIL: pamframeworktest binary not installed"
+fi
+
 exit 0

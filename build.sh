@@ -1943,6 +1943,52 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hostnamedhcpset" \
 echo "==> hostnamed + hostnametest + hostnameprefset + hostnamedhcpset built"
 
 #
+# 3y2. PAM port iter 1 — vendor Apple OpenPAM (issue #93). Builds
+#      libpam.so.6 + the 3 bundled modules (pam_unix, pam_deny,
+#      pam_permit) from apple-oss-distributions/OpenPAM @ OpenPAM-35.
+#      Installs over FreeBSD-pam-lib's libpam.so.6 and over
+#      FreeBSD-pam's same-named modules. The remaining FreeBSD-pam
+#      modules (pam_xdg, pam_lastlog, pam_login_access, etc.) stay,
+#      so existing /etc/pam.d/* keeps working — this iter is purely
+#      ABI verification (FreeBSD modules load against our libpam).
+#      Iter 2 vendors the 5 standalone Apple modules from pam_modules;
+#      iter 3 swaps /etc/pam.d/* + drops FreeBSD-pam packages.
+#      Plan: pkgdemon.github.io/freebsd-pam-port-plan.html
+#
+echo "==> PAM iter 1: building Apple OpenPAM (src/OpenPAM)"
+make -C "$ROOT/src/OpenPAM" \
+     DESTDIR="$WORK/rootfs" \
+     PREFIX=/usr \
+     SYSROOT="$WORK/rootfs" \
+     all install
+test -f "$WORK/rootfs/usr/lib/libpam.so.6" \
+    || { echo "FAIL: /usr/lib/libpam.so.6 not installed"; exit 1; }
+test -f "$WORK/rootfs/usr/lib/pam_unix.so.6" \
+    || { echo "FAIL: /usr/lib/pam_unix.so.6 not installed"; exit 1; }
+test -f "$WORK/rootfs/usr/lib/pam_deny.so.6" \
+    || { echo "FAIL: /usr/lib/pam_deny.so.6 not installed"; exit 1; }
+test -f "$WORK/rootfs/usr/lib/pam_permit.so.6" \
+    || { echo "FAIL: /usr/lib/pam_permit.so.6 not installed"; exit 1; }
+echo "==> OpenPAM iter 1 installed (libpam.so.6 + 3 modules)"
+
+# pamframeworktest — iter 1 (issue #93) CI gate. Programmatic
+# pam_start("test_iter1", "root", ...) + pam_authenticate against an
+# overlay /etc/pam.d/test_iter1 containing only "auth required
+# pam_deny.so". Exits 0 (and emits PAM-FRAMEWORK-OK) when
+# pam_authenticate returns PAM_AUTH_ERR — which proves that our
+# libpam.so loaded our pam_deny.so via dlopen + it returned the
+# expected verdict.
+echo "==> building pamframeworktest"
+cc -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib" \
+   -Wl,-rpath,/usr/lib -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/pamframeworktest" \
+   "$ROOT/src/OpenPAM/pamframeworktest.c" \
+   -lpam
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/pamframeworktest" \
+    || { echo "FAIL: pamframeworktest not built"; exit 1; }
+
+#
 # 3z. purge build packages + clean pkg cache + tear down chroot.
 #     Runs LAST in the build phase, after every chroot-side build
 #     (libdispatch) has used cmake/ninja/clang. Build pkgs (cmake/ninja

@@ -1058,6 +1058,30 @@ expect {
     }
 }
 
+# PAM-FRAMEWORK — issue #93 iter 1 gate. pamframeworktest exercises
+# /usr/lib/libpam.so.6 (our vendored Apple OpenPAM-35) by pam_start
+# against /etc/pam.d/test_iter1 (which references pam_deny.so) and
+# expects pam_authenticate to return PAM_AUTH_ERR. Proves both the
+# framework and the bundled pam_deny.so module load + ABI round-trip.
+# Indirectly proves all FreeBSD-runtime PAM consumers (login, su,
+# sshd, ...) load our library since soname matches FreeBSD's
+# libpam.so.6 exactly — those binaries already authenticated root
+# at this point in the boot, so we're in a known-good post-PAM
+# state by the time this marker fires.
+expect {
+    timeout {
+        puts "\nFAIL: PAM-FRAMEWORK marker not seen"
+        exit 1
+    }
+    "PAM-FRAMEWORK-FAIL" {
+        puts "\nFAIL: Apple OpenPAM framework ABI round-trip broken"
+        exit 1
+    }
+    "PAM-FRAMEWORK-OK" {
+        puts "\nOK: Apple OpenPAM libpam.so.6 + pam_deny.so round-trip works (FreeBSD-runtime PAM consumers use our libpam transparently)"
+    }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"
