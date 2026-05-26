@@ -272,7 +272,9 @@ for fbin in /bin/freebsd-version /bin/kenv \
     fi
 done
 # Iter 2 expansion: sbin UFS family + user mgmt
-for fbin in /sbin/camcontrol /sbin/fsck_ffs /sbin/newfs /sbin/tunefs; do
+# (camcontrol deferred — needs lib/libnvmf privatelib prereq;
+#  not load-bearing for our use, add back when a real consumer surfaces)
+for fbin in /sbin/fsck_ffs /sbin/newfs /sbin/tunefs; do
     if [ ! -x "$fbin" ]; then
         echo "FBSDGLUE-FAIL: $fbin missing or not executable"
         ls -la "$fbin" 2>&1 || true
@@ -347,7 +349,7 @@ if [ $FBSDGLUE_FAIL -eq 0 ]; then
     kldstat_count=$(kldstat 2>/dev/null | wc -l | tr -d ' ')
     kenv_count=$(kenv 2>/dev/null | wc -l | tr -d ' ')
     mount_count=$(mount 2>/dev/null | wc -l | tr -d ' ')
-    echo "FBSDGLUE-OK: 43/43 fbsdglue binaries present + executable; libsysdecode codegen-prereq path verified via truss; kldstat=${kldstat_count} kenv=${kenv_count} mount=${mount_count}; /rescue/ absent"
+    echo "FBSDGLUE-OK: 42/42 fbsdglue binaries present + executable (camcontrol deferred); libsysdecode codegen-prereq path verified via truss; kldstat=${kldstat_count} kenv=${kenv_count} mount=${mount_count}; /rescue/ absent"
 else
     exit 1
 fi

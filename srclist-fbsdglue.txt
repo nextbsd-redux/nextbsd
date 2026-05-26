@@ -29,19 +29,16 @@
 # libsysdecode generates tables.h / tables_linux.h / ioctl.c via
 # mktables sh + mkioctls. Consumers kdump + truss link against it.
 lib/libsysdecode
-# libnvmf is a FreeBSD privatelib for NVMe-over-Fabrics, not
-# installed to /usr/lib by pkgbase. Its libnvmf_pie.a static archive
-# only exists in ${OBJTOP}/lib/libnvmf/ after a source build.
-# Consumer: sbin/camcontrol (CI iter-2 failure 26458819290 surfaced
-# this: "ld: error: unable to find library -lnvmf_pie").
-lib/libnvmf
 
 # --- bin/ ---
 bin/freebsd-version
 bin/kenv
 
 # --- sbin/ kernel-bound (kld(4), VFS, devfs, rtld hint) + UFS family ---
-sbin/camcontrol
+# camcontrol DEFERRED 2026-05-26 — needs lib/libnvmf privatelib
+# prereq (NVMe-over-Fabrics), and isn't load-bearing for our use:
+# CI uses virtio (no CAM), real-hw dev work is marginal. Add back
+# in a follow-up if a real consumer surfaces.
 sbin/devfs
 sbin/fsck
 sbin/fsck_ffs
@@ -52,9 +49,11 @@ sbin/kldunload
 sbin/ldconfig
 sbin/mount
 sbin/newfs
-sbin/nologin
 sbin/tunefs
 sbin/umount
+# nologin: SOURCE dir is usr.sbin/nologin (Makefile installs to
+# /usr/sbin/nologin AND LINKS to /sbin/nologin). Listed below in
+# usr.sbin/ section, not here.
 
 # --- usr.bin/ BSD-specific debug + introspection ---
 # (Apple has lsof / sample / dtrace / otool, different shape; ours
@@ -84,6 +83,11 @@ usr.sbin/diskinfo
 usr.sbin/fstyp
 usr.sbin/gstat
 usr.sbin/kldxref
+# nologin source lives at usr.sbin/nologin (Makefile installs to
+# /usr/sbin/nologin AND LINKS to /sbin/nologin). Earlier iter 2
+# CI run failed with "sbin/nologin not under usr/src" because the
+# entry was wrong; corrected here.
+usr.sbin/nologin
 usr.sbin/pciconf
 usr.sbin/pw
 
