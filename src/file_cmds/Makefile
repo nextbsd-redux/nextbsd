@@ -95,9 +95,11 @@ rm/rm: rm/rm.c
 touch/touch: touch/touch.c
 	cc $(CFLAGS) -o $@ touch/touch.c
 
-# truncate: POSIX.
+# truncate: POSIX. Links libutil for expand_number / expand_unsigned
+# (FreeBSD's <libutil.h> wraps expand_number to expand_unsigned via
+# an inline; needs the lib at link time).
 truncate/truncate: truncate/truncate.c
-	cc $(CFLAGS) -o $@ truncate/truncate.c
+	cc $(CFLAGS) -o $@ truncate/truncate.c -lutil
 
 # shar is a shell script (no compile); install handled below.
 
