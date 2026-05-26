@@ -1,0 +1,29 @@
+	<dict>
+		<key>OpenSourceProject</key>
+		<string>find</string>
+		<key>OpenSourceVersion</key>
+		<string>2023-01-24</string>
+		<key>OpenSourceWebsiteURL</key>
+		<string>https://cgit.freebsd.org/src/tree/usr.bin/find?id=14ebab25e1231decd80a64194e9028a9ada8d6e6</string>
+		<key>OpenSourceImportDate</key>
+		<string>2023-01-24</string>
+		<key>OpenSourceModifications</key>
+		<array>
+			<string>Add -xattr and -xattrname options.</string>
+			<string>Man page fix (4772561).</string>
+			<string>Adjust FTS usage due to API differences.</string>
+			<string>Avoid searching unsearchable directories (3849245).</string>
+			<string>Add missing call to fts_close (4608460).</string>
+			<string>Conformance fixes related to F_EXACTTIME.</string>
+			<string>Apple-specific implementation of -acl primary.</string>
+			<string>Conformance fix for f_name (6591280).</string>
+			<string>setmode conformance fix (3936046).</string>
+			<string>Use a saner MAXLOGNAME definition.</string>
+			<string>Workaround for lack of rpmatch function.</string>
+			<string>function.c: Revert -samefile/-newer change for POSIX conformance (77588562)</string>
+			<string>function.c: Don't require st_birthtime for atime (77588562)</string>
+			<string>main.c: Don't ignore errors when flushing stdout (89090667)</string>
+		</array>
+		<key>OpenSourceLicense</key>
+		<string>bsd</string>
+	</dict>

@@ -1,0 +1,18 @@
+	<dict>
+		<key>OpenSourceProject</key>
+		<string>test</string>
+		<key>OpenSourceVersion</key>
+		<string>2020-12-02</string>
+		<key>OpenSourceWebsiteURL</key>
+		<string>https://cgit.freebsd.org/src/tree/bin/test?id=1cc908de3ab2e11fca648fc874df2f9d255fc087</string>
+		<key>OpenSourceImportDate</key>
+		<string>2021-12-08</string>
+		<key>OpenSourceModifications</key>
+		<array>
+		    <string>test.c: error out if argv[0] == NULL (4689479)</string>
+		    <string>test.c: compatibility for eaccess (18613063)</string>
+		    <string>test.c: compatibility for st_mtim (4689479)</string>
+		</array>
+		<key>OpenSourceLicense</key>
+		<string>bsd</string>
+	</dict>

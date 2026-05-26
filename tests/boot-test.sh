@@ -362,7 +362,18 @@ expect {
         puts "\nFAIL: file_cmds leaf binaries missing or non-functional"
         exit 1
     }
-    "FILECMD-LEAF-OK" { puts "\nOK: file_cmds iter 1 (5 leaf Apple binaries overlaid pkgbase paths) (#111)" }
+    "FILECMD-LEAF-OK" { puts "\nOK: file_cmds Apple binaries overlaid pkgbase paths (#111)" }
+}
+expect {
+    timeout {
+        puts "\nFAIL: SHELLCMD-LEAF marker not seen"
+        exit 1
+    }
+    "SHELLCMD-LEAF-FAIL" {
+        puts "\nFAIL: shell_cmds leaf binaries missing or non-functional"
+        exit 1
+    }
+    "SHELLCMD-LEAF-OK" { puts "\nOK: shell_cmds iter 1 (5 leaf Apple binaries overlaid + functional) (#112)" }
 }
 expect {
     timeout {

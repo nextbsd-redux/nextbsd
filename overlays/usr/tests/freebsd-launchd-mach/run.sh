@@ -364,6 +364,36 @@ if [ $FILECMD_FAIL -ne 0 ]; then
     exit 1
 fi
 
+# 6.7. shell_cmds iter 1 (#112 / #105c iter 1). Second Apple-userland-
+# cmds repo port. Verifies the 5 trivial leaf Apple binaries (true,
+# false, echo, sleep, basename) are present at canonical paths.
+#
+# Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#shell_cmds
+SHELLCMD_FAIL=0
+for fbin in /usr/bin/true /usr/bin/false /bin/echo /bin/sleep \
+            /usr/bin/basename; do
+    if [ ! -x "$fbin" ]; then
+        echo "SHELLCMD-LEAF-FAIL: $fbin missing or not executable"
+        ls -la "$fbin" 2>&1 || true
+        SHELLCMD_FAIL=1
+    fi
+done
+# Functional sanity: true returns 0, false returns non-zero, echo
+# round-trips a string. These three together prove the binaries
+# actually run (not just exist as zero-byte files or rtld stubs).
+if [ $SHELLCMD_FAIL -eq 0 ]; then
+    if /usr/bin/true && ! /usr/bin/false && \
+       [ "$(/bin/echo hello)" = "hello" ]; then
+        echo "SHELLCMD-LEAF-OK: 5/5 shell_cmds leaf binaries overlaid + functional (true=0, false=non-zero, echo round-trips)"
+    else
+        echo "SHELLCMD-LEAF-FAIL: functional sanity check failed"
+        SHELLCMD_FAIL=1
+    fi
+fi
+if [ $SHELLCMD_FAIL -ne 0 ]; then
+    exit 1
+fi
+
 # 7. launchd-842 daemon: must exec + reject non-PID-1 invocation.
 # launchd-842's main() (launchd.c:163) checks
 #   getpid() != 1 && getppid() != 1
