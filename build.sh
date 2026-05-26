@@ -1963,12 +1963,12 @@ make -C "$ROOT/src/OpenPAM" \
      all install
 test -f "$WORK/rootfs/usr/lib/libpam.so.6" \
     || { echo "FAIL: /usr/lib/libpam.so.6 not installed"; exit 1; }
-test -f "$WORK/rootfs/usr/lib/pam/pam_unix.so" \
-    || { echo "FAIL: /usr/lib/pam/pam_unix.so not installed"; exit 1; }
-test -f "$WORK/rootfs/usr/lib/pam/pam_deny.so" \
-    || { echo "FAIL: /usr/lib/pam/pam_deny.so not installed"; exit 1; }
-test -f "$WORK/rootfs/usr/lib/pam/pam_permit.so" \
-    || { echo "FAIL: /usr/lib/pam/pam_permit.so not installed"; exit 1; }
+test -f "$WORK/rootfs/usr/lib/pam_unix.so.6" \
+    || { echo "FAIL: /usr/lib/pam_unix.so.6 not installed"; exit 1; }
+test -f "$WORK/rootfs/usr/lib/pam_deny.so.6" \
+    || { echo "FAIL: /usr/lib/pam_deny.so.6 not installed"; exit 1; }
+test -f "$WORK/rootfs/usr/lib/pam_permit.so.6" \
+    || { echo "FAIL: /usr/lib/pam_permit.so.6 not installed"; exit 1; }
 echo "==> OpenPAM iter 1 installed (libpam.so.6 + 3 modules)"
 
 # pamframeworktest — iter 1 (issue #93) CI gate. Programmatic

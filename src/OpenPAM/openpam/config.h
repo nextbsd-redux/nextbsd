@@ -58,7 +58,16 @@
 /* #undef OPENPAM_DEBUG */
 
 /* OpenPAM modules directory */
-#define OPENPAM_MODULES_DIR "/usr/lib/pam/"
+/* OPENPAM_MODULES_DIR: Apple's upstream is "/usr/lib/pam/" (macOS
+ * convention — modules in a per-framework subdir alongside libpam).
+ * FreeBSD's bsd.lib.mk default puts PAM modules in SHLIBDIR which
+ * defaults to LIBDIR = "/usr/lib", so FreeBSD-pam ships
+ * /usr/lib/pam_NAME.so.6 — flat, no per-framework subdir. We
+ * need to match that to find FreeBSD's modules during this iter's
+ * ABI-verification phase. Iter 3 (once we drop FreeBSD-pam and
+ * install our own modules) may revisit this if we want to put
+ * /usr/lib/pam/ back as the canonical location. */
+#define OPENPAM_MODULES_DIR "/usr/lib/"
 
 /* Name of package */
 #define PACKAGE "openpam"

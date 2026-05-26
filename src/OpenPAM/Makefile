@@ -24,7 +24,12 @@ CC ?=		cc
 DESTDIR ?=
 PREFIX ?=	/usr
 LIBDIR =	${DESTDIR}${PREFIX}/lib
-PAMDIR =	${DESTDIR}${PREFIX}/lib/pam
+# Install our 3 bundled modules to /usr/lib/ (matching FreeBSD's
+# convention) rather than /usr/lib/pam/ (Apple's macOS convention).
+# Until iter 3 drops the FreeBSD-pam package, the modules in
+# /usr/lib/pam_*.so.6 belong to FreeBSD-pam; ours overwrite them
+# at install time.
+PAMDIR =	${DESTDIR}${PREFIX}/lib
 INCDIR =	${DESTDIR}${PREFIX}/include/security
 
 # config.h shipped in openpam/ is autoconf-generated for the macOS
@@ -112,7 +117,9 @@ install: all
 	install -d ${LIBDIR} ${PAMDIR} ${INCDIR}
 	install -m 0755 ${LIBPAM_SONAME} ${LIBDIR}/
 	ln -sf ${LIBPAM_SONAME} ${LIBDIR}/libpam.so
-	install -m 0755 pam_unix.so pam_deny.so pam_permit.so ${PAMDIR}/
+	install -m 0755 pam_unix.so ${PAMDIR}/pam_unix.so.6
+	install -m 0755 pam_deny.so ${PAMDIR}/pam_deny.so.6
+	install -m 0755 pam_permit.so ${PAMDIR}/pam_permit.so.6
 	install -m 0644 ${.CURDIR}/openpam/include/security/openpam.h \
 	                ${.CURDIR}/openpam/include/security/openpam_attr.h \
 	                ${.CURDIR}/openpam/include/security/openpam_version.h \
@@ -124,3 +131,14 @@ install: all
 
 clean:
 	rm -f ${LIBPAM_OBJS} ${LIBPAM_SONAME} pam_unix.so pam_deny.so pam_permit.so
+
+# Convenience verifier — paths the build.sh smoke check uses.
+# Confirms our 3 bundled modules land where FreeBSD's expects them
+# (overwriting FreeBSD-pam's same-named .so.6 files).
+verify-install:
+	test -f ${LIBDIR}/${LIBPAM_SONAME}
+	test -L ${LIBDIR}/libpam.so
+	test -f ${PAMDIR}/pam_unix.so.6
+	test -f ${PAMDIR}/pam_deny.so.6
+	test -f ${PAMDIR}/pam_permit.so.6
+	@echo "verify-install: OK"
