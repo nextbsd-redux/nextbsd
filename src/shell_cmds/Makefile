@@ -59,7 +59,7 @@ dirname/dirname: dirname/dirname.c
 	cc $(CFLAGS) -o $@ dirname/dirname.c
 # env: env.c + envopts.c (multi-source).
 env/env: env/env.c env/envopts.c
-	cc $(CFLAGS) -o $@ env/env.c env/envopts.c
+	cc $(CFLAGS) -o $@ env/env.c env/envopts.c -lutil
 getopt/getopt: getopt/getopt.c
 	cc $(CFLAGS) -o $@ getopt/getopt.c
 hostname/hostname: hostname/hostname.c
