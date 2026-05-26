@@ -220,6 +220,79 @@ mkdir -p "$WORK/freebsd-src"
 tar -xJf "$DIST/src.txz" -C "$WORK/freebsd-src"
 
 #
+# 3a2. build the irreducibly-FreeBSD-only userland from /usr/src per
+#      srclist-fbsdglue.txt (#108 / #105a iter 1). The ~11 leaf binaries
+#      (kld* family, mount/umount/fsck, devfs, ldconfig, kenv,
+#      freebsd-version) have no Apple equivalent at all — kernel-bound
+#      platform glue. Overlay-overwrite their pkgbase paths with
+#      /usr/src builds so downstream Apple-repo PRs (#105b–#105g) can
+#      iterate the remaining ~155 Apple-replaceable paths, and #105h
+#      can finally drop FreeBSD-runtime entirely once srclist-fbsdglue.txt
+#      owns every non-Apple path the ISO needs.
+#
+#      Iter 1 uses only Category A/B tools (leaf libc / standard libs,
+#      no codegen prereqs) so any mechanism failure is isolated from
+#      per-tool dep complications. PR #107 failed on rescue/rescue's
+#      lib/libifconfig codegen prereq; #109 (iter 2) will exercise
+#      codegen-prereq cases (kdump/truss link libsysdecode) after
+#      iter 1 proves the mechanism on simpler tools.
+#
+#      MAKEOBJDIRPREFIX isolates obj dirs under $WORK (keeps /usr/obj
+#      on the builder clean). SRCCONF/__MAKE_CONF=/dev/null isolates
+#      from host /etc/src.conf flags.
+#
+#      Plan: https://pkgdemon.github.io/freebsd-srclist-build-plan.html
+#
+echo "==> building irreducibly-FreeBSD-only userland from /usr/src per srclist-fbsdglue.txt"
+SRCLIST_FBSDGLUE="$ROOT/srclist-fbsdglue.txt"
+if [ ! -f "$SRCLIST_FBSDGLUE" ]; then
+    echo "ERROR: srclist-fbsdglue.txt missing at $SRCLIST_FBSDGLUE" >&2
+    exit 1
+fi
+
+FBSDGLUE_LIST=$(grep -v '^[[:space:]]*#' "$SRCLIST_FBSDGLUE" 2>/dev/null \
+                | grep -v '^[[:space:]]*$' || true)
+if [ -z "$FBSDGLUE_LIST" ]; then
+    echo "ERROR: srclist-fbsdglue.txt is empty; refusing to skip the fbsdglue layer" >&2
+    exit 1
+fi
+
+SRCBUILD_OBJ="$WORK/srcbuild-obj"
+mkdir -p "$SRCBUILD_OBJ"
+SRCBUILD_MAKE_FLAGS="__MAKE_CONF=/dev/null SRCCONF=/dev/null \
+                     MK_MAN=no MK_TESTS=no"
+
+for DIR in $FBSDGLUE_LIST; do
+    SRC="$WORK/freebsd-src/usr/src/$DIR"
+    if [ ! -d "$SRC" ]; then
+        echo "ERROR: srclist-fbsdglue entry '$DIR' not under usr/src ($SRC)" >&2
+        exit 1
+    fi
+    echo "    fbsdglue: $DIR"
+    # shellcheck disable=SC2086
+    env MAKEOBJDIRPREFIX="$SRCBUILD_OBJ" \
+        make -C "$SRC" $SRCBUILD_MAKE_FLAGS obj
+    # shellcheck disable=SC2086
+    env MAKEOBJDIRPREFIX="$SRCBUILD_OBJ" \
+        make -C "$SRC" $SRCBUILD_MAKE_FLAGS
+    # shellcheck disable=SC2086
+    env MAKEOBJDIRPREFIX="$SRCBUILD_OBJ" \
+        make -C "$SRC" $SRCBUILD_MAKE_FLAGS \
+        install DESTDIR="$WORK/rootfs"
+done
+
+# Confirm a few load-bearing binaries are actually present + executable
+# in the rootfs after the manifest run. Catches silent "make install"
+# no-ops (e.g., if a Makefile's PROG variable was renamed upstream).
+for KEY_BIN in /sbin/kldload /sbin/mount /bin/kenv; do
+    if [ ! -x "$WORK/rootfs$KEY_BIN" ]; then
+        echo "ERROR: fbsdglue manifest didn't install $KEY_BIN" >&2
+        exit 1
+    fi
+done
+ls -lh "$WORK/rootfs/sbin/kldload" "$WORK/rootfs/sbin/mount" "$WORK/rootfs/bin/kenv"
+
+#
 # 3b. build mach.ko against the freshly-extracted kernel sources and
 #     install it into $WORK/rootfs/boot/kernel/mach.ko so it ships
 #     inside rootfs.uzip. Step 8 below also copies it onto the cd9660

@@ -1,0 +1,32 @@
+# srclist-fbsdglue.txt — irreducibly-FreeBSD-only /usr/src dirs that ship
+# on the live ISO from /usr/src builds (not from pkgbase pkgs).
+#
+# Iter 1 (#108 / #105a iter 1): MINIMAL validation set. ~11 boot-critical
+# leaf binaries — all Category A or B per the srclist build plan §4
+# (leaf libc / standard libs only, no codegen prereqs). Validates the
+# mechanism on tools that have *no* codegen prereqs, so any failure must
+# come from the mechanism itself rather than per-tool dep complications.
+#
+# Iter 2 (#109 / #105a iter 2) will expand to the full ~44 entries
+# including the codegen-prereq cases (kdump/truss link libsysdecode).
+#
+# Plan: https://pkgdemon.github.io/freebsd-srclist-build-plan.html
+#
+# Per-line format: <relative path under /usr/src>; # for comments;
+# empty lines ignored. Iterated by build.sh in file order (so prereq
+# libs can be listed before consumers in later iters).
+
+# --- bin/ ---
+bin/freebsd-version
+bin/kenv
+
+# --- sbin/ kernel-bound family (kld(4), VFS, devfs, rtld hint) ---
+sbin/devfs
+sbin/fsck
+sbin/kldconfig
+sbin/kldload
+sbin/kldstat
+sbin/kldunload
+sbin/ldconfig
+sbin/mount
+sbin/umount
