@@ -148,7 +148,29 @@ expect "set launchd_trace=1"
 expect "OK "
 send "boot\r"
 
-# Stage 1: wait for the getty "login:" prompt. Boot is complete:
+# Stage 1a: capture getty's boot banner. PAM port iter 4 (issue #99)
+# restored RunAtLoad on com.apple.hostnamed.plist, so hostnamed runs
+# at boot and sets kern.hostname before getty prints the banner.
+# Expected format: "FreeBSD/amd64 (HOSTNAME) (console)".
+#
+# - If HOSTNAME == "Amnesiac", hostnamed lost the race with getty —
+#   FAIL (banner check defeats the whole purpose of the iter).
+# - Otherwise the synthesized name is visible and we proceed.
+expect {
+    timeout {
+        puts "\nFAIL: boot banner not seen within 8 minutes"
+        exit 1
+    }
+    -re "FreeBSD/amd64 \\(Amnesiac\\) \\(console\\)" {
+        puts "\nFAIL: BOOT-BANNER-FAIL — banner shows 'Amnesiac', hostnamed didn't beat getty"
+        exit 1
+    }
+    -re "FreeBSD/amd64 \\(\(\[A-Za-z0-9._-\]+\)\\) \\(console\\)" {
+        puts "\nOK: BOOT-BANNER-OK — synthesized hostname '$expect_out(1,string)' visible to getty"
+    }
+}
+
+# Stage 1b: wait for the getty "login:" prompt. Boot is complete:
 # loader preloaded mach.ko -> kernel mounts the freebsd-ufs root rw ->
 # /sbin/launchd as PID 1 -> getty plist -> login.
 expect {
