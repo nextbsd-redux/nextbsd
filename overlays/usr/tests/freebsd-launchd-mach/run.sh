@@ -402,6 +402,38 @@ if [ $SHELLCMD_FAIL -ne 0 ]; then
     exit 1
 fi
 
+# 6.8. text_cmds iter 1 (#114 / #105e iter 1). Third Apple-userland-
+# cmds repo port. 5 universally-used POSIX stream processors (cat,
+# head, tail, wc, tr).
+#
+# Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#text_cmds
+TEXTCMD_FAIL=0
+for fbin in /bin/cat /usr/bin/head /usr/bin/tail \
+            /usr/bin/wc /usr/bin/tr; do
+    if [ ! -x "$fbin" ]; then
+        echo "TEXTCMD-LEAF-FAIL: $fbin missing or not executable"
+        ls -la "$fbin" 2>&1 || true
+        TEXTCMD_FAIL=1
+    fi
+done
+# Functional probes: cat round-trips stdin, head/tail/wc/tr each
+# transform stdin correctly.
+if [ $TEXTCMD_FAIL -eq 0 ]; then
+    if [ "$(/bin/echo hello | /bin/cat)" = "hello" ] && \
+       [ "$(/usr/bin/printf 'a\nb\nc\n' | /usr/bin/head -1)" = "a" ] && \
+       [ "$(/usr/bin/printf 'a\nb\nc\n' | /usr/bin/tail -1)" = "c" ] && \
+       [ "$(/usr/bin/printf 'abc' | /usr/bin/wc -c | /usr/bin/tr -d ' ')" = "3" ] && \
+       [ "$(/usr/bin/printf 'abc' | /usr/bin/tr a-c x-z)" = "xyz" ]; then
+        echo "TEXTCMD-LEAF-OK: 5/5 text_cmds stream tools overlaid + functional (cat/head/tail/wc/tr probes pass)"
+    else
+        echo "TEXTCMD-LEAF-FAIL: functional sanity check failed"
+        TEXTCMD_FAIL=1
+    fi
+fi
+if [ $TEXTCMD_FAIL -ne 0 ]; then
+    exit 1
+fi
+
 # 7. launchd-842 daemon: must exec + reject non-PID-1 invocation.
 # launchd-842's main() (launchd.c:163) checks
 #   getpid() != 1 && getppid() != 1

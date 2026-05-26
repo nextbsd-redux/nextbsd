@@ -1,0 +1,18 @@
+<dict>
+	<key>OpenSourceImportDate</key>
+	<string>2025-02-04</string>
+	<key>OpenSourceLicense</key>
+	<string>BSD</string>
+	<key>OpenSourceModifications</key>
+	<array>
+		<string>compile.c: remove POSIX incompliant escape sequences</string>
+		<string>process.c: properly advance past zero-length matches (108870627)</string>
+		<string>main.c, sed.1, tests/sed2_test.sh: add -H option (40490827)</string>
+	</array>
+	<key>OpenSourceProject</key>
+	<string>sed</string>
+	<key>OpenSourceVersion</key>
+	<string>2024-12-23</string>
+	<key>OpenSourceWebsiteURL</key>
+	<string>https://cgit.freebsd.org/src/commit/usr.bin/sed?id=003818aca4cdda47adef808a56d48003aa514029</string>
+</dict>

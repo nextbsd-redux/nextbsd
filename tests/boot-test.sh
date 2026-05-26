@@ -373,7 +373,18 @@ expect {
         puts "\nFAIL: shell_cmds leaf binaries missing or non-functional"
         exit 1
     }
-    "SHELLCMD-LEAF-OK" { puts "\nOK: shell_cmds iter 1 (5 leaf Apple binaries overlaid + functional) (#112)" }
+    "SHELLCMD-LEAF-OK" { puts "\nOK: shell_cmds Apple binaries overlaid + functional (#112)" }
+}
+expect {
+    timeout {
+        puts "\nFAIL: TEXTCMD-LEAF marker not seen"
+        exit 1
+    }
+    "TEXTCMD-LEAF-FAIL" {
+        puts "\nFAIL: text_cmds leaf binaries missing or non-functional"
+        exit 1
+    }
+    "TEXTCMD-LEAF-OK" { puts "\nOK: text_cmds iter 1 (5 leaf Apple stream tools overlaid + functional) (#114)" }
 }
 expect {
     timeout {
