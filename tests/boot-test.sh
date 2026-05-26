@@ -351,7 +351,18 @@ expect {
         puts "\nFAIL: fbsdglue full set missing or non-functional"
         exit 1
     }
-    "FBSDGLUE-OK" { puts "\nOK: srclist-fbsdglue.txt full 43 entries present + /rescue/ absent + libsysdecode codegen path verified (#109)" }
+    "FBSDGLUE-OK" { puts "\nOK: srclist-fbsdglue.txt minimal 25-entry set present + /rescue/ absent (#109)" }
+}
+expect {
+    timeout {
+        puts "\nFAIL: FILECMD-LEAF marker not seen"
+        exit 1
+    }
+    "FILECMD-LEAF-FAIL" {
+        puts "\nFAIL: file_cmds leaf binaries missing or non-functional"
+        exit 1
+    }
+    "FILECMD-LEAF-OK" { puts "\nOK: file_cmds iter 1 (5 leaf Apple binaries overlaid pkgbase paths) (#111)" }
 }
 expect {
     timeout {

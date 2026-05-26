@@ -190,6 +190,19 @@ if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
         chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
             pkg set -y -A 0 -n FreeBSD-pam FreeBSD-pam-lib \
                                 FreeBSD-pam-dev 2>/dev/null || true
+
+        # Same pattern for FreeBSD-runtime + FreeBSD-utilities (#111 /
+        # #105b file_cmds port iter 1, and all subsequent Apple-userland-
+        # cmds repo ports through #105h). Our /usr/src builds via
+        # srclist-fbsdglue.txt + Apple-source builds via src/file_cmds/
+        # etc. overlay-overwrite their pkgbase paths. Mark non-automatic
+        # so a stray pkg autoremove doesn't cull them as orphans (which
+        # would also remove THEIR file ownership entries from the pkg
+        # DB; our overlayed files survive but pkg's manifest goes
+        # incoherent).
+        chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
+            pkg set -y -A 0 -n FreeBSD-runtime FreeBSD-utilities \
+                                2>/dev/null || true
     fi
 
     if [ -n "$BUILD_PKGS" ]; then
@@ -301,6 +314,41 @@ done
 ls -lh "$WORK/rootfs/sbin/kldload" "$WORK/rootfs/sbin/mount" \
        "$WORK/rootfs/bin/kenv" "$WORK/rootfs/usr/bin/ldd" \
        "$WORK/rootfs/usr/sbin/pciconf"
+
+#
+# 3a3. build Apple file_cmds (#111 / #105b iter 1). First Apple-
+#      userland-cmds repo port. Vendored from apple-oss-distributions/
+#      file_cmds@file_cmds-479 at src/file_cmds/. Iter 1 scope: 5 leaf
+#      tools (chflags, mkdir, mkfifo, rmdir, pathchk) — pure POSIX,
+#      no Apple-specific syscalls (chflags has a trivial __APPLE__
+#      chflagsat shim that FreeBSD already provides).
+#
+#      Overlay-overwrite pattern: Apple binaries install at
+#      /bin/chflags, /bin/mkdir, etc. on top of FreeBSD-runtime's
+#      same paths. FreeBSD-runtime stays installed (pkg set -A 0
+#      applied above at line 197) so pkg autoremove doesn't cull it
+#      as an orphan. Subsequent iters add cp/mv/ls/chmod/install/
+#      gzip/pax (the file_cmds tools with libdispatch + libacl shim
+#      requirements).
+#
+#      Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#file_cmds
+#
+echo "==> building Apple file_cmds (iter 1: 5 leaf tools)"
+make -C "$ROOT/src/file_cmds" install DESTDIR="$WORK/rootfs"
+
+# Confirm Apple binaries are present + identifiable as Apple's
+# (Apple's file_cmds strings contain "Apple Computer" or
+# "FreeBSD" with __FBSDID variants).
+for FILECMD_BIN in /bin/chflags /bin/mkdir /bin/mkfifo /bin/rmdir \
+                   /usr/bin/pathchk; do
+    if [ ! -x "$WORK/rootfs$FILECMD_BIN" ]; then
+        echo "ERROR: file_cmds install didn't land $FILECMD_BIN" >&2
+        exit 1
+    fi
+done
+ls -lh "$WORK/rootfs/bin/chflags" "$WORK/rootfs/bin/mkdir" \
+       "$WORK/rootfs/bin/mkfifo" "$WORK/rootfs/bin/rmdir" \
+       "$WORK/rootfs/usr/bin/pathchk"
 
 #
 # 3b. build mach.ko against the freshly-extracted kernel sources and
