@@ -1,32 +1,84 @@
 # srclist-fbsdglue.txt — irreducibly-FreeBSD-only /usr/src dirs that ship
 # on the live ISO from /usr/src builds (not from pkgbase pkgs).
 #
-# Iter 1 (#108 / #105a iter 1): MINIMAL validation set. ~11 boot-critical
-# leaf binaries — all Category A or B per the srclist build plan §4
-# (leaf libc / standard libs only, no codegen prereqs). Validates the
-# mechanism on tools that have *no* codegen prereqs, so any failure must
-# come from the mechanism itself rather than per-tool dep complications.
+# Iter 2 (#109 / #105a iter 2): FULL 43 entries. Expands iter 1's
+# minimal 11-entry validation set to cover all KEEP entries from the
+# srclist build plan §9.5.1 — the truly-FreeBSD-only set (kernel-bound
+# platform glue + BSD-specific debug tools with no Apple analogue).
 #
-# Iter 2 (#109 / #105a iter 2) will expand to the full ~44 entries
-# including the codegen-prereq cases (kdump/truss link libsysdecode).
+# Includes the codegen-prereq case (`kdump`/`truss` link `libsysdecode`
+# which has its own `mktables`-generated `tables.h` — same shape as
+# the `lib/libifconfig` prereq from PR #107). Manifest is iterated in
+# file order so prereq libs can be listed above consumers.
+#
+# Future iters will not need to expand this set — the next ~155
+# Apple-replaceable binaries land via Apple-userland-cmds repo ports
+# (#105b–#105g) via the OpenPAM iter-3 overlay-overwrite pattern,
+# not via this manifest. #105h finally drops FreeBSD-runtime/utilities/
+# pam-lib pkgs from pkglist-base.txt once srclist-fbsdglue.txt owns
+# every non-Apple path the ISO needs.
 #
 # Plan: https://pkgdemon.github.io/freebsd-srclist-build-plan.html
 #
 # Per-line format: <relative path under /usr/src>; # for comments;
-# empty lines ignored. Iterated by build.sh in file order (so prereq
-# libs can be listed before consumers in later iters).
+# empty lines ignored. Iterated by build.sh step 3a2 in file order.
+
+# --- prereq libs (built BEFORE consumers; populate obj-tree generated
+#     headers that consumers need at compile time) ---
+# libsysdecode generates tables.h / tables_linux.h / ioctl.c via
+# mktables sh + mkioctls. Consumers kdump + truss link against it.
+lib/libsysdecode
 
 # --- bin/ ---
 bin/freebsd-version
 bin/kenv
 
-# --- sbin/ kernel-bound family (kld(4), VFS, devfs, rtld hint) ---
+# --- sbin/ kernel-bound (kld(4), VFS, devfs, rtld hint) + UFS family ---
+sbin/camcontrol
 sbin/devfs
 sbin/fsck
+sbin/fsck_ffs
 sbin/kldconfig
 sbin/kldload
 sbin/kldstat
 sbin/kldunload
 sbin/ldconfig
 sbin/mount
+sbin/newfs
+sbin/nologin
+sbin/tunefs
 sbin/umount
+
+# --- usr.bin/ BSD-specific debug + introspection ---
+# (Apple has lsof / sample / dtrace / otool, different shape; ours
+#  expect BSD shape)
+usr.bin/fetch
+usr.bin/file
+usr.bin/fstat
+usr.bin/fuser
+usr.bin/getent
+usr.bin/hostid
+usr.bin/kdump
+usr.bin/ktrace
+usr.bin/ktrdump
+usr.bin/ldd
+usr.bin/procstat
+usr.bin/sockstat
+usr.bin/strings
+usr.bin/systat
+usr.bin/top
+usr.bin/truss
+usr.bin/vmstat
+
+# --- usr.sbin/ FreeBSD HW/FS introspection + user mgmt ---
+usr.sbin/crashinfo
+usr.sbin/devctl
+usr.sbin/diskinfo
+usr.sbin/fstyp
+usr.sbin/gstat
+usr.sbin/kldxref
+usr.sbin/pciconf
+usr.sbin/pw
+
+# --- libexec/ ---
+libexec/save-entropy
