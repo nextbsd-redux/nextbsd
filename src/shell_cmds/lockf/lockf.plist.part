@@ -1,0 +1,15 @@
+	<dict>
+		<key>OpenSourceProject</key>
+		<string>lockf</string>
+		<key>OpenSourceVersion</key>
+		<string>2023-11-25</string>
+		<key>OpenSourceWebsiteURL</key>
+		<string>https://cgit.freebsd.org/src/tree/usr.bin/lockf?id=e4967d4d48b0a7d873e4f778c0a6e560e09d4dc3</string>
+		<key>OpenSourceImportDate</key>
+		<string>2023-11-26</string>
+		<key>OpenSourceModifications</key>
+		<array>
+		</array>
+		<key>OpenSourceLicense</key>
+		<string>bsd</string>
+	</dict>

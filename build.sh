@@ -357,6 +357,32 @@ ls -lh "$WORK/rootfs/bin/chflags" "$WORK/rootfs/bin/rm" \
        "$WORK/rootfs/usr/bin/touch" "$WORK/rootfs/sbin/mknod"
 
 #
+# 3a4. build Apple shell_cmds (#112 / #105c iter 1). Second Apple-
+#      userland-cmds repo port. Vendored from apple-oss-distributions/
+#      shell_cmds@shell_cmds-329 at src/shell_cmds/. Iter 1 scope: 5
+#      trivial leaf tools (true, false, echo, sleep, basename) — all
+#      single-source pure POSIX, same validation shape as file_cmds
+#      iter 1. Validates the per-Apple-repo vendor+Makefile pattern
+#      scales beyond file_cmds before tackling the load-bearing tools
+#      (/bin/sh swap, id with libopendirectory shim, killall with
+#      KERN_PROCARGS2, su with BSM stub).
+#
+#      Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#shell_cmds
+#
+echo "==> building Apple shell_cmds (iter 1: 5 trivial leaf tools)"
+make -C "$ROOT/src/shell_cmds" install DESTDIR="$WORK/rootfs"
+
+for SHELLCMD_BIN in /usr/bin/true /usr/bin/false \
+                    /bin/echo /bin/sleep /usr/bin/basename; do
+    if [ ! -x "$WORK/rootfs$SHELLCMD_BIN" ]; then
+        echo "ERROR: shell_cmds install didn't land $SHELLCMD_BIN" >&2
+        exit 1
+    fi
+done
+ls -lh "$WORK/rootfs/usr/bin/true" "$WORK/rootfs/bin/echo" \
+       "$WORK/rootfs/usr/bin/basename"
+
+#
 # 3b. build mach.ko against the freshly-extracted kernel sources and
 #     install it into $WORK/rootfs/boot/kernel/mach.ko so it ships
 #     inside rootfs.uzip. Step 8 below also copies it onto the cd9660
