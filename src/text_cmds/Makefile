@@ -73,7 +73,7 @@ paste/paste: paste/paste.c
 rev/rev: rev/rev.c
 	cc $(CFLAGS) -o $@ rev/rev.c
 ul/ul: ul/ul.c
-	cc $(CFLAGS) -o $@ ul/ul.c
+	cc $(CFLAGS) -o $@ ul/ul.c -lncurses
 unexpand/unexpand: unexpand/unexpand.c
 	cc $(CFLAGS) -o $@ unexpand/unexpand.c
 uniq/uniq: uniq/uniq.c
