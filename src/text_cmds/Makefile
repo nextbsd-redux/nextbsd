@@ -125,14 +125,15 @@ column/column: column/column.c
 # md5: dispatches by argv[0]. -lmd brings in MD5/SHA1/SHA256/etc.
 md5/md5: md5/md5.c
 	cc $(CFLAGS) -o $@ md5/md5.c -lmd
-# bintrans: 4 .c (bintrans, qp, uudecode, uuencode, apple_base64).
+# bintrans: 5 .c (bintrans, qp, uudecode, uuencode, apple_base64).
 # Dispatches by argv[0] for base64/b64encode/b64decode/uuencode/uudecode.
-# -lresolv brings in b64_ntop / b64_pton.
+# FreeBSD's libc has b64_ntop/b64_pton built in (Apple ships them in
+# -lresolv) — no extra link needed.
 bintrans/bintrans: bintrans/bintrans.c bintrans/qp.c bintrans/uudecode.c \
                    bintrans/uuencode.c bintrans/apple_base64.c
 	cc $(CFLAGS) -o $@ bintrans/bintrans.c bintrans/qp.c \
 	    bintrans/uudecode.c bintrans/uuencode.c \
-	    bintrans/apple_base64.c -lresolv
+	    bintrans/apple_base64.c
 # sed: 4 .c (compile, main, misc, process).
 sed/sed: sed/compile.c sed/main.c sed/misc.c sed/process.c
 	cc $(CFLAGS) -o $@ sed/compile.c sed/main.c sed/misc.c \
