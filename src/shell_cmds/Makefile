@@ -142,9 +142,14 @@ xargs/xargs: xargs/xargs.c xargs/strnsubst.c
 # --- iter 4 ---
 # find: 7 .c (find/function/ls/main/misc/operator/option).
 # getdate.y is orphaned (no .c calls get_date in current Apple sources).
+# Apple guards <unistd.h> behind #ifdef __APPLE__ in find.c (line 53-55)
+# but uses X_OK at line 242 — force-include unistd.h to declare it.
+# join-style fix: define unix2003_compat=0 so the BSD path is taken.
 find/find: find/find.c find/function.c find/ls.c find/main.c \
            find/misc.c find/operator.c find/option.c
-	cc $(CFLAGS) -o $@ find/find.c find/function.c find/ls.c \
+	cc $(CFLAGS) -include unistd.h -include libgen.h \
+	    -Dunix2003_compat=0 \
+	    -o $@ find/find.c find/function.c find/ls.c \
 	    find/main.c find/misc.c find/operator.c find/option.c
 who/who: who/who.c
 	cc $(CFLAGS) -o $@ who/who.c
