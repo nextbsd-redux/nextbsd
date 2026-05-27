@@ -178,9 +178,12 @@ pwd_mkdb/pwd_mkdb: pwd_mkdb/pwd_mkdb.c pwd_mkdb/pw_scan.c
 	cc $(CFLAGS) -o $@ pwd_mkdb/pwd_mkdb.c pwd_mkdb/pw_scan.c
 
 # login: login.c + login_audit.c. Links libpam (Apple OpenPAM overlay)
-# + libbsm (fbsdglue) + libutil (login_tty etc.).
+# + libbsm (fbsdglue) + libutil (login_tty etc.). -DLOGIN_CAP matches
+# FreeBSD's standard usr.bin/login build — the upstream login.c uses
+# <login_cap.h> + setusercontext() in the !__APPLE__ branch, but those
+# are gated on #ifdef LOGIN_CAP in the declarations.
 login/login: login/login.c login/login_audit.c
-	cc $(CFLAGS) -o $@ login/login.c login/login_audit.c \
+	cc $(CFLAGS) -DLOGIN_CAP -o $@ login/login.c login/login_audit.c \
 	    -lpam -lbsm -lutil
 
 # passwd: passwd.c + file_passwd.c + nis_passwd.c + pam_passwd.c +
