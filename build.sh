@@ -434,6 +434,28 @@ ls -lh "$WORK/rootfs/usr/bin/tty" "$WORK/rootfs/usr/bin/whois" \
        "$WORK/rootfs/usr/sbin/lsvfs"
 
 #
+# 3a7. build Apple system_cmds (#115 / #105g iter 1). Fifth Apple-
+#      userland-cmds repo port. Vendored from apple-oss-distributions/
+#      system_cmds@system_cmds-1042.100.6.0.1 at src/system_cmds/.
+#      Iter 1 scope: 4 trivial leaf tools (mkfile, sync, wait4path,
+#      pagesize) — no Mach IPC, no Apple-kernel-struct shims.
+#
+#      Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#system_cmds
+#
+echo "==> building Apple system_cmds (iter 1: 4 leaf tools)"
+make -C "$ROOT/src/system_cmds" install DESTDIR="$WORK/rootfs"
+
+for SYSCMD_BIN in /usr/sbin/mkfile /bin/sync /bin/wait4path \
+                  /usr/bin/pagesize; do
+    if [ ! -x "$WORK/rootfs$SYSCMD_BIN" ]; then
+        echo "ERROR: system_cmds install didn't land $SYSCMD_BIN" >&2
+        exit 1
+    fi
+done
+ls -lh "$WORK/rootfs/bin/sync" "$WORK/rootfs/bin/wait4path" \
+       "$WORK/rootfs/usr/sbin/mkfile"
+
+#
 # 3b. build mach.ko against the freshly-extracted kernel sources and
 #     install it into $WORK/rootfs/boot/kernel/mach.ko so it ships
 #     inside rootfs.uzip. Step 8 below also copies it onto the cd9660

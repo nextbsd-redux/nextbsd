@@ -1,0 +1,6 @@
+#include <TargetConditionals.h>
+#if (TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR)
+subsystem dummy 0;
+#else
+#include <IOKit/kext/kextmanager_mig.defs>
+#endif

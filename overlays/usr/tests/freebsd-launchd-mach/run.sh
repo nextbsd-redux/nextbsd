@@ -461,6 +461,50 @@ if [ $ADVCMD_FAIL -ne 0 ]; then
     exit 1
 fi
 
+# 6.10. system_cmds iter 1 (#115 / #105g iter 1). Fifth Apple-userland-
+# cmds repo port. 4 trivial leaf tools (mkfile, sync, wait4path,
+# pagesize).
+#
+# Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#system_cmds
+SYSCMD_FAIL=0
+for fbin in /usr/sbin/mkfile /bin/sync /bin/wait4path \
+            /usr/bin/pagesize; do
+    if [ ! -x "$fbin" ]; then
+        echo "SYSCMD-LEAF-FAIL: $fbin missing or not executable"
+        ls -la "$fbin" 2>&1 || true
+        SYSCMD_FAIL=1
+    fi
+done
+# Functional probes:
+#   sync — always returns 0 (sync(2) is unconditional).
+#   pagesize — must print a positive integer.
+#   mkfile — allocate a small file in /tmp and stat it.
+if [ $SYSCMD_FAIL -eq 0 ]; then
+    /bin/sync || { echo "SYSCMD-LEAF-FAIL: sync nonzero exit"; SYSCMD_FAIL=1; }
+fi
+if [ $SYSCMD_FAIL -eq 0 ]; then
+    PS=$(/usr/bin/pagesize 2>/dev/null)
+    if ! echo "$PS" | grep -qE '^[1-9][0-9]+$'; then
+        echo "SYSCMD-LEAF-FAIL: pagesize returned '$PS'"
+        SYSCMD_FAIL=1
+    fi
+fi
+if [ $SYSCMD_FAIL -eq 0 ]; then
+    rm -f /tmp/syscmd-mkfile-probe
+    if /usr/sbin/mkfile 4k /tmp/syscmd-mkfile-probe >/dev/null 2>&1 && \
+       [ -f /tmp/syscmd-mkfile-probe ]; then
+        rm -f /tmp/syscmd-mkfile-probe
+    else
+        echo "SYSCMD-LEAF-FAIL: mkfile didn't create the probe file"
+        SYSCMD_FAIL=1
+    fi
+fi
+if [ $SYSCMD_FAIL -eq 0 ]; then
+    echo "SYSCMD-LEAF-OK: 4/4 system_cmds binaries overlaid (sync/pagesize/mkfile run cleanly)"
+else
+    exit 1
+fi
+
 # 7. launchd-842 daemon: must exec + reject non-PID-1 invocation.
 # launchd-842's main() (launchd.c:163) checks
 #   getpid() != 1 && getppid() != 1
