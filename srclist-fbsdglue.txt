@@ -50,6 +50,17 @@ sbin/mount
 sbin/newfs
 sbin/tunefs
 sbin/umount
+# reboot: provides /sbin/reboot + /sbin/halt + /sbin/fastboot +
+#   /sbin/fasthalt + /sbin/nextboot (all hardlinks to one binary).
+#   Apple's vendored system_cmds reboot is mostly the same FreeBSD
+#   source in its !__APPLE__ branches; the Apple-specific kextmanager
+#   RPC is #ifdef'd out on our build anyway, so going through fbsdglue
+#   is the same code with less debug overhead.
+sbin/reboot
+# shutdown: provides /sbin/shutdown + /sbin/poweroff. Same reasoning
+#   as reboot — Apple's vendored shutdown is mostly the FreeBSD
+#   source on the non-Apple branch.
+sbin/shutdown
 
 # --- usr.bin/ — minimal set; debug toolkit deferred (see comment) ---
 usr.bin/ldd
