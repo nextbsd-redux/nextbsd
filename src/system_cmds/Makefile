@@ -80,7 +80,7 @@ wait4path/wait4path: wait4path/wait4path.c
 
 # --- iter 2 ---
 newgrp/newgrp: newgrp/newgrp.c
-	cc $(CFLAGS) -o $@ newgrp/newgrp.c
+	cc $(CFLAGS) -o $@ newgrp/newgrp.c -lutil -lcrypt
 vifs/vifs: vifs/vifs.c
 	cc $(CFLAGS) -o $@ vifs/vifs.c
 # vipw: vipw.c + pw_util.c (Apple's vendored pw_util).
