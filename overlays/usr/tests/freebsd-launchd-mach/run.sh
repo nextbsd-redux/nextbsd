@@ -559,7 +559,7 @@ else
     exit 1
 fi
 
-# 6.10. system_cmds iter 1+2+3+4 (#115 / #105g). Fifth Apple-userland-
+# 6.10. system_cmds iter 1+2+3+4+5 (#115 / #105g). Fifth Apple-userland-
 # cmds repo port.
 #   Iter 1: mkfile, sync, wait4path, pagesize.
 #   Iter 2: newgrp, vifs, vipw, accton.
@@ -569,6 +569,10 @@ fi
 #           Apple binary now serves the com.apple.getty plist on
 #           /dev/console — the existing BOOT-BANNER + "login:" stages
 #           in boot-test.sh exercise it implicitly).
+#   Iter 5: pwd_mkdb + passwd. Both replace FreeBSD-runtime binaries.
+#           passwd is setuid (-m 4555). login DEFERRED — Apple source
+#           has drifted enough from FreeBSD usr.bin/login that it
+#           needs its own focused source-patching iter.
 #
 # Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#system_cmds
 SYSCMD_FAIL=0
@@ -577,7 +581,8 @@ for fbin in /usr/sbin/mkfile /bin/sync /bin/wait4path \
             /usr/bin/newgrp /usr/sbin/vifs /usr/sbin/vipw \
             /usr/sbin/accton \
             /usr/bin/getconf \
-            /usr/libexec/getty; do
+            /usr/libexec/getty \
+            /usr/sbin/pwd_mkdb /usr/bin/passwd; do
     if [ ! -x "$fbin" ]; then
         echo "SYSCMD-LEAF-FAIL: $fbin missing or not executable"
         ls -la "$fbin" 2>&1 || true
@@ -673,7 +678,7 @@ if [ $SYSCMD_FAIL -eq 0 ]; then
     # (boot-test.sh's BOOT-BANNER + "login:" stages). The existence
     # check above is the only run.sh probe — running it standalone
     # would conflict with the live console.
-    echo "SYSCMD-LEAF-OK: 10/10 system_cmds binaries overlaid (iter1+2+3 probes pass; iter4 getty exercised by boot stages)"
+    echo "SYSCMD-LEAF-OK: 12/12 system_cmds binaries overlaid (iter1+2+3 probes pass; iter4 getty exercised by boot stages; iter5 pwd_mkdb + passwd installed)"
 else
     exit 1
 fi
