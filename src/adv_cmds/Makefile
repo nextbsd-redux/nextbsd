@@ -31,8 +31,13 @@ CFLAGS = -O2 -pipe -D__dead=__dead2
 # matching Apple's libc/nlsmsg internals. Not load-bearing — defer.
 ITER1_BINS = tabs/tabs tty/tty whois/whois lsvfs/lsvfs
 ITER2_BINS = cap_mkdb/cap_mkdb finger/finger
+# Iter 3: locale (C++, 446 LOC). xlocale.h + langinfo.h are present on
+# FreeBSD, and the source uses only C++ STL otherwise.
+# localedef DEFERRED — 10 .c with Apple-internal msgcat machinery.
+# genwrap DEFERRED — yacc/lex driver.
+ITER3_BINS = locale/locale
 
-all: $(ITER1_BINS) $(ITER2_BINS)
+all: $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS)
 
 # --- iter 1 (4 single-source-or-near-leaf tools) ---
 tabs/tabs: tabs/tabs.c
@@ -53,6 +58,11 @@ finger/finger: finger/finger.c finger/lprint.c finger/net.c finger/sprint.c fing
 	cc $(CFLAGS) -o $@ finger/finger.c finger/lprint.c finger/net.c \
 	    finger/sprint.c finger/util.c
 
+# --- iter 3 ---
+# locale: C++ STL, uses xlocale + langinfo. -O2 -pipe with c++.
+locale/locale: locale/locale.cc
+	c++ -O2 -pipe -o $@ locale/locale.cc
+
 install: all
 	mkdir -p $(DESTDIR)/usr/bin $(DESTDIR)/usr/sbin
 	install -m 0555 tabs/tabs $(DESTDIR)/usr/bin/tabs
@@ -63,8 +73,10 @@ install: all
 	# iter 2
 	install -m 0555 cap_mkdb/cap_mkdb $(DESTDIR)/usr/bin/cap_mkdb
 	install -m 0555 finger/finger $(DESTDIR)/usr/bin/finger
+	# iter 3
+	install -m 0555 locale/locale $(DESTDIR)/usr/bin/locale
 
 clean:
-	rm -f $(ITER1_BINS) $(ITER2_BINS)
+	rm -f $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS)
 
 .PHONY: all clean install

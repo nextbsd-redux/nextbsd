@@ -439,12 +439,13 @@ ls -lh "$WORK/rootfs/bin/cat" "$WORK/rootfs/usr/bin/cut" \
 #
 #      Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#adv_cmds
 #
-echo "==> building Apple adv_cmds (iter 1+2: 6 tools)"
+echo "==> building Apple adv_cmds (iter 1+2+3: 7 tools)"
 make -C "$ROOT/src/adv_cmds" install DESTDIR="$WORK/rootfs"
 
 for ADVCMD_BIN in /usr/bin/tabs /usr/bin/tty /usr/bin/whois \
                   /usr/sbin/lsvfs \
-                  /usr/bin/cap_mkdb /usr/bin/finger; do
+                  /usr/bin/cap_mkdb /usr/bin/finger \
+                  /usr/bin/locale; do
     if [ ! -x "$WORK/rootfs$ADVCMD_BIN" ]; then
         echo "ERROR: adv_cmds install didn't land $ADVCMD_BIN" >&2
         exit 1
