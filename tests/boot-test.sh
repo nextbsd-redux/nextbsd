@@ -399,6 +399,17 @@ expect {
 }
 expect {
     timeout {
+        puts "\nFAIL: SYSCMD-LEAF marker not seen"
+        exit 1
+    }
+    "SYSCMD-LEAF-FAIL" {
+        puts "\nFAIL: system_cmds leaf binaries missing or non-functional"
+        exit 1
+    }
+    "SYSCMD-LEAF-OK" { puts "\nOK: system_cmds iter 1 (4 leaf Apple tools overlaid) (#115)" }
+}
+expect {
+    timeout {
         puts "\nFAIL: LAUNCHD-BUILD marker not seen"
         exit 1
     }
