@@ -366,12 +366,15 @@ if [ $FILECMD_FAIL -ne 0 ]; then
     exit 1
 fi
 
-# 6.7. shell_cmds iter 1+2+3+4 (#112 / #105c). Extends to 38 tools.
+# 6.7. shell_cmds iter 1+2+3+4+5 (#112 / #105c). Extends to 39 tools.
 #   Iter 1: true/false/echo/sleep/basename.
 #   Iter 2: 20 more POSIX tools.
 #   Iter 3: +11 more (chroot, date, hexdump, lockf, script, shlock,
 #           stdbuf, test, whereis, which, xargs) + 'od' link + '[' link.
 #   Iter 4: +2 (find, who).
+#   Iter 5: +1 (locate) + libexec helpers + /etc/locate.rc.
+#           lastcomm DEFERRED — FreeBSD's <sys/acct.h> doesn't expose
+#           legacy `struct acct`; needs its own iter.
 #
 # Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#shell_cmds
 SHELLCMD_FAIL=0
@@ -388,7 +391,9 @@ for fbin in /usr/bin/true /usr/bin/false /bin/echo /bin/sleep \
             /usr/bin/od /usr/bin/lockf /usr/bin/script \
             /usr/bin/shlock /usr/bin/stdbuf /bin/test /bin/[ \
             /usr/bin/whereis /usr/bin/which /usr/bin/xargs \
-            /usr/bin/find /usr/bin/who; do
+            /usr/bin/find /usr/bin/who \
+            /usr/bin/locate /usr/libexec/locate.bigram \
+            /usr/libexec/locate.code; do
     if [ ! -x "$fbin" ]; then
         echo "SHELLCMD-LEAF-FAIL: $fbin missing or not executable"
         ls -la "$fbin" 2>&1 || true
@@ -402,6 +407,10 @@ done
 #   xargs — echo via xargs round-trips.
 #   which — finds /bin/sh.
 if [ $SHELLCMD_FAIL -eq 0 ]; then
+    # locate without a built DB: prints "/var/db/locate.database: No such
+    # file or directory" to stderr and exits 1 — that's the expected
+    # fresh-rootfs behavior. We're proving the binary loads and parses
+    # argv, not that the index exists.
     if /usr/bin/true && ! /usr/bin/false && \
        [ "$(/bin/echo hello)" = "hello" ] && \
        [ "$(/usr/bin/printf 'x%s' yz)" = "xyz" ] && \
@@ -412,8 +421,9 @@ if [ $SHELLCMD_FAIL -eq 0 ]; then
        [ "$(/bin/echo hello | /usr/bin/xargs /bin/echo)" = "hello" ] && \
        [ -n "$(/usr/bin/which sh)" ] && \
        /usr/bin/find /etc/hosts -maxdepth 0 -type f >/dev/null && \
-       /usr/bin/who >/dev/null 2>&1; then
-        echo "SHELLCMD-LEAF-OK: 38/38 shell_cmds binaries overlaid + functional (iter1+2+3+4 probes pass)"
+       /usr/bin/who >/dev/null 2>&1 && \
+       ! /usr/bin/locate foo 2>/dev/null; then
+        echo "SHELLCMD-LEAF-OK: 39/39 shell_cmds binaries overlaid + functional (iter1+2+3+4+5 probes pass)"
     else
         echo "SHELLCMD-LEAF-FAIL: functional sanity check failed"
         SHELLCMD_FAIL=1

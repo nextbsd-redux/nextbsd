@@ -45,8 +45,22 @@ ITER3_BINS = chroot/chroot date/date hexdump/hexdump lockf/lockf \
 #   (would need a kvm-style proc shim).
 # Remaining deferred buckets — see iter 3 commit message.
 ITER4_BINS = find/find who/who
+# Iter 5 scope:
+#   locate — file-name index search. 3 binaries (locate, locate.bigram,
+#     locate.code) + 3 shell scripts (locate.updatedb, locate.concatdb,
+#     locate.mklocatedb) + /etc/locate.rc config. locate.c #includes
+#     fastfind.c directly (single-TU), so only locate.c + util.c are
+#     linked. Apple guards FreeBSD's capsicum_helpers behind !__APPLE__
+#     in bigram, picked up automatically on FreeBSD.
+# lastcomm DEFERRED — FreeBSD's <sys/acct.h> doesn't define `struct acct`
+#   at the public level the way Apple's does (FreeBSD's modern acctv3
+#   format obscures the legacy struct). lastcomm relies on the legacy
+#   struct shape everywhere. Needs either a private sys/acct.h shim or
+#   a rewrite over FreeBSD's acctv3 records — own iter.
+ITER5_BINS = locate/bigram/locate.bigram locate/code/locate.code \
+             locate/locate/locate
 
-all: $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS) $(ITER4_BINS)
+all: $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS) $(ITER4_BINS) $(ITER5_BINS)
 
 # --- iter 1 (single-source pure-POSIX leaf tools) ---
 true/true: true/true.c
@@ -157,6 +171,21 @@ find/find: find/find.c find/function.c find/ls.c find/main.c \
 who/who: who/who.c
 	cc $(CFLAGS) -o $@ who/who.c
 
+# --- iter 5 ---
+# locate.bigram: single source; uses FreeBSD's <capsicum_helpers.h>
+# (inline caph_*() — no extra lib). Needs the parent locate.h.
+locate/bigram/locate.bigram: locate/bigram/locate.bigram.c
+	cc $(CFLAGS) -I locate/locate -o $@ locate/bigram/locate.bigram.c
+# locate.code: single source; no Apple/FreeBSD divergence. Same -I.
+locate/code/locate.code: locate/code/locate.code.c
+	cc $(CFLAGS) -I locate/locate -o $@ locate/code/locate.code.c
+# locate: locate.c #includes fastfind.c inline (single TU), so only
+# locate.c + util.c are linked. -I . because pathnames.h sits beside.
+locate/locate/locate: locate/locate/locate.c locate/locate/util.c \
+                      locate/locate/fastfind.c
+	cc $(CFLAGS) -I locate/locate -o $@ \
+	    locate/locate/locate.c locate/locate/util.c
+
 install: all
 	mkdir -p $(DESTDIR)/bin $(DESTDIR)/usr/bin
 	# iter 1
@@ -204,8 +233,22 @@ install: all
 	# iter 4
 	install -m 0555 find/find $(DESTDIR)/usr/bin/find
 	install -m 0555 who/who $(DESTDIR)/usr/bin/who
+	# iter 5
+	mkdir -p $(DESTDIR)/usr/libexec $(DESTDIR)/etc
+	install -m 0555 locate/locate/locate $(DESTDIR)/usr/bin/locate
+	install -m 0555 locate/bigram/locate.bigram \
+	    $(DESTDIR)/usr/libexec/locate.bigram
+	install -m 0555 locate/code/locate.code \
+	    $(DESTDIR)/usr/libexec/locate.code
+	install -m 0555 locate/locate/updatedb.sh \
+	    $(DESTDIR)/usr/libexec/locate.updatedb
+	install -m 0555 locate/locate/concatdb.sh \
+	    $(DESTDIR)/usr/libexec/locate.concatdb
+	install -m 0555 locate/locate/mklocatedb.sh \
+	    $(DESTDIR)/usr/libexec/locate.mklocatedb
+	install -m 0644 locate/locate/locate.rc $(DESTDIR)/etc/locate.rc
 
 clean:
-	rm -f $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS) $(ITER4_BINS)
+	rm -f $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS) $(ITER4_BINS) $(ITER5_BINS)
 
 .PHONY: all clean install
