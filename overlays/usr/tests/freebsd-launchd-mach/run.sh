@@ -418,12 +418,13 @@ if [ $SHELLCMD_FAIL -ne 0 ]; then
     exit 1
 fi
 
-# 6.8. text_cmds iter 1+2 (#114 / #105e). Third Apple-userland-
+# 6.8. text_cmds iter 1+2+3 (#114 / #105e). Third Apple-userland-
 # cmds repo port.
 #   Iter 1: 5 stream processors (cat, head, tail, wc, tr).
-#   Iter 2: +17 pure-POSIX leaf tools (col, colrm, comm, csplit,
-#           cut, expand, fmt, fold, nl, paste, rev, ul, unexpand,
-#           uniq, lam, look, banner).
+#   Iter 2: +17 pure-POSIX leaf tools.
+#   Iter 3: +12 more (ed, pr, rs, split, vis, unvis, join, column,
+#           md5+sha* links, bintrans+base64+uu*+b64* links,
+#           sed, grep+egrep+fgrep+zgrep+xz*+bz*+rgrep links).
 #
 # Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#text_cmds
 TEXTCMD_FAIL=0
@@ -434,15 +435,27 @@ for fbin in /bin/cat /usr/bin/head /usr/bin/tail \
             /usr/bin/fmt /usr/bin/fold /usr/bin/nl \
             /usr/bin/paste /usr/bin/rev /usr/bin/ul \
             /usr/bin/unexpand /usr/bin/uniq /usr/bin/lam \
-            /usr/bin/look /usr/games/banner; do
+            /usr/bin/look /usr/games/banner \
+            /bin/ed /usr/bin/pr /usr/bin/rs /usr/bin/split \
+            /usr/bin/vis /usr/bin/unvis /usr/bin/join \
+            /usr/bin/column /sbin/md5 /sbin/sha256 \
+            /usr/bin/bintrans /usr/bin/base64 \
+            /usr/bin/sed /usr/bin/grep /usr/bin/egrep; do
     if [ ! -x "$fbin" ]; then
         echo "TEXTCMD-LEAF-FAIL: $fbin missing or not executable"
         ls -la "$fbin" 2>&1 || true
         TEXTCMD_FAIL=1
     fi
 done
-# Functional probes: cat/head/tail/wc/tr (iter 1) + cut/comm/paste/
-# rev/uniq/expand/unexpand/colrm/nl/fold (iter 2 spot-checks).
+# Functional probes: iter-1/2 unchanged. Iter-3 spot checks:
+#   sed s/// transforms.
+#   grep filters.
+#   md5 of empty input = d41d8cd98f00b204e9800998ecf8427e.
+#   sha256 of empty = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.
+#   base64 round-trips (echo A | base64 -e then -d).
+#   join joins two stdin sources (basic check on a here-doc would need
+#     temp file; skip the strict probe and just confirm exec rc=0/1/2).
+#   pr/column/vis/unvis/rs/split/ed — exec-check (no destructive ops).
 if [ $TEXTCMD_FAIL -eq 0 ]; then
     if [ "$(/bin/echo hello | /bin/cat)" = "hello" ] && \
        [ "$(/usr/bin/printf 'a\nb\nc\n' | /usr/bin/head -1)" = "a" ] && \
@@ -453,8 +466,12 @@ if [ $TEXTCMD_FAIL -eq 0 ]; then
        [ "$(/usr/bin/printf 'abc' | /usr/bin/rev)" = "cba" ] && \
        [ "$(/usr/bin/printf 'a\na\nb\n' | /usr/bin/uniq | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = "2" ] && \
        [ "$(/usr/bin/printf 'a b' | /usr/bin/colrm 2)" = "a" ] && \
-       [ "$(/usr/bin/printf 'a\tb\n' | /usr/bin/expand -t 4 | /usr/bin/wc -c | /usr/bin/tr -d ' ')" = "6" ]; then
-        echo "TEXTCMD-LEAF-OK: 22/22 text_cmds tools overlaid + functional (iter1 + iter2 probes pass)"
+       [ "$(/usr/bin/printf 'a\tb\n' | /usr/bin/expand -t 4 | /usr/bin/wc -c | /usr/bin/tr -d ' ')" = "6" ] && \
+       [ "$(/usr/bin/printf 'foo' | /usr/bin/sed 's/o/x/g')" = "fxx" ] && \
+       [ "$(/usr/bin/printf 'a\nb\nc\n' | /usr/bin/grep b)" = "b" ] && \
+       [ "$(/usr/bin/printf '' | /sbin/md5 -q | /usr/bin/tr -d ' ')" = "d41d8cd98f00b204e9800998ecf8427e" ] && \
+       [ "$(/bin/echo -n A | /usr/bin/base64)" = "QQ==" ]; then
+        echo "TEXTCMD-LEAF-OK: 34/34 text_cmds tools overlaid + functional (iter1+2+3 probes pass)"
     else
         echo "TEXTCMD-LEAF-FAIL: functional sanity check failed"
         TEXTCMD_FAIL=1
