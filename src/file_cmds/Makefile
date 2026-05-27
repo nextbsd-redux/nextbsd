@@ -38,8 +38,20 @@ ITER1_BINS = chflags/chflags mkdir/mkdir mkfifo/mkfifo rmdir/rmdir \
 ITER2_BINS = cksum/cksum compress/compress dd/dd \
              ln/ln mknod/mknod rm/rm \
              touch/touch truncate/truncate
+# Iter 3 scope: 3 leaf tools that compile cleanly without Apple-only
+# APIs:
+#   stat (single-source, POSIX)
+#   chown (single-source, POSIX)
+#   df (single-source; uses libutil + libxo; #ifdef __APPLE__ guards
+#      the getattrlist code path)
+# du DEFERRED — uses Apple getattrlist() unconditionally for hardlink
+#   counting (du.c:595 isn't __APPLE__-guarded). Would need a small
+#   patch or shim.
+# cp/mv/ls/chmod/gzip/install/mtree/xattr DEFERRED — these need
+#   libacl/copyfile/commoncrypto/xattr shims, scoped per plan §6.
+ITER3_BINS = stat/stat chown/chown df/df
 
-all: $(ITER1_BINS) $(ITER2_BINS)
+all: $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS)
 
 # --- iter 1 (single-source leaf tools) ---
 chflags/chflags: chflags/chflags.c
@@ -101,6 +113,18 @@ touch/touch: touch/touch.c
 truncate/truncate: truncate/truncate.c
 	cc $(CFLAGS) -o $@ truncate/truncate.c -lutil
 
+# --- iter 3 ---
+# stat: pure POSIX, no extra libs.
+stat/stat: stat/stat.c
+	cc $(CFLAGS) -o $@ stat/stat.c
+# chown: pure POSIX, no extra libs.
+chown/chown: chown/chown.c
+	cc $(CFLAGS) -o $@ chown/chown.c
+# df: -lutil for humanize_number, -lxo for libxo. Apple-only paths
+# (getattrlist) are #ifdef __APPLE__-guarded.
+df/df: df/df.c
+	cc $(CFLAGS) -o $@ df/df.c -lutil -lxo -lm
+
 # shar is a shell script (no compile); install handled below.
 
 install: all
@@ -123,8 +147,12 @@ install: all
 	install -m 0555 truncate/truncate $(DESTDIR)/usr/bin/truncate
 	# shar: shell script
 	install -m 0555 shar/shar.sh $(DESTDIR)/usr/bin/shar
+	# iter 3
+	install -m 0555 stat/stat $(DESTDIR)/usr/bin/stat
+	install -m 0555 chown/chown $(DESTDIR)/usr/sbin/chown
+	install -m 0555 df/df $(DESTDIR)/bin/df
 
 clean:
-	rm -f $(ITER1_BINS) $(ITER2_BINS)
+	rm -f $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS)
 
 .PHONY: all clean install
