@@ -402,29 +402,43 @@ if [ $SHELLCMD_FAIL -ne 0 ]; then
     exit 1
 fi
 
-# 6.8. text_cmds iter 1 (#114 / #105e iter 1). Third Apple-userland-
-# cmds repo port. 5 universally-used POSIX stream processors (cat,
-# head, tail, wc, tr).
+# 6.8. text_cmds iter 1+2 (#114 / #105e). Third Apple-userland-
+# cmds repo port.
+#   Iter 1: 5 stream processors (cat, head, tail, wc, tr).
+#   Iter 2: +17 pure-POSIX leaf tools (col, colrm, comm, csplit,
+#           cut, expand, fmt, fold, nl, paste, rev, ul, unexpand,
+#           uniq, lam, look, banner).
 #
 # Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#text_cmds
 TEXTCMD_FAIL=0
 for fbin in /bin/cat /usr/bin/head /usr/bin/tail \
-            /usr/bin/wc /usr/bin/tr; do
+            /usr/bin/wc /usr/bin/tr \
+            /usr/bin/col /usr/bin/colrm /usr/bin/comm \
+            /usr/bin/csplit /usr/bin/cut /usr/bin/expand \
+            /usr/bin/fmt /usr/bin/fold /usr/bin/nl \
+            /usr/bin/paste /usr/bin/rev /usr/bin/ul \
+            /usr/bin/unexpand /usr/bin/uniq /usr/bin/lam \
+            /usr/bin/look /usr/games/banner; do
     if [ ! -x "$fbin" ]; then
         echo "TEXTCMD-LEAF-FAIL: $fbin missing or not executable"
         ls -la "$fbin" 2>&1 || true
         TEXTCMD_FAIL=1
     fi
 done
-# Functional probes: cat round-trips stdin, head/tail/wc/tr each
-# transform stdin correctly.
+# Functional probes: cat/head/tail/wc/tr (iter 1) + cut/comm/paste/
+# rev/uniq/expand/unexpand/colrm/nl/fold (iter 2 spot-checks).
 if [ $TEXTCMD_FAIL -eq 0 ]; then
     if [ "$(/bin/echo hello | /bin/cat)" = "hello" ] && \
        [ "$(/usr/bin/printf 'a\nb\nc\n' | /usr/bin/head -1)" = "a" ] && \
        [ "$(/usr/bin/printf 'a\nb\nc\n' | /usr/bin/tail -1)" = "c" ] && \
        [ "$(/usr/bin/printf 'abc' | /usr/bin/wc -c | /usr/bin/tr -d ' ')" = "3" ] && \
-       [ "$(/usr/bin/printf 'abc' | /usr/bin/tr a-c x-z)" = "xyz" ]; then
-        echo "TEXTCMD-LEAF-OK: 5/5 text_cmds stream tools overlaid + functional (cat/head/tail/wc/tr probes pass)"
+       [ "$(/usr/bin/printf 'abc' | /usr/bin/tr a-c x-z)" = "xyz" ] && \
+       [ "$(/usr/bin/printf 'a:b:c' | /usr/bin/cut -d: -f2)" = "b" ] && \
+       [ "$(/usr/bin/printf 'abc' | /usr/bin/rev)" = "cba" ] && \
+       [ "$(/usr/bin/printf 'a\na\nb\n' | /usr/bin/uniq | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = "2" ] && \
+       [ "$(/usr/bin/printf 'a b' | /usr/bin/colrm 2)" = "a" ] && \
+       [ "$(/usr/bin/printf 'a\tb\n' | /usr/bin/expand -t 4 | /usr/bin/wc -c | /usr/bin/tr -d ' ')" = "6" ]; then
+        echo "TEXTCMD-LEAF-OK: 22/22 text_cmds tools overlaid + functional (iter1 + iter2 probes pass)"
     else
         echo "TEXTCMD-LEAF-FAIL: functional sanity check failed"
         TEXTCMD_FAIL=1

@@ -390,26 +390,34 @@ ls -lh "$WORK/rootfs/usr/bin/true" "$WORK/rootfs/bin/echo" \
        "$WORK/rootfs/usr/bin/printf" "$WORK/rootfs/bin/hostname"
 
 #
-# 3a5. build Apple text_cmds (#114 / #105e iter 1). Third Apple-
-#      userland-cmds repo port. Vendored from apple-oss-distributions/
-#      text_cmds@text_cmds-199 at src/text_cmds/. Iter 1 scope: 5
-#      universally-used POSIX stream processors (cat, head, tail, wc,
-#      tr).
+# 3a5. build Apple text_cmds (#114 / #105e iter 1 + iter 2). Third
+#      Apple-userland-cmds repo port. Vendored from apple-oss-distributions/
+#      text_cmds@text_cmds-199 at src/text_cmds/.
+#      Iter 1: 5 universally-used stream processors (cat/head/tail/wc/tr).
+#      Iter 2: +17 pure-POSIX leaf tools (col, colrm, comm, csplit,
+#      cut, expand, fmt, fold, nl, paste, rev, ul, unexpand, uniq,
+#      lam, look, banner).
 #
 #      Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#text_cmds
 #
-echo "==> building Apple text_cmds (iter 1: 5 POSIX stream tools)"
+echo "==> building Apple text_cmds (iter 1+2: 22 POSIX stream tools)"
 make -C "$ROOT/src/text_cmds" install DESTDIR="$WORK/rootfs"
 
 for TEXTCMD_BIN in /bin/cat /usr/bin/head /usr/bin/tail \
-                   /usr/bin/wc /usr/bin/tr; do
+                   /usr/bin/wc /usr/bin/tr \
+                   /usr/bin/col /usr/bin/colrm /usr/bin/comm \
+                   /usr/bin/csplit /usr/bin/cut /usr/bin/expand \
+                   /usr/bin/fmt /usr/bin/fold /usr/bin/nl \
+                   /usr/bin/paste /usr/bin/rev /usr/bin/ul \
+                   /usr/bin/unexpand /usr/bin/uniq /usr/bin/lam \
+                   /usr/bin/look /usr/games/banner; do
     if [ ! -x "$WORK/rootfs$TEXTCMD_BIN" ]; then
         echo "ERROR: text_cmds install didn't land $TEXTCMD_BIN" >&2
         exit 1
     fi
 done
-ls -lh "$WORK/rootfs/bin/cat" "$WORK/rootfs/usr/bin/head" \
-       "$WORK/rootfs/usr/bin/tail" "$WORK/rootfs/usr/bin/tr"
+ls -lh "$WORK/rootfs/bin/cat" "$WORK/rootfs/usr/bin/cut" \
+       "$WORK/rootfs/usr/bin/paste" "$WORK/rootfs/usr/games/banner"
 
 #
 # 3a6. build Apple adv_cmds (#113 / #105d iter 1). Fourth Apple-
