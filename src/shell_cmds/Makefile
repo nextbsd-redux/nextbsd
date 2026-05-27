@@ -52,11 +52,13 @@ ITER4_BINS = find/find who/who
 #     fastfind.c directly (single-TU), so only locate.c + util.c are
 #     linked. Apple guards FreeBSD's capsicum_helpers behind !__APPLE__
 #     in bigram, picked up automatically on FreeBSD.
-#   lastcomm — process-accounting reader. Single-source; links libm
-#     for floor/fmod over ac_utime/ac_stime deltas. Pairs with the
-#     iter-2 accton(8) toggle.
+# lastcomm DEFERRED — FreeBSD's <sys/acct.h> doesn't define `struct acct`
+#   at the public level the way Apple's does (FreeBSD's modern acctv3
+#   format obscures the legacy struct). lastcomm relies on the legacy
+#   struct shape everywhere. Needs either a private sys/acct.h shim or
+#   a rewrite over FreeBSD's acctv3 records — own iter.
 ITER5_BINS = locate/bigram/locate.bigram locate/code/locate.code \
-             locate/locate/locate lastcomm/lastcomm
+             locate/locate/locate
 
 all: $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS) $(ITER4_BINS) $(ITER5_BINS)
 
@@ -183,9 +185,6 @@ locate/locate/locate: locate/locate/locate.c locate/locate/util.c \
                       locate/locate/fastfind.c
 	cc $(CFLAGS) -I locate/locate -o $@ \
 	    locate/locate/locate.c locate/locate/util.c
-# lastcomm: single source; libm for floor/fmod over acct(2) deltas.
-lastcomm/lastcomm: lastcomm/lastcomm.c
-	cc $(CFLAGS) -o $@ lastcomm/lastcomm.c -lm
 
 install: all
 	mkdir -p $(DESTDIR)/bin $(DESTDIR)/usr/bin
@@ -248,7 +247,6 @@ install: all
 	install -m 0555 locate/locate/mklocatedb.sh \
 	    $(DESTDIR)/usr/libexec/locate.mklocatedb
 	install -m 0644 locate/locate/locate.rc $(DESTDIR)/etc/locate.rc
-	install -m 0555 lastcomm/lastcomm $(DESTDIR)/usr/bin/lastcomm
 
 clean:
 	rm -f $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS) $(ITER4_BINS) $(ITER5_BINS)
