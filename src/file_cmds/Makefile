@@ -18,7 +18,13 @@
 # multi-source rules below spell out their .c file lists. shar is
 # a shell script that just gets copied.
 #
-# Iter 3+ (future): cp/mv/ls/chmod/install/gzip/pax/mtree — the
+# Iter 3 (merged): stat, chown, df.
+#
+# Iter 4 (this): du. Single-source; libutil for humanize_number /
+# expand_number / getbsize. Apple getattrlist() hardlinked-directory
+# dedupe is #ifdef __APPLE__-guarded (UFS/ZFS lack the feature).
+#
+# Iter 5+ (future): cp/mv/ls/chmod/install/gzip/pax/mtree — the
 # tools with Apple-specific deps (clonefile, libacl, libdispatch,
 # fcopyfile, xattr). Each needs its own shim work.
 #
@@ -44,14 +50,18 @@ ITER2_BINS = cksum/cksum compress/compress dd/dd \
 #   chown (single-source, POSIX)
 #   df (single-source; uses libutil + libxo; #ifdef __APPLE__ guards
 #      the getattrlist code path)
-# du DEFERRED — uses Apple getattrlist() unconditionally for hardlink
-#   counting (du.c:595 isn't __APPLE__-guarded). Would need a small
-#   patch or shim.
 # cp/mv/ls/chmod/gzip/install/mtree/xattr DEFERRED — these need
 #   libacl/copyfile/commoncrypto/xattr shims, scoped per plan §6.
 ITER3_BINS = stat/stat chown/chown df/df
+# Iter 4 scope:
+#   du — single-source; uses libutil (humanize_number, expand_number,
+#        getbsize). Apple uses getattrlist(ATTR_DIR_LINKCOUNT) for
+#        hardlinked-directory dedupe (HFS+ Time Machine); UFS/ZFS don't
+#        support hardlinked directories, so dirlinkchk() is #ifdef'd
+#        out on non-Apple and returns 0.
+ITER4_BINS = du/du
 
-all: $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS)
+all: $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS) $(ITER4_BINS)
 
 # --- iter 1 (single-source leaf tools) ---
 chflags/chflags: chflags/chflags.c
@@ -125,6 +135,13 @@ chown/chown: chown/chown.c
 df/df: df/df.c
 	cc $(CFLAGS) -o $@ df/df.c -lutil -lxo -lm
 
+# --- iter 4 ---
+# du: -lutil for humanize_number / expand_number / getbsize. Apple-only
+# dirlinkchk() (getattrlist) is #ifdef __APPLE__-guarded; FreeBSD path
+# returns 0 (no hardlinked directories on UFS/ZFS).
+du/du: du/du.c
+	cc $(CFLAGS) -o $@ du/du.c -lutil
+
 # shar is a shell script (no compile); install handled below.
 
 install: all
@@ -151,8 +168,10 @@ install: all
 	install -m 0555 stat/stat $(DESTDIR)/usr/bin/stat
 	install -m 0555 chown/chown $(DESTDIR)/usr/sbin/chown
 	install -m 0555 df/df $(DESTDIR)/bin/df
+	# iter 4
+	install -m 0555 du/du $(DESTDIR)/usr/bin/du
 
 clean:
-	rm -f $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS)
+	rm -f $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS) $(ITER4_BINS)
 
 .PHONY: all clean install

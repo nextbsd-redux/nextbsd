@@ -362,7 +362,7 @@ expect {
         puts "\nFAIL: file_cmds leaf binaries missing or non-functional"
         exit 1
     }
-    "FILECMD-LEAF-OK" { puts "\nOK: file_cmds Apple binaries overlaid pkgbase paths, iter 1+2+3 = 17 tools (#111)" }
+    "FILECMD-LEAF-OK" { puts "\nOK: file_cmds Apple binaries overlaid pkgbase paths, iter 1+2+3+4 = 18 tools (#111)" }
 }
 expect {
     timeout {
