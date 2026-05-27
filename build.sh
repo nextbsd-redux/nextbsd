@@ -420,19 +420,20 @@ ls -lh "$WORK/rootfs/bin/cat" "$WORK/rootfs/usr/bin/cut" \
        "$WORK/rootfs/usr/bin/paste" "$WORK/rootfs/usr/games/banner"
 
 #
-# 3a6. build Apple adv_cmds (#113 / #105d iter 1). Fourth Apple-
-#      userland-cmds repo port. Vendored from apple-oss-distributions/
-#      adv_cmds@adv_cmds-237 at src/adv_cmds/. Iter 1 scope: 5 leaf
-#      tools (tabs, tty, whois, gencat, lsvfs) — no Apple-specific
-#      kernel-struct deps.
+# 3a6. build Apple adv_cmds (#113 / #105d iter 1 + iter 2). Fourth
+#      Apple-userland-cmds repo port. Vendored from
+#      apple-oss-distributions/adv_cmds@adv_cmds-237 at src/adv_cmds/.
+#      Iter 1: 4 leaf tools (tabs, tty, whois, lsvfs).
+#      Iter 2: +2 tools (cap_mkdb, finger).
 #
 #      Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#adv_cmds
 #
-echo "==> building Apple adv_cmds (iter 1: 5 leaf tools)"
+echo "==> building Apple adv_cmds (iter 1+2: 6 tools)"
 make -C "$ROOT/src/adv_cmds" install DESTDIR="$WORK/rootfs"
 
 for ADVCMD_BIN in /usr/bin/tabs /usr/bin/tty /usr/bin/whois \
-                  /usr/sbin/lsvfs; do
+                  /usr/sbin/lsvfs \
+                  /usr/bin/cap_mkdb /usr/bin/finger; do
     if [ ! -x "$WORK/rootfs$ADVCMD_BIN" ]; then
         echo "ERROR: adv_cmds install didn't land $ADVCMD_BIN" >&2
         exit 1
