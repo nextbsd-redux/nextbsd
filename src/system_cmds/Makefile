@@ -116,18 +116,21 @@ accton/accton: accton/accton.c
 # and an `in_word_set(name)` linear-search lookup. The post-second-%%
 # body (find_<table>() / foreach_<table>() helpers) is passed through
 # verbatim, so each generated .c is self-contained.
+#
+# bmake doesn't expand $< in explicit rules — spell out paths
+# (same fix as file_cmds commit f06182e).
 getconf/confstr.c: getconf/confstr.gperf getconf/fake-gperf.awk
-	awk -f getconf/fake-gperf.awk < $< > $@
+	awk -f getconf/fake-gperf.awk < getconf/confstr.gperf > getconf/confstr.c
 getconf/limits.c: getconf/limits.gperf getconf/fake-gperf.awk
-	awk -f getconf/fake-gperf.awk < $< > $@
+	awk -f getconf/fake-gperf.awk < getconf/limits.gperf > getconf/limits.c
 getconf/pathconf.c: getconf/pathconf.gperf getconf/fake-gperf.awk
-	awk -f getconf/fake-gperf.awk < $< > $@
+	awk -f getconf/fake-gperf.awk < getconf/pathconf.gperf > getconf/pathconf.c
 getconf/progenv.c: getconf/progenv.gperf getconf/fake-gperf.awk
-	awk -f getconf/fake-gperf.awk < $< > $@
+	awk -f getconf/fake-gperf.awk < getconf/progenv.gperf > getconf/progenv.c
 getconf/sysconf.c: getconf/sysconf.gperf getconf/fake-gperf.awk
-	awk -f getconf/fake-gperf.awk < $< > $@
+	awk -f getconf/fake-gperf.awk < getconf/sysconf.gperf > getconf/sysconf.c
 getconf/unsigned_limits.c: getconf/unsigned_limits.gperf getconf/fake-gperf.awk
-	awk -f getconf/fake-gperf.awk < $< > $@
+	awk -f getconf/fake-gperf.awk < getconf/unsigned_limits.gperf > getconf/unsigned_limits.c
 
 getconf/getconf: getconf/getconf.c $(GETCONF_GEN)
 	cc $(CFLAGS) -o $@ getconf/getconf.c $(GETCONF_GEN)
