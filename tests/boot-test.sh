@@ -384,7 +384,7 @@ expect {
         puts "\nFAIL: text_cmds leaf binaries missing or non-functional"
         exit 1
     }
-    "TEXTCMD-LEAF-OK" { puts "\nOK: text_cmds Apple stream tools overlaid + functional (#114)" }
+    "TEXTCMD-LEAF-OK" { puts "\nOK: text_cmds Apple stream tools overlaid + functional, iter 1+2 = 22 tools (#114)" }
 }
 expect {
     timeout {
