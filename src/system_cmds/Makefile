@@ -183,7 +183,8 @@ pwd_mkdb/pwd_mkdb: pwd_mkdb/pwd_mkdb.c pwd_mkdb/pw_scan.c
 # <login_cap.h> + setusercontext() in the !__APPLE__ branch, but those
 # are gated on #ifdef LOGIN_CAP in the declarations.
 login/login: login/login.c login/login_audit.c
-	cc $(CFLAGS) -DLOGIN_CAP -o $@ login/login.c login/login_audit.c \
+	cc $(CFLAGS) -DLOGIN_CAP -DUSE_PAM -o $@ \
+	    login/login.c login/login_audit.c \
 	    -lpam -lbsm -lutil
 
 # passwd: passwd.c + file_passwd.c + nis_passwd.c + pam_passwd.c +
