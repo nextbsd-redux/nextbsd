@@ -617,18 +617,10 @@ if [ $SYSCMD_FAIL -eq 0 ]; then
     fi
 fi
 # Iter-3 probes — getconf must resolve a confstr (PATH), a sysconf
-# (_SC_OPEN_MAX), and a pathconf (NAME_MAX on /). All three exercise
-# different lookup tables (gperf-generated wordlist).
-#
-# Note: emit a SYSCMD-DEBUG line BEFORE the SYSCMD-LEAF-FAIL marker
-# so the reason reaches the boot.log — boot-test.sh's expect matches
-# the FAIL token immediately and kills qemu, eating any unflushed
-# colon-reason on the same line.
-echo "SYSCMD-DEBUG: ls -la /usr/bin/getconf:"
-ls -la /usr/bin/getconf 2>&1 || true
-echo "SYSCMD-DEBUG: getconf PATH stdout/stderr:"
-/usr/bin/getconf PATH 2>&1 | head -3 || true
-echo "SYSCMD-DEBUG: getconf PATH rc=$?"
+# (OPEN_MAX), and a pathconf (NAME_MAX on /). All three exercise
+# different lookup tables (gperf-generated wordlist). Note: the
+# gperf wordlist uses the POSIX bare names (OPEN_MAX, not the C
+# enum form _SC_OPEN_MAX).
 if [ $SYSCMD_FAIL -eq 0 ]; then
     if ! /usr/bin/getconf PATH >/dev/null 2>&1; then
         echo "SYSCMD-DEBUG-CAUSE: getconf PATH (confstr) failed"
@@ -637,9 +629,9 @@ if [ $SYSCMD_FAIL -eq 0 ]; then
     fi
 fi
 if [ $SYSCMD_FAIL -eq 0 ]; then
-    SC=$(/usr/bin/getconf _SC_OPEN_MAX 2>/dev/null)
+    SC=$(/usr/bin/getconf OPEN_MAX 2>/dev/null)
     if ! echo "$SC" | grep -qE '^[1-9][0-9]*$'; then
-        echo "SYSCMD-DEBUG-CAUSE: getconf _SC_OPEN_MAX returned '$SC'"
+        echo "SYSCMD-DEBUG-CAUSE: getconf OPEN_MAX returned '$SC'"
         echo "SYSCMD-LEAF-FAIL"
         SYSCMD_FAIL=1
     fi
