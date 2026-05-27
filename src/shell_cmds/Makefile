@@ -35,8 +35,11 @@ ITER2_BINS = apply/apply dirname/dirname env/env getopt/getopt \
              mktemp/mktemp nice/nice nohup/nohup printenv/printenv \
              printf/printf pwd/pwd realpath/realpath renice/renice \
              tee/tee uname/uname what/what yes/yes
+ITER3_BINS = chroot/chroot date/date hexdump/hexdump lockf/lockf \
+             script/script shlock/shlock stdbuf/stdbuf test/test \
+             whereis/whereis which/which xargs/xargs
 
-all: $(ITER1_BINS) $(ITER2_BINS)
+all: $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS)
 
 # --- iter 1 (single-source pure-POSIX leaf tools) ---
 true/true: true/true.c
@@ -96,6 +99,39 @@ what/what: what/what.c
 yes/yes: yes/yes.c
 	cc $(CFLAGS) -o $@ yes/yes.c
 
+# --- iter 3 ---
+chroot/chroot: chroot/chroot.c
+	cc $(CFLAGS) -o $@ chroot/chroot.c
+# date: date.c + vary.c
+date/date: date/date.c date/vary.c
+	cc $(CFLAGS) -o $@ date/date.c date/vary.c
+# hexdump: 6 .c (conv, display, hexdump, hexsyntax, odsyntax, parse).
+# Also produces /usr/bin/od as a hardlink.
+hexdump/hexdump: hexdump/conv.c hexdump/display.c hexdump/hexdump.c \
+                 hexdump/hexsyntax.c hexdump/odsyntax.c hexdump/parse.c
+	cc $(CFLAGS) -o $@ hexdump/conv.c hexdump/display.c \
+	    hexdump/hexdump.c hexdump/hexsyntax.c hexdump/odsyntax.c \
+	    hexdump/parse.c
+lockf/lockf: lockf/lockf.c
+	cc $(CFLAGS) -o $@ lockf/lockf.c
+# script: needs libutil (openpty/login_tty).
+script/script: script/script.c
+	cc $(CFLAGS) -o $@ script/script.c -lutil
+shlock/shlock: shlock/shlock.c
+	cc $(CFLAGS) -o $@ shlock/shlock.c
+stdbuf/stdbuf: stdbuf/stdbuf.c
+	cc $(CFLAGS) -o $@ stdbuf/stdbuf.c
+# test: single-source; also produces `[` as a hardlink.
+test/test: test/test.c
+	cc $(CFLAGS) -o $@ test/test.c
+whereis/whereis: whereis/whereis.c
+	cc $(CFLAGS) -o $@ whereis/whereis.c
+which/which: which/which.c
+	cc $(CFLAGS) -o $@ which/which.c
+# xargs: xargs.c + strnsubst.c
+xargs/xargs: xargs/xargs.c xargs/strnsubst.c
+	cc $(CFLAGS) -o $@ xargs/xargs.c xargs/strnsubst.c
+
 install: all
 	mkdir -p $(DESTDIR)/bin $(DESTDIR)/usr/bin
 	# iter 1
@@ -125,8 +161,23 @@ install: all
 	install -m 0555 uname/uname $(DESTDIR)/usr/bin/uname
 	install -m 0555 what/what $(DESTDIR)/usr/bin/what
 	install -m 0555 yes/yes $(DESTDIR)/usr/bin/yes
+	# iter 3
+	mkdir -p $(DESTDIR)/usr/sbin
+	install -m 0555 chroot/chroot $(DESTDIR)/usr/sbin/chroot
+	install -m 0555 date/date $(DESTDIR)/bin/date
+	install -m 0555 hexdump/hexdump $(DESTDIR)/usr/bin/hexdump
+	ln -f $(DESTDIR)/usr/bin/hexdump $(DESTDIR)/usr/bin/od
+	install -m 0555 lockf/lockf $(DESTDIR)/usr/bin/lockf
+	install -m 0555 script/script $(DESTDIR)/usr/bin/script
+	install -m 0555 shlock/shlock $(DESTDIR)/usr/bin/shlock
+	install -m 0555 stdbuf/stdbuf $(DESTDIR)/usr/bin/stdbuf
+	install -m 0555 test/test $(DESTDIR)/bin/test
+	ln -f $(DESTDIR)/bin/test $(DESTDIR)/bin/[
+	install -m 0555 whereis/whereis $(DESTDIR)/usr/bin/whereis
+	install -m 0555 which/which $(DESTDIR)/usr/bin/which
+	install -m 0555 xargs/xargs $(DESTDIR)/usr/bin/xargs
 
 clean:
-	rm -f $(ITER1_BINS) $(ITER2_BINS)
+	rm -f $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS)
 
 .PHONY: all clean install
