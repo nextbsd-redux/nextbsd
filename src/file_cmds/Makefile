@@ -123,7 +123,7 @@ chown/chown: chown/chown.c
 # df: -lutil for humanize_number, -lxo for libxo. Apple-only paths
 # (getattrlist) are #ifdef __APPLE__-guarded.
 df/df: df/df.c
-	cc $(CFLAGS) -o $@ df/df.c -lutil -lxo
+	cc $(CFLAGS) -o $@ df/df.c -lutil -lxo -lm
 
 # shar is a shell script (no compile); install handled below.
 
