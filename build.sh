@@ -2321,6 +2321,28 @@ if [ -n "$BUILD_PKGS" ] || [ -n "$BASE_BUILD_PKGS" ]; then
     fi
     chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
         pkg autoremove -y || true
+
+    # === DEP AUDIT PROBE (delete after #117 fully resolves) ==========
+    # Surface the final-installed pkg list and who depends on the
+    # phantoms (FreeBSD-runtime + FreeBSD-pam-lib) — we removed both
+    # from pkglist-base.txt in #140 but they get pulled in
+    # transitively. This dump tells us who pulls them in, so we can
+    # either replace those dependents or force-delete the phantoms.
+    echo "==> DEP-AUDIT: final installed package list"
+    chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
+        pkg info | sort
+    echo "==> DEP-AUDIT: reverse-deps of FreeBSD-runtime (who pulls it in?)"
+    chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
+        pkg query "%n requires FreeBSD-runtime" \
+        FreeBSD-* 2>/dev/null | grep 'requires FreeBSD-runtime' || \
+        echo "  (none — try pkg info -r)"
+    chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
+        pkg info -r FreeBSD-runtime 2>&1 || true
+    echo "==> DEP-AUDIT: reverse-deps of FreeBSD-pam-lib"
+    chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
+        pkg info -r FreeBSD-pam-lib 2>&1 || true
+    echo "==> DEP-AUDIT: end"
+    # === end probe ====================================================
 fi
 
 if [ -n "$RUNTIME_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
