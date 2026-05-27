@@ -54,7 +54,12 @@ __RCSID("$NetBSD: lastcomm.c,v 1.23 2012/01/31 21:53:42 wiz Exp $");
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __APPLE__
 #include <struct.h>
+#else
+/* <struct.h> is NetBSD/Apple-specific; FreeBSD has no equivalent. */
+#define fldsiz(t, f) sizeof(((struct t *)0)->f)
+#endif
 #include <time.h>
 #include <tzfile.h>
 #include <unistd.h>
