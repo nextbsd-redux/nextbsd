@@ -485,16 +485,17 @@ if [ $TEXTCMD_FAIL -ne 0 ]; then
     exit 1
 fi
 
-# 6.9. adv_cmds iter 1+2+3 (#113 / #105d). Fourth Apple-userland-cmds
+# 6.9. adv_cmds iter 1+2+3+4 (#113 / #105d). Fourth Apple-userland-cmds
 # repo port. iter 1: tabs/tty/whois/lsvfs; iter 2: cap_mkdb/finger;
-# iter 3: locale (C++).
+# iter 3: locale (C++); iter 4: stty (terminal mode setter).
 #
 # Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#adv_cmds
 ADVCMD_FAIL=0
 for fbin in /usr/bin/tabs /usr/bin/tty /usr/bin/whois \
             /usr/sbin/lsvfs \
             /usr/bin/cap_mkdb /usr/bin/finger \
-            /usr/bin/locale; do
+            /usr/bin/locale \
+            /bin/stty; do
     if [ ! -x "$fbin" ]; then
         echo "ADVCMD-LEAF-FAIL: $fbin missing or not executable"
         ls -la "$fbin" 2>&1 || true
@@ -534,7 +535,15 @@ if [ $ADVCMD_FAIL -eq 0 ]; then
     fi
 fi
 if [ $ADVCMD_FAIL -eq 0 ]; then
-    echo "ADVCMD-LEAF-OK: 7/7 adv_cmds binaries overlaid (lsvfs/cap_mkdb/finger/locale probes pass)"
+    # stty -a reads current termios; on a serial console (CI) the tty
+    # is valid so this must succeed and print at least "speed".
+    if ! /bin/stty -a 2>/dev/null | /usr/bin/grep -q 'speed'; then
+        echo "ADVCMD-LEAF-FAIL: stty -a didn't print termios state"
+        ADVCMD_FAIL=1
+    fi
+fi
+if [ $ADVCMD_FAIL -eq 0 ]; then
+    echo "ADVCMD-LEAF-OK: 8/8 adv_cmds binaries overlaid (lsvfs/cap_mkdb/finger/locale/stty probes pass)"
 else
     exit 1
 fi

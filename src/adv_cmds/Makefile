@@ -17,9 +17,15 @@
 # client, multi-source POSIX). last DEFERRED — Apple uses non-standard
 # getutxent_wtmp() which isn't in FreeBSD's libc.
 #
-# Iter 3+: locale (locale.cc — C++), localedef (10 .c), genwrap (yacc/lex),
-# plus the load-bearing tools (ps + pkill — need Apple kinfo_proc shim,
-# stty — POSIX but minor Apple flag additions).
+# Iter 3 (merged): locale (locale.cc — C++).
+#
+# Iter 4 (this): stty — terminal mode setter. 7 sources, mostly POSIX
+# termios; Apple-specific flag/disc references (NTTYDISC, TABLDISC,
+# VERASE2, cfmakesane override) are #ifdef'd. Apple's <get_compat.h>
+# (modes.c) is shadowed by a local COMPAT_MODE(a,b)=1 fallback.
+#
+# Iter 5+: localedef (10 .c), genwrap (yacc/lex), ps + pkill (need
+# Apple kinfo_proc shim).
 #
 # Usage: make -C src/adv_cmds install DESTDIR=$WORK/rootfs
 
@@ -36,8 +42,10 @@ ITER2_BINS = cap_mkdb/cap_mkdb finger/finger
 # localedef DEFERRED — 10 .c with Apple-internal msgcat machinery.
 # genwrap DEFERRED — yacc/lex driver.
 ITER3_BINS = locale/locale
+# Iter 4: stty (7 .c — cchar, gfmt, key, modes, print, stty, util).
+ITER4_BINS = stty/stty
 
-all: $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS)
+all: $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS) $(ITER4_BINS)
 
 # --- iter 1 (4 single-source-or-near-leaf tools) ---
 tabs/tabs: tabs/tabs.c
@@ -63,6 +71,15 @@ finger/finger: finger/finger.c finger/lprint.c finger/net.c finger/sprint.c fing
 locale/locale: locale/locale.cc
 	c++ -O2 -pipe -o $@ locale/locale.cc
 
+# --- iter 4 ---
+# stty: 7 .c. Apple-only blocks (NTTYDISC, TABLDISC, cfmakesane,
+# get_compat) are #ifdef __APPLE__-guarded; FreeBSD-only VERASE2
+# is added via the !__APPLE__ branch in cchar.c.
+stty/stty: stty/cchar.c stty/gfmt.c stty/key.c stty/modes.c \
+           stty/print.c stty/stty.c stty/util.c
+	cc $(CFLAGS) -o $@ stty/cchar.c stty/gfmt.c stty/key.c \
+	    stty/modes.c stty/print.c stty/stty.c stty/util.c
+
 install: all
 	mkdir -p $(DESTDIR)/usr/bin $(DESTDIR)/usr/sbin
 	install -m 0555 tabs/tabs $(DESTDIR)/usr/bin/tabs
@@ -75,8 +92,11 @@ install: all
 	install -m 0555 finger/finger $(DESTDIR)/usr/bin/finger
 	# iter 3
 	install -m 0555 locale/locale $(DESTDIR)/usr/bin/locale
+	# iter 4
+	mkdir -p $(DESTDIR)/bin
+	install -m 0555 stty/stty $(DESTDIR)/bin/stty
 
 clean:
-	rm -f $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS)
+	rm -f $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS) $(ITER4_BINS)
 
 .PHONY: all clean install
