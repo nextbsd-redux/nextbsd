@@ -364,8 +364,11 @@ if [ $FILECMD_FAIL -ne 0 ]; then
     exit 1
 fi
 
-# 6.7. shell_cmds iter 2 (#112 / #105c iter 2). Extends iter 1's
-# 5-binary leaf set to 25 single-source POSIX tools.
+# 6.7. shell_cmds iter 1+2+3 (#112 / #105c). Extends to 36 tools.
+#   Iter 1: true/false/echo/sleep/basename.
+#   Iter 2: 20 more POSIX tools.
+#   Iter 3: +11 more (chroot, date, hexdump, lockf, script, shlock,
+#           stdbuf, test, whereis, which, xargs) + 'od' link + '[' link.
 #
 # Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#shell_cmds
 SHELLCMD_FAIL=0
@@ -377,22 +380,34 @@ for fbin in /usr/bin/true /usr/bin/false /bin/echo /bin/sleep \
             /usr/bin/nice /usr/bin/nohup /usr/bin/printenv \
             /usr/bin/printf /bin/pwd /bin/realpath \
             /usr/bin/renice /usr/bin/tee /usr/bin/uname \
-            /usr/bin/what /usr/bin/yes; do
+            /usr/bin/what /usr/bin/yes \
+            /usr/sbin/chroot /bin/date /usr/bin/hexdump \
+            /usr/bin/od /usr/bin/lockf /usr/bin/script \
+            /usr/bin/shlock /usr/bin/stdbuf /bin/test /bin/[ \
+            /usr/bin/whereis /usr/bin/which /usr/bin/xargs; do
     if [ ! -x "$fbin" ]; then
         echo "SHELLCMD-LEAF-FAIL: $fbin missing or not executable"
         ls -la "$fbin" 2>&1 || true
         SHELLCMD_FAIL=1
     fi
 done
-# Functional sanity: true returns 0, false returns non-zero, echo
-# round-trips a string. Plus iter-2 spot checks for tools with more
-# complex code paths.
+# Functional sanity: iter-1/2 probes plus iter-3 spot checks.
+#   date — prints a year that looks like 20xx.
+#   hexdump — hex-dumps a 1-char input cleanly.
+#   test — [ 1 -lt 2 ] returns 0.
+#   xargs — echo via xargs round-trips.
+#   which — finds /bin/sh.
 if [ $SHELLCMD_FAIL -eq 0 ]; then
     if /usr/bin/true && ! /usr/bin/false && \
        [ "$(/bin/echo hello)" = "hello" ] && \
        [ "$(/usr/bin/printf 'x%s' yz)" = "xyz" ] && \
-       [ "$(/usr/bin/jot 1 5)" = "5" ]; then
-        echo "SHELLCMD-LEAF-OK: 25/25 shell_cmds binaries overlaid + functional (true/false/echo/printf/jot probes pass)"
+       [ "$(/usr/bin/jot 1 5)" = "5" ] && \
+       /bin/date +%Y | /usr/bin/grep -qE '^20[0-9][0-9]$' && \
+       [ "$(/bin/echo -n A | /usr/bin/hexdump -e '"%02x"')" = "41" ] && \
+       /bin/[ 1 -lt 2 ] && \
+       [ "$(/bin/echo hello | /usr/bin/xargs /bin/echo)" = "hello" ] && \
+       [ -n "$(/usr/bin/which sh)" ]; then
+        echo "SHELLCMD-LEAF-OK: 36/36 shell_cmds binaries overlaid + functional (iter1+2+3 probes pass)"
     else
         echo "SHELLCMD-LEAF-FAIL: functional sanity check failed"
         SHELLCMD_FAIL=1
