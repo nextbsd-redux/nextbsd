@@ -13,8 +13,12 @@
 # client), gencat (POSIX message catalogs, multi-source), lsvfs
 # (getvfsbyname listing).
 #
-# Iter 2+: cap_mkdb, finger, last, locale, localedef, genwrap, plus
-# the load-bearing tools (ps + pkill — need Apple kinfo_proc shim,
+# Iter 2 scope: cap_mkdb (terminfo db builder), finger (network finger
+# client, multi-source POSIX). last DEFERRED — Apple uses non-standard
+# getutxent_wtmp() which isn't in FreeBSD's libc.
+#
+# Iter 3+: locale (locale.cc — C++), localedef (10 .c), genwrap (yacc/lex),
+# plus the load-bearing tools (ps + pkill — need Apple kinfo_proc shim,
 # stty — POSIX but minor Apple flag additions).
 #
 # Usage: make -C src/adv_cmds install DESTDIR=$WORK/rootfs
@@ -26,10 +30,11 @@ CFLAGS = -O2 -pipe -D__dead=__dead2
 # catalog generation (not present on FreeBSD). Would need a shim
 # matching Apple's libc/nlsmsg internals. Not load-bearing — defer.
 ITER1_BINS = tabs/tabs tty/tty whois/whois lsvfs/lsvfs
+ITER2_BINS = cap_mkdb/cap_mkdb finger/finger
 
-all: $(ITER1_BINS)
+all: $(ITER1_BINS) $(ITER2_BINS)
 
-# --- iter 1 (5 single-source-or-near-leaf tools) ---
+# --- iter 1 (4 single-source-or-near-leaf tools) ---
 tabs/tabs: tabs/tabs.c
 	cc $(CFLAGS) -o $@ tabs/tabs.c -lncurses
 tty/tty: tty/tty.c
@@ -40,6 +45,14 @@ whois/whois: whois/whois.c
 lsvfs/lsvfs: lsvfs/lsvfs.c
 	cc $(CFLAGS) -o $@ lsvfs/lsvfs.c
 
+# --- iter 2 ---
+cap_mkdb/cap_mkdb: cap_mkdb/cap_mkdb.c
+	cc $(CFLAGS) -o $@ cap_mkdb/cap_mkdb.c
+# finger: 5 .c (finger, lprint, net, sprint, util).
+finger/finger: finger/finger.c finger/lprint.c finger/net.c finger/sprint.c finger/util.c
+	cc $(CFLAGS) -o $@ finger/finger.c finger/lprint.c finger/net.c \
+	    finger/sprint.c finger/util.c
+
 install: all
 	mkdir -p $(DESTDIR)/usr/bin $(DESTDIR)/usr/sbin
 	install -m 0555 tabs/tabs $(DESTDIR)/usr/bin/tabs
@@ -47,8 +60,11 @@ install: all
 	install -m 0555 whois/whois $(DESTDIR)/usr/bin/whois
 	# gencat DEFERRED — Apple-internal msgcat.h header missing.
 	install -m 0555 lsvfs/lsvfs $(DESTDIR)/usr/sbin/lsvfs
+	# iter 2
+	install -m 0555 cap_mkdb/cap_mkdb $(DESTDIR)/usr/bin/cap_mkdb
+	install -m 0555 finger/finger $(DESTDIR)/usr/bin/finger
 
 clean:
-	rm -f $(ITER1_BINS)
+	rm -f $(ITER1_BINS) $(ITER2_BINS)
 
 .PHONY: all clean install

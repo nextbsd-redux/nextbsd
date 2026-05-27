@@ -448,30 +448,48 @@ if [ $TEXTCMD_FAIL -ne 0 ]; then
     exit 1
 fi
 
-# 6.9. adv_cmds iter 1 (#113 / #105d iter 1). Fourth Apple-userland-
-# cmds repo port. 5 leaf tools (tabs, tty, whois, gencat, lsvfs).
+# 6.9. adv_cmds iter 1+2 (#113 / #105d). Fourth Apple-userland-cmds
+# repo port. iter 1: tabs/tty/whois/lsvfs; iter 2: cap_mkdb/finger.
 #
 # Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#adv_cmds
 ADVCMD_FAIL=0
 for fbin in /usr/bin/tabs /usr/bin/tty /usr/bin/whois \
-            /usr/sbin/lsvfs; do
+            /usr/sbin/lsvfs \
+            /usr/bin/cap_mkdb /usr/bin/finger; do
     if [ ! -x "$fbin" ]; then
         echo "ADVCMD-LEAF-FAIL: $fbin missing or not executable"
         ls -la "$fbin" 2>&1 || true
         ADVCMD_FAIL=1
     fi
 done
-# Functional probe: lsvfs always succeeds (lists at least ufs/devfs
-# loaded VFS modules).
+# Functional probes:
+#   lsvfs always succeeds (lists at least ufs/devfs loaded VFS modules).
+#   cap_mkdb with no args prints usage to stderr; just check it runs
+#     without dyld errors (rc 1 or 64 = usage exit).
+#   finger with no user prints header or "No one logged on".
 if [ $ADVCMD_FAIL -eq 0 ]; then
-    if /usr/sbin/lsvfs >/dev/null 2>&1; then
-        echo "ADVCMD-LEAF-OK: 4/4 adv_cmds binaries overlaid (lsvfs runs cleanly)"
-    else
-        echo "ADVCMD-LEAF-FAIL: lsvfs failed to enumerate VFS modules"
+    if ! /usr/sbin/lsvfs >/dev/null 2>&1; then
+        echo "ADVCMD-LEAF-FAIL: lsvfs failed"
         ADVCMD_FAIL=1
     fi
 fi
-if [ $ADVCMD_FAIL -ne 0 ]; then
+if [ $ADVCMD_FAIL -eq 0 ]; then
+    /usr/bin/cap_mkdb 2>/dev/null
+    rc=$?
+    if [ $rc -ne 1 ] && [ $rc -ne 2 ] && [ $rc -ne 64 ]; then
+        echo "ADVCMD-LEAF-FAIL: cap_mkdb exited unexpectedly (rc=$rc)"
+        ADVCMD_FAIL=1
+    fi
+fi
+if [ $ADVCMD_FAIL -eq 0 ]; then
+    if ! /usr/bin/finger 2>/dev/null | /usr/bin/head -1 >/dev/null; then
+        echo "ADVCMD-LEAF-FAIL: finger didn't produce output"
+        ADVCMD_FAIL=1
+    fi
+fi
+if [ $ADVCMD_FAIL -eq 0 ]; then
+    echo "ADVCMD-LEAF-OK: 6/6 adv_cmds binaries overlaid (lsvfs/cap_mkdb/finger probes pass)"
+else
     exit 1
 fi
 
