@@ -107,3 +107,12 @@ lib/libbsm
 lib/libmd
 lib/libutil
 lib/libnv
+# Remaining FreeBSD-runtime shlibs — finishing the foundational-shlib
+# set so on-disk content at /lib/lib*.so.* is all from our build, even
+# though FreeBSD-runtime stays in the pkg DB (shlib-manifest reasons).
+lib/libcrypt
+lib/libedit
+lib/libelf
+lib/libjail
+lib/libgeom
+lib/libexpat

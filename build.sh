@@ -279,12 +279,16 @@ SRCBUILD_MAKE_FLAGS="__MAKE_CONF=/dev/null SRCCONF=/dev/null \
 
 # Pre-create /usr/include/ subdirs that FreeBSD-lib installs assume
 # exist (FreeBSD normally pre-populates these via `mtree -d` from
-# /etc/mtree/BSD.include.dist before make install). lib/libcasper
-# installs cap_*.h into /usr/include/casper/; lib/libbsm installs
-# headers into /usr/include/bsm/. Without these dirs the `install`
-# command exits 71 (EX_OSERR / no such directory).
+# /etc/mtree/BSD.include.dist before make install). Without these
+# the `install` command exits 71 (EX_OSERR / no such directory).
+#
+#   casper/   ← lib/libcasper installs cap_*.h here
+#   bsm/      ← lib/libbsm installs <bsm/*.h> here
+#   editline/ ← lib/libedit installs <editline/readline/readline.h> here
 mkdir -p "$WORK/rootfs/usr/include/casper" \
-         "$WORK/rootfs/usr/include/bsm"
+         "$WORK/rootfs/usr/include/bsm" \
+         "$WORK/rootfs/usr/include/editline" \
+         "$WORK/rootfs/usr/include/editline/readline"
 
 for DIR in $FBSDGLUE_LIST; do
     SRC="$WORK/freebsd-src/usr/src/$DIR"
