@@ -481,6 +481,18 @@ ls -lh "$WORK/rootfs/bin/sync" "$WORK/rootfs/bin/wait4path" \
        "$WORK/rootfs/usr/sbin/mkfile" "$WORK/rootfs/usr/bin/newgrp" \
        "$WORK/rootfs/usr/sbin/vipw"
 
+# 3a8. Flip root's default shell from /bin/csh to /bin/sh.
+#      FreeBSD-csh was dropped from pkglist-base.txt 2026-05-27, but
+#      FreeBSD-runtime's stock /etc/master.passwd still names /bin/csh
+#      as root's shell. Without this fix login(1) sets SHELL=/bin/csh
+#      which doesn't exist on the booted system, dropping the user
+#      into a non-functional shell. /usr/sbin/pw comes from srclist-
+#      fbsdglue.txt (always built earlier).
+echo "==> flipping root shell to /bin/sh (FreeBSD-csh dropped)"
+chroot "$WORK/rootfs" /usr/sbin/pw usermod root -s /bin/sh
+chroot "$WORK/rootfs" /usr/bin/grep '^root:' /etc/master.passwd | \
+    /usr/bin/awk -F: '{print "    root shell now: " $10}'
+
 #
 # 3b. build mach.ko against the freshly-extracted kernel sources and
 #     install it into $WORK/rootfs/boot/kernel/mach.ko so it ships

@@ -54,8 +54,13 @@ FreeBSD-kernel-generic
 # ---- core libc + base userland ----
 FreeBSD-clibs
 #FreeBSD-utilities
-FreeBSD-csh
-FreeBSD-vi
+# csh: DROPPED 2026-05-27 — root shell flipped to /bin/sh in build.sh
+#   post-install (pw usermod). Users can `pkg install zsh` later for
+#   an interactive shell; /bin/sh stays available via FreeBSD-runtime.
+#FreeBSD-csh
+# vi: DROPPED 2026-05-27 — Apple text_cmds ships /usr/bin/ed; vi
+#   itself is `pkg install vim` if a user wants it.
+#FreeBSD-vi
 
 # Console keymap data (loaded by vt(4)).
 FreeBSD-vt-data
