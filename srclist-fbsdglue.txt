@@ -27,6 +27,13 @@
 # --- bin/ ---
 bin/freebsd-version
 bin/kenv
+# sh: /bin/sh from FreeBSD's POSIX sh. FreeBSD-runtime currently owns
+#   this path; vendoring via fbsdglue moves it under our build.
+#   (Apple sh source is vendored at src/shell_cmds/sh/ but not built
+#    — would only matter for "Apple-shape" consistency, not for
+#    Linux portability since neither Apple sh nor FreeBSD sh map to
+#    Linux's bash/dash anyway.)
+bin/sh
 
 # --- sbin/ kernel-bound (kld(4), VFS, devfs, rtld hint) + UFS family ---
 # (sbin/camcontrol DEFERRED — needs lib/libnvmf privatelib prereq;
@@ -84,3 +91,19 @@ libexec/save-entropy
 lib/ncurses
 lib/libcasper
 lib/libbsm
+# libmd / libutil / libnv: foundational shlibs owned by FreeBSD-runtime
+#   today. Many other pkgs shlib-depend on them (geom, mtree, pkg-
+#   bootstrap, xz-lib use libmd; geom, mtree use libutil; libcasper
+#   uses libnv). Adding to fbsdglue puts the .so files on disk under
+#   our build, but FreeBSD-runtime stays in the pkg DB because pkg's
+#   resolver works on pkg-manifest shlib metadata not filesystem
+#   content. The reason to do this anyway: when we eventually run
+#   the "local pkg repo with shadow manifests" workstream, the .so
+#   files already exist from /usr/src here. Plus Linux-portability
+#   prep: these libs are FreeBSD-specific (no straight Linux peer);
+#   when the Linux port comes, this list converts to libmd/libutil/
+#   libnv from libxcrypt + elfutils + custom code, but the build
+#   shape stays the same.
+lib/libmd
+lib/libutil
+lib/libnv
