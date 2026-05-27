@@ -46,6 +46,12 @@ sbin/umount
 
 # --- usr.bin/ — minimal set; debug toolkit deferred (see comment) ---
 usr.bin/ldd
+# su: Apple's su needs a BSM audit stub (deferred). FreeBSD's su(1)
+# from /usr/src links libpam + libutil — both work against our Apple
+# OpenPAM + FreeBSD libutil. Surfaced when #105h drop probe (#140)
+# revealed PAM-LOGIN-FAIL: /usr/bin/su missing after FreeBSD-utilities
+# was dropped.
+usr.bin/su
 
 # --- usr.sbin/ FreeBSD HW/FS introspection + user mgmt ---
 usr.sbin/crashinfo
