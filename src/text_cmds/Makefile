@@ -31,8 +31,21 @@ ITER2_BINS = col/col colrm/colrm comm/comm csplit/csplit cut/cut \
              expand/expand fmt/fmt fold/fold nl/nl paste/paste \
              rev/rev ul/ul unexpand/unexpand uniq/uniq lam/lam \
              look/look banner/banner
+# Iter 3 scope: 12 more tools across single- and multi-source.
+#   ed (7 .c) — also produces /usr/bin/red link.
+#   pr (2 .c), rs, split (-lutil), vis (2 .c), unvis, join, column,
+#   md5 (-lmd; dispatches by argv[0] for sha1/sha224/.../skein* links),
+#   bintrans (5 .c, -lresolv; dispatches for base64/uuencode/uudecode/
+#   b64encode/b64decode), sed (4 .c), grep (4 .c, -lz -llzma -lbz2).
+# sort DEFERRED — file.c uses Mach semaphores for parallel sort,
+# needs a libdispatch / Mach IPC binding (the wedge for proving the
+# Mach IPC track end-to-end; promote to iter 4 of its own).
+# jq is an Apple wrapper dir; nothing to build.
+ITER3_BINS = ed/ed pr/pr rs/rs split/split vis/vis unvis/unvis \
+             join/join column/column md5/md5 bintrans/bintrans \
+             sed/sed grep/grep
 
-all: $(ITER1_BINS) $(ITER2_BINS)
+all: $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS)
 
 # --- iter 1 (5 POSIX stream tools) ---
 cat/cat: cat/cat.c
@@ -85,8 +98,55 @@ look/look: look/look.c
 banner/banner: banner/banner.c
 	cc $(CFLAGS) -o $@ banner/banner.c
 
+# --- iter 3 ---
+# ed: 7 .c (buf, glbl, io, main, re, sub, undo).
+ed/ed: ed/buf.c ed/glbl.c ed/io.c ed/main.c ed/re.c ed/sub.c ed/undo.c
+	cc $(CFLAGS) -o $@ ed/buf.c ed/glbl.c ed/io.c ed/main.c \
+	    ed/re.c ed/sub.c ed/undo.c
+# pr: pr.c + egetopt.c.
+pr/pr: pr/pr.c pr/egetopt.c
+	cc $(CFLAGS) -o $@ pr/pr.c pr/egetopt.c
+rs/rs: rs/rs.c
+	cc $(CFLAGS) -o $@ rs/rs.c
+split/split: split/split.c
+	cc $(CFLAGS) -o $@ split/split.c -lutil
+# vis: vis.c + foldit.c.
+vis/vis: vis/vis.c vis/foldit.c
+	cc $(CFLAGS) -o $@ vis/vis.c vis/foldit.c
+unvis/unvis: unvis/unvis.c
+	cc $(CFLAGS) -o $@ unvis/unvis.c
+# join: Apple's join.c declares `unix2003_compat` inside #ifdef __APPLE__
+# but references it (lines 147, 558) outside the guard. Define it to
+# 0 at compile so the BSD code path is taken unconditionally.
+join/join: join/join.c
+	cc $(CFLAGS) -Dunix2003_compat=0 -o $@ join/join.c
+column/column: column/column.c
+	cc $(CFLAGS) -o $@ column/column.c
+# md5: dispatches by argv[0]. -lmd brings in MD5/SHA1/SHA256/etc.
+md5/md5: md5/md5.c
+	cc $(CFLAGS) -o $@ md5/md5.c -lmd
+# bintrans: 5 .c (bintrans, qp, uudecode, uuencode, apple_base64).
+# Dispatches by argv[0] for base64/b64encode/b64decode/uuencode/uudecode.
+# FreeBSD's libc has b64_ntop/b64_pton built in (Apple ships them in
+# -lresolv) — no extra link needed.
+bintrans/bintrans: bintrans/bintrans.c bintrans/qp.c bintrans/uudecode.c \
+                   bintrans/uuencode.c bintrans/apple_base64.c
+	cc $(CFLAGS) -o $@ bintrans/bintrans.c bintrans/qp.c \
+	    bintrans/uudecode.c bintrans/uuencode.c \
+	    bintrans/apple_base64.c
+# sed: 4 .c (compile, main, misc, process).
+sed/sed: sed/compile.c sed/main.c sed/misc.c sed/process.c
+	cc $(CFLAGS) -o $@ sed/compile.c sed/main.c sed/misc.c \
+	    sed/process.c
+# grep: 4 .c (file, grep, queue, util). -lz/-llzma/-lbz2 for
+# zgrep/xzgrep/bzgrep transparent decompression.
+grep/grep: grep/file.c grep/grep.c grep/queue.c grep/util.c
+	cc $(CFLAGS) -o $@ grep/file.c grep/grep.c grep/queue.c \
+	    grep/util.c -lz -llzma -lbz2
+
 install: all
-	mkdir -p $(DESTDIR)/bin $(DESTDIR)/usr/bin $(DESTDIR)/usr/games
+	mkdir -p $(DESTDIR)/bin $(DESTDIR)/usr/bin $(DESTDIR)/usr/games \
+	         $(DESTDIR)/sbin
 	# iter 1
 	install -m 0555 cat/cat $(DESTDIR)/bin/cat
 	install -m 0555 head/head $(DESTDIR)/usr/bin/head
@@ -111,8 +171,38 @@ install: all
 	install -m 0555 lam/lam $(DESTDIR)/usr/bin/lam
 	install -m 0555 look/look $(DESTDIR)/usr/bin/look
 	install -m 0555 banner/banner $(DESTDIR)/usr/games/banner
+	# iter 3
+	install -m 0555 ed/ed $(DESTDIR)/bin/ed
+	ln -f $(DESTDIR)/bin/ed $(DESTDIR)/bin/red
+	install -m 0555 pr/pr $(DESTDIR)/usr/bin/pr
+	install -m 0555 rs/rs $(DESTDIR)/usr/bin/rs
+	install -m 0555 split/split $(DESTDIR)/usr/bin/split
+	install -m 0555 vis/vis $(DESTDIR)/usr/bin/vis
+	install -m 0555 unvis/unvis $(DESTDIR)/usr/bin/unvis
+	install -m 0555 join/join $(DESTDIR)/usr/bin/join
+	install -m 0555 column/column $(DESTDIR)/usr/bin/column
+	# md5 dispatches by argv[0] — hardlink to sha1/sha224/.../skein.
+	install -m 0555 md5/md5 $(DESTDIR)/sbin/md5
+	for n in sha1 sha224 sha256 sha384 sha512 sha512t256 rmd160 \
+	         skein256 skein512 skein1024; do \
+	    ln -f $(DESTDIR)/sbin/md5 $(DESTDIR)/sbin/$$n; \
+	done
+	# bintrans dispatches by argv[0] for base64/uu*/b64*.
+	install -m 0555 bintrans/bintrans $(DESTDIR)/usr/bin/bintrans
+	for n in base64 b64encode b64decode uuencode uudecode; do \
+	    ln -f $(DESTDIR)/usr/bin/bintrans $(DESTDIR)/usr/bin/$$n; \
+	done
+	install -m 0555 sed/sed $(DESTDIR)/usr/bin/sed
+	# grep — dispatches by argv[0] for egrep/fgrep/zgrep/etc.
+	install -m 0555 grep/grep $(DESTDIR)/usr/bin/grep
+	for n in egrep fgrep rgrep zgrep zegrep zfgrep \
+	         bzgrep bzegrep bzfgrep \
+	         xzgrep xzegrep xzfgrep \
+	         lzgrep lzegrep lzfgrep; do \
+	    ln -f $(DESTDIR)/usr/bin/grep $(DESTDIR)/usr/bin/$$n; \
+	done
 
 clean:
-	rm -f $(ITER1_BINS) $(ITER2_BINS)
+	rm -f $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS)
 
 .PHONY: all clean install

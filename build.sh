@@ -405,7 +405,7 @@ ls -lh "$WORK/rootfs/usr/bin/true" "$WORK/rootfs/bin/echo" \
 #
 #      Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#text_cmds
 #
-echo "==> building Apple text_cmds (iter 1+2: 22 POSIX stream tools)"
+echo "==> building Apple text_cmds (iter 1+2+3: 34 POSIX stream tools)"
 make -C "$ROOT/src/text_cmds" install DESTDIR="$WORK/rootfs"
 
 for TEXTCMD_BIN in /bin/cat /usr/bin/head /usr/bin/tail \
@@ -415,7 +415,12 @@ for TEXTCMD_BIN in /bin/cat /usr/bin/head /usr/bin/tail \
                    /usr/bin/fmt /usr/bin/fold /usr/bin/nl \
                    /usr/bin/paste /usr/bin/rev /usr/bin/ul \
                    /usr/bin/unexpand /usr/bin/uniq /usr/bin/lam \
-                   /usr/bin/look /usr/games/banner; do
+                   /usr/bin/look /usr/games/banner \
+                   /bin/ed /usr/bin/pr /usr/bin/rs /usr/bin/split \
+                   /usr/bin/vis /usr/bin/unvis /usr/bin/join \
+                   /usr/bin/column /sbin/md5 /sbin/sha256 \
+                   /usr/bin/bintrans /usr/bin/base64 \
+                   /usr/bin/sed /usr/bin/grep /usr/bin/egrep; do
     if [ ! -x "$WORK/rootfs$TEXTCMD_BIN" ]; then
         echo "ERROR: text_cmds install didn't land $TEXTCMD_BIN" >&2
         exit 1
