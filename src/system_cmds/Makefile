@@ -186,17 +186,20 @@ pwd_mkdb/pwd_mkdb: pwd_mkdb/pwd_mkdb.c pwd_mkdb/pw_scan.c
 # usr.bin/login (auth_pam signature, additional pam_silent/pam_err
 # gating, LOGIN_CAP branch incomplete). Needs source patching.
 
-# passwd: passwd.c + file_passwd.c + nis_passwd.c + pam_passwd.c +
-# od_passwd_stub.c. Skips the real od_passwd.c (which #include's
-# <OpenDirectory/*.h>); the stub returns 1 so `passwd -i OpenDirectory`
-# prints an error and exits non-zero. PAM is the default infosystem.
-# Links libpam (OpenPAM) + libutil.
-passwd/passwd: passwd/passwd.c passwd/file_passwd.c passwd/nis_passwd.c \
-               passwd/pam_passwd.c passwd/od_passwd_stub.c \
-               passwd/TargetConditionals.h
+# passwd: passwd.c + file_passwd.c + pam_passwd.c + 2 stubs.
+# Skips the real od_passwd.c (needs libopendirectory) and the real
+# nis_passwd.c (needs xdr_yppasswd from librpcsvc; NIS is obsolete).
+# Both stubs return 1 — `passwd -i OpenDirectory` / `passwd -i NIS`
+# print an error. PAM is the default infosystem.
+# Local <libc.h> + <TargetConditionals.h> stubs (Apple-only headers)
+# picked up via -I passwd. Links libpam (OpenPAM overlay) + libcrypt
+# (now from fbsdglue) + libutil.
+passwd/passwd: passwd/passwd.c passwd/file_passwd.c passwd/pam_passwd.c \
+               passwd/od_passwd_stub.c passwd/nis_passwd_stub.c \
+               passwd/TargetConditionals.h passwd/libc.h
 	cc $(CFLAGS) -I passwd -o $@ passwd/passwd.c passwd/file_passwd.c \
-	    passwd/nis_passwd.c passwd/pam_passwd.c \
-	    passwd/od_passwd_stub.c -lpam -lutil
+	    passwd/pam_passwd.c passwd/od_passwd_stub.c \
+	    passwd/nis_passwd_stub.c -lpam -lcrypt -lutil
 
 install: all
 	mkdir -p $(DESTDIR)/bin $(DESTDIR)/usr/bin $(DESTDIR)/usr/sbin
