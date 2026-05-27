@@ -540,17 +540,20 @@ else
     exit 1
 fi
 
-# 6.10. system_cmds iter 1+2 (#115 / #105g). Fifth Apple-userland-
+# 6.10. system_cmds iter 1+2+3 (#115 / #105g). Fifth Apple-userland-
 # cmds repo port.
 #   Iter 1: mkfile, sync, wait4path, pagesize.
 #   Iter 2: newgrp, vifs, vipw, accton.
+#   Iter 3: getconf (POSIX configuration query; gperf tables via the
+#           vendored fake-gperf.awk).
 #
 # Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#system_cmds
 SYSCMD_FAIL=0
 for fbin in /usr/sbin/mkfile /bin/sync /bin/wait4path \
             /usr/bin/pagesize \
             /usr/bin/newgrp /usr/sbin/vifs /usr/sbin/vipw \
-            /usr/sbin/accton; do
+            /usr/sbin/accton \
+            /usr/bin/getconf; do
     if [ ! -x "$fbin" ]; then
         echo "SYSCMD-LEAF-FAIL: $fbin missing or not executable"
         ls -la "$fbin" 2>&1 || true
@@ -613,8 +616,31 @@ if [ $SYSCMD_FAIL -eq 0 ]; then
         SYSCMD_FAIL=1
     fi
 fi
+# Iter-3 probes — getconf must resolve a confstr (PATH), a sysconf
+# (_SC_OPEN_MAX), and a pathconf (NAME_MAX on /). All three exercise
+# different lookup tables (gperf-generated wordlist).
 if [ $SYSCMD_FAIL -eq 0 ]; then
-    echo "SYSCMD-LEAF-OK: 8/8 system_cmds binaries overlaid (iter1 + iter2 probes pass)"
+    if ! /usr/bin/getconf PATH >/dev/null 2>&1; then
+        echo "SYSCMD-LEAF-FAIL: getconf PATH (confstr) failed"
+        SYSCMD_FAIL=1
+    fi
+fi
+if [ $SYSCMD_FAIL -eq 0 ]; then
+    SC=$(/usr/bin/getconf _SC_OPEN_MAX 2>/dev/null)
+    if ! echo "$SC" | grep -qE '^[1-9][0-9]*$'; then
+        echo "SYSCMD-LEAF-FAIL: getconf _SC_OPEN_MAX returned '$SC'"
+        SYSCMD_FAIL=1
+    fi
+fi
+if [ $SYSCMD_FAIL -eq 0 ]; then
+    PC=$(/usr/bin/getconf NAME_MAX / 2>/dev/null)
+    if ! echo "$PC" | grep -qE '^[1-9][0-9]*$'; then
+        echo "SYSCMD-LEAF-FAIL: getconf NAME_MAX / returned '$PC'"
+        SYSCMD_FAIL=1
+    fi
+fi
+if [ $SYSCMD_FAIL -eq 0 ]; then
+    echo "SYSCMD-LEAF-OK: 9/9 system_cmds binaries overlaid (iter1 + iter2 + iter3 probes pass)"
 else
     exit 1
 fi
