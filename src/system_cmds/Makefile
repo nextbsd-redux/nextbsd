@@ -192,8 +192,9 @@ pwd_mkdb/pwd_mkdb: pwd_mkdb/pwd_mkdb.c pwd_mkdb/pw_scan.c
 # prints an error and exits non-zero. PAM is the default infosystem.
 # Links libpam (OpenPAM) + libutil.
 passwd/passwd: passwd/passwd.c passwd/file_passwd.c passwd/nis_passwd.c \
-               passwd/pam_passwd.c passwd/od_passwd_stub.c
-	cc $(CFLAGS) -o $@ passwd/passwd.c passwd/file_passwd.c \
+               passwd/pam_passwd.c passwd/od_passwd_stub.c \
+               passwd/TargetConditionals.h
+	cc $(CFLAGS) -I passwd -o $@ passwd/passwd.c passwd/file_passwd.c \
 	    passwd/nis_passwd.c passwd/pam_passwd.c \
 	    passwd/od_passwd_stub.c -lpam -lutil
 
