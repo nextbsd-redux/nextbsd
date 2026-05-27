@@ -333,10 +333,10 @@ ls -lh "$WORK/rootfs/sbin/kldload" "$WORK/rootfs/sbin/mount" \
 #
 #      Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#file_cmds
 #
-echo "==> building Apple file_cmds (iter 1+2+3: 17 tools)"
+echo "==> building Apple file_cmds (iter 1+2+3+4: 18 tools)"
 make -C "$ROOT/src/file_cmds" install DESTDIR="$WORK/rootfs"
 
-# Confirm Apple binaries are present (iter 1 + iter 2 + iter 3).
+# Confirm Apple binaries are present (iter 1 + iter 2 + iter 3 + iter 4).
 # Apple's file_cmds strings contain "Apple Computer" or apple-source
 # __APPLE__ guards; FreeBSD's same tools have "FreeBSD" + __FBSDID
 # variants. Boot-test marker probes binary identity for one
@@ -348,7 +348,8 @@ for FILECMD_BIN in /bin/chflags /bin/mkdir /bin/mkfifo /bin/rmdir \
                    /usr/bin/cksum /usr/bin/compress \
                    /sbin/mknod /usr/bin/shar \
                    /usr/bin/touch /usr/bin/truncate \
-                   /usr/bin/stat /usr/sbin/chown /bin/df; do
+                   /usr/bin/stat /usr/sbin/chown /bin/df \
+                   /usr/bin/du; do
     if [ ! -x "$WORK/rootfs$FILECMD_BIN" ]; then
         echo "ERROR: file_cmds install didn't land $FILECMD_BIN" >&2
         exit 1

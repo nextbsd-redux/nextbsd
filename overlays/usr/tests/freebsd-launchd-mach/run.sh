@@ -318,10 +318,10 @@ else
     exit 1
 fi
 
-# 6.6. file_cmds iter 2 (#111 / #105b iter 2). Extends iter 1's
-# 5-binary leaf set to 16 pure-POSIX file_cmds tools (+ shar shell
+# 6.6. file_cmds iter 1+2+3+4 (#111 / #105b). Extends iter 1's
+# 5-binary leaf set to 18 pure-POSIX file_cmds tools (+ shar shell
 # script). Apple binaries overlay-overwrite FreeBSD-runtime's same
-# paths per the OpenPAM iter-3 pattern. Iter 3+ adds the tools with
+# paths per the OpenPAM iter-3 pattern. Iter 5+ adds the tools with
 # Apple-specific deps (cp/mv/ls/chmod/install/gzip/pax/mtree).
 #
 # Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#file_cmds
@@ -331,7 +331,8 @@ for fbin in /bin/chflags /bin/mkdir /bin/mkfifo /bin/rmdir \
             /bin/dd /bin/ln /bin/rm \
             /usr/bin/cksum /usr/bin/compress \
             /sbin/mknod /usr/bin/touch /usr/bin/truncate \
-            /usr/bin/stat /usr/sbin/chown /bin/df; do
+            /usr/bin/stat /usr/sbin/chown /bin/df \
+            /usr/bin/du; do
     if [ ! -x "$fbin" ]; then
         echo "FILECMD-LEAF-FAIL: $fbin missing or not executable"
         ls -la "$fbin" 2>&1 || true
@@ -350,11 +351,11 @@ fi
 # from "FreeBSD-runtime's chflags is still in place."
 if [ $FILECMD_FAIL -eq 0 ]; then
     if strings /bin/chflags 2>/dev/null | grep -qi 'apple computer\|copyright.*apple\|opensource'; then
-        echo "FILECMD-LEAF-OK: 17/17 file_cmds binaries overlaid; /bin/chflags identifies as Apple's"
+        echo "FILECMD-LEAF-OK: 18/18 file_cmds binaries overlaid; /bin/chflags identifies as Apple's"
     else
         # Fall back: at minimum check that chflags works.
         if /bin/chflags 2>&1 | grep -q 'usage'; then
-            echo "FILECMD-LEAF-OK: 17/17 file_cmds binaries present; chflags responds to invocation (Apple identity not verifiable in strings — informational)"
+            echo "FILECMD-LEAF-OK: 18/18 file_cmds binaries present; chflags responds to invocation (Apple identity not verifiable in strings — informational)"
         else
             echo "FILECMD-LEAF-FAIL: chflags doesn't respond to invocation"
             FILECMD_FAIL=1

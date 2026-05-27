@@ -49,7 +49,9 @@ static const char sccsid[] = "@(#)du.c	8.5 (Berkeley) 5/4/95";
 #include <sys/param.h>
 #include <sys/queue.h>
 #include <sys/stat.h>
+#ifdef __APPLE__
 #include <sys/attr.h>
+#endif
 
 #include <err.h>
 #include <errno.h>
@@ -566,6 +568,15 @@ linkchk(FTSENT *p)
 static int
 dirlinkchk(FTSENT *p)
 {
+#ifndef __APPLE__
+	/*
+	 * Apple uses getattrlist(ATTR_DIR_LINKCOUNT) to detect hardlinked
+	 * directories (an HFS+ Time Machine feature).  UFS/ZFS don't
+	 * support hardlinked directories, so there is nothing to dedupe.
+	 */
+	(void)p;
+	return 0;
+#else
 	struct links_entry {
 		struct links_entry *next;
 		struct links_entry *previous;
@@ -704,6 +715,7 @@ dirlinkchk(FTSENT *p)
 		buckets[hash]->previous = le;
 	buckets[hash] = le;
 	return (0);
+#endif /* __APPLE__ */
 }
 
 static void
