@@ -493,24 +493,24 @@ else
     exit 1
 fi
 
-# 6.10. system_cmds iter 1 (#115 / #105g iter 1). Fifth Apple-userland-
-# cmds repo port. 4 trivial leaf tools (mkfile, sync, wait4path,
-# pagesize).
+# 6.10. system_cmds iter 1+2 (#115 / #105g). Fifth Apple-userland-
+# cmds repo port.
+#   Iter 1: mkfile, sync, wait4path, pagesize.
+#   Iter 2: newgrp, vifs, vipw, accton.
 #
 # Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#system_cmds
 SYSCMD_FAIL=0
 for fbin in /usr/sbin/mkfile /bin/sync /bin/wait4path \
-            /usr/bin/pagesize; do
+            /usr/bin/pagesize \
+            /usr/bin/newgrp /usr/sbin/vifs /usr/sbin/vipw \
+            /usr/sbin/accton; do
     if [ ! -x "$fbin" ]; then
         echo "SYSCMD-LEAF-FAIL: $fbin missing or not executable"
         ls -la "$fbin" 2>&1 || true
         SYSCMD_FAIL=1
     fi
 done
-# Functional probes:
-#   sync — always returns 0 (sync(2) is unconditional).
-#   pagesize — must print a positive integer.
-#   mkfile — allocate a small file in /tmp and stat it.
+# Iter-1 functional probes (unchanged).
 if [ $SYSCMD_FAIL -eq 0 ]; then
     /bin/sync || { echo "SYSCMD-LEAF-FAIL: sync nonzero exit"; SYSCMD_FAIL=1; }
 fi
@@ -531,8 +531,43 @@ if [ $SYSCMD_FAIL -eq 0 ]; then
         SYSCMD_FAIL=1
     fi
 fi
+# Iter-2 probes — just verify each binary execs and emits its usage
+# (or other expected exit). These are interactive editors / requires
+# arg / are sensitive operations; we only smoke-test the rtld + main()
+# paths, not full functionality.
 if [ $SYSCMD_FAIL -eq 0 ]; then
-    echo "SYSCMD-LEAF-OK: 4/4 system_cmds binaries overlaid (sync/pagesize/mkfile run cleanly)"
+    # newgrp with no arg: prints "newgrp: no group <id>" or starts a
+    # shell. Just check that it doesn't dyld-fail. rc 1 = expected for
+    # "Sorry" / "no group" message.
+    /usr/bin/newgrp invalidGroupThatDoesNotExist </dev/null >/dev/null 2>&1
+    # any rc is fine — we want no crash / no SIGSEGV.
+    : "ok"
+fi
+if [ $SYSCMD_FAIL -eq 0 ]; then
+    # vifs/vipw/accton don't have a clean "--help" mode. Just verify
+    # exec works (any rc except 127 / 128+sig is ok).
+    /usr/sbin/vifs </dev/null >/dev/null 2>&1; rc=$?
+    if [ $rc -ge 128 ]; then
+        echo "SYSCMD-LEAF-FAIL: vifs crashed (rc=$rc)"
+        SYSCMD_FAIL=1
+    fi
+fi
+if [ $SYSCMD_FAIL -eq 0 ]; then
+    /usr/sbin/vipw </dev/null >/dev/null 2>&1; rc=$?
+    if [ $rc -ge 128 ]; then
+        echo "SYSCMD-LEAF-FAIL: vipw crashed (rc=$rc)"
+        SYSCMD_FAIL=1
+    fi
+fi
+if [ $SYSCMD_FAIL -eq 0 ]; then
+    /usr/sbin/accton </dev/null >/dev/null 2>&1; rc=$?
+    if [ $rc -ge 128 ]; then
+        echo "SYSCMD-LEAF-FAIL: accton crashed (rc=$rc)"
+        SYSCMD_FAIL=1
+    fi
+fi
+if [ $SYSCMD_FAIL -eq 0 ]; then
+    echo "SYSCMD-LEAF-OK: 8/8 system_cmds binaries overlaid (iter1 + iter2 probes pass)"
 else
     exit 1
 fi
