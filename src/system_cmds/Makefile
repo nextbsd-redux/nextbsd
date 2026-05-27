@@ -83,9 +83,11 @@ newgrp/newgrp: newgrp/newgrp.c
 	cc $(CFLAGS) -o $@ newgrp/newgrp.c -lutil -lcrypt
 vifs/vifs: vifs/vifs.c
 	cc $(CFLAGS) -o $@ vifs/vifs.c
-# vipw: vipw.c + pw_util.c (Apple's vendored pw_util).
-vipw/vipw: vipw/vipw.c vipw/pw_util.c
-	cc $(CFLAGS) -o $@ vipw/vipw.c vipw/pw_util.c
+# vipw: just vipw.c (Apple's vendored pw_util.c conflicts with FreeBSD
+# libutil's pw_scan signature — vipw.c uses libutil's pw_init/pw_lock/
+# pw_tmp/pw_fini/pw_edit, all in -lutil).
+vipw/vipw: vipw/vipw.c
+	cc $(CFLAGS) -o $@ vipw/vipw.c -lutil
 accton/accton: accton/accton.c
 	cc $(CFLAGS) -o $@ accton/accton.c
 
