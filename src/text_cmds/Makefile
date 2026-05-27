@@ -115,8 +115,11 @@ vis/vis: vis/vis.c vis/foldit.c
 	cc $(CFLAGS) -o $@ vis/vis.c vis/foldit.c
 unvis/unvis: unvis/unvis.c
 	cc $(CFLAGS) -o $@ unvis/unvis.c
+# join: Apple's join.c declares `unix2003_compat` inside #ifdef __APPLE__
+# but references it (lines 147, 558) outside the guard. Define it to
+# 0 at compile so the BSD code path is taken unconditionally.
 join/join: join/join.c
-	cc $(CFLAGS) -o $@ join/join.c
+	cc $(CFLAGS) -Dunix2003_compat=0 -o $@ join/join.c
 column/column: column/column.c
 	cc $(CFLAGS) -o $@ column/column.c
 # md5: dispatches by argv[0]. -lmd brings in MD5/SHA1/SHA256/etc.
