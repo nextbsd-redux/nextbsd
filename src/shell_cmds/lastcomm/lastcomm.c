@@ -56,12 +56,15 @@ __RCSID("$NetBSD: lastcomm.c,v 1.23 2012/01/31 21:53:42 wiz Exp $");
 #include <string.h>
 #ifdef __APPLE__
 #include <struct.h>
+#include <tzfile.h>
 #else
-/* <struct.h> is NetBSD/Apple-specific; FreeBSD has no equivalent. */
+/* <struct.h> + <tzfile.h> are NetBSD/Apple-only — supply the symbols
+ * lastcomm uses (fldsiz, SECSPERMIN, SECSPERHOUR) locally on FreeBSD. */
 #define fldsiz(t, f) sizeof(((struct t *)0)->f)
+#define SECSPERMIN   60
+#define SECSPERHOUR  3600
 #endif
 #include <time.h>
-#include <tzfile.h>
 #include <unistd.h>
 /* definitions from utmp.h */
 #define UT_NAMESIZE     8
