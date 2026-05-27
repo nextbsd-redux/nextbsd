@@ -90,7 +90,10 @@ FreeBSD-libarchive
 FreeBSD-openssl
 FreeBSD-openssl-lib
 FreeBSD-caroot
-FreeBSD-certctl
+# certctl: DROPPED 2026-05-27 — we don't run it post-install; the actual
+#   CA bundle ships via FreeBSD-caroot (still kept). Just the management
+#   tool is gone.
+#FreeBSD-certctl
 
 # ---- compression ----
 FreeBSD-zlib
@@ -120,7 +123,11 @@ FreeBSD-bzip2
 # build under src/libdispatch (its bundled BlocksRuntime is upstream
 # Apple compiler-rt, same source FreeBSD-libblocksruntime is built
 # from). See libdispatch+mach spike §6.2 + install layout spike §15.
-FreeBSD-libcasper
+# libcasper: DROPPED 2026-05-27 — libcasper.so now built from /usr/src/
+#   lib/libcasper via srclist-fbsdglue.txt; our overlay file owns the
+#   path. Cat/wc/md5's #ifndef __APPLE__ libcasper paths now link our
+#   build, not pkgbase's.
+#FreeBSD-libcasper
 # Note: there is no FreeBSD-libcompiler_rt runtime pkg — only the -dev
 # variant. The runtime libcompiler_rt.so is bundled in FreeBSD-clibs.
 FreeBSD-libexecinfo

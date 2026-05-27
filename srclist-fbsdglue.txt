@@ -66,3 +66,21 @@ usr.sbin/pw
 
 # --- libexec/ ---
 libexec/save-entropy
+
+# --- lib/ — shared libraries we own (replacing FreeBSD pkgbase pkgs) ---
+# Added 2026-05-27 to drop 4 FreeBSD-base pkgs in one go:
+#   - lib/ncurses    replaces FreeBSD-ncurses-lib (libncurses.so + terminfo
+#                    data; consumers: tabs(1), ul(1))
+#   - lib/libcasper  replaces FreeBSD-libcasper (libcasper.so; consumers:
+#                    cat/wc/md5 use the headers inside #ifndef __APPLE__
+#                    blocks, runtime calls bind through libcasper.so)
+#   - lib/libbsm     replaces FreeBSD-audit-lib (libbsm.so + <bsm/*.h>;
+#                    consumers: syslogd, aslmanager, asl util, notifyd,
+#                    Libnotify, libmach all link -lbsm). FreeBSD-pam-lib
+#                    will still pull in FreeBSD-audit-lib via its manifest
+#                    shlib dep, so audit-lib survives in pkg DB — but our
+#                    consumers now resolve libbsm.so from our fbsdglue
+#                    build, not from FreeBSD-audit-lib.
+lib/ncurses
+lib/libcasper
+lib/libbsm
