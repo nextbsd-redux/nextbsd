@@ -406,7 +406,7 @@ expect {
         puts "\nFAIL: system_cmds leaf binaries missing or non-functional"
         exit 1
     }
-    "SYSCMD-LEAF-OK" { puts "\nOK: system_cmds iter 1+2 (8 Apple tools overlaid) (#115)" }
+    "SYSCMD-LEAF-OK" { puts "\nOK: system_cmds iter 1+2+3 (9 Apple tools overlaid) (#115)" }
 }
 expect {
     timeout {

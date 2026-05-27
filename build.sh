@@ -467,13 +467,14 @@ ls -lh "$WORK/rootfs/usr/bin/tty" "$WORK/rootfs/usr/bin/whois" \
 #
 #      Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#system_cmds
 #
-echo "==> building Apple system_cmds (iter 1+2: 8 tools)"
+echo "==> building Apple system_cmds (iter 1+2+3: 9 tools)"
 make -C "$ROOT/src/system_cmds" install DESTDIR="$WORK/rootfs"
 
 for SYSCMD_BIN in /usr/sbin/mkfile /bin/sync /bin/wait4path \
                   /usr/bin/pagesize \
                   /usr/bin/newgrp /usr/sbin/vifs /usr/sbin/vipw \
-                  /usr/sbin/accton; do
+                  /usr/sbin/accton \
+                  /usr/bin/getconf; do
     if [ ! -x "$WORK/rootfs$SYSCMD_BIN" ]; then
         echo "ERROR: system_cmds install didn't land $SYSCMD_BIN" >&2
         exit 1
