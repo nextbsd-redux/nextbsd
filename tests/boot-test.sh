@@ -373,7 +373,7 @@ expect {
         puts "\nFAIL: shell_cmds leaf binaries missing or non-functional"
         exit 1
     }
-    "SHELLCMD-LEAF-OK" { puts "\nOK: shell_cmds Apple binaries overlaid + functional, iter 1+2+3 = 36 tools (#112)" }
+    "SHELLCMD-LEAF-OK" { puts "\nOK: shell_cmds Apple binaries overlaid + functional, iter 1+2+3+4 = 38 tools (#112)" }
 }
 expect {
     timeout {

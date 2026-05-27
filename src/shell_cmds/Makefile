@@ -38,8 +38,15 @@ ITER2_BINS = apply/apply dirname/dirname env/env getopt/getopt \
 ITER3_BINS = chroot/chroot date/date hexdump/hexdump lockf/lockf \
              script/script shlock/shlock stdbuf/stdbuf test/test \
              whereis/whereis which/which xargs/xargs
+# Iter 4 scope:
+#   find — load-bearing POSIX file-finder (7 .c; getdate.y is orphaned).
+#   who  — utmpx-based logged-in users listing.
+# w DEFERRED — uses KERN_PROCARGS2 (Apple-specific sysctl) + -lkvm
+#   (would need a kvm-style proc shim).
+# Remaining deferred buckets — see iter 3 commit message.
+ITER4_BINS = find/find who/who
 
-all: $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS)
+all: $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS) $(ITER4_BINS)
 
 # --- iter 1 (single-source pure-POSIX leaf tools) ---
 true/true: true/true.c
@@ -132,6 +139,24 @@ which/which: which/which.c
 xargs/xargs: xargs/xargs.c xargs/strnsubst.c
 	cc $(CFLAGS) -o $@ xargs/xargs.c xargs/strnsubst.c
 
+# --- iter 4 ---
+# find: 7 .c (find/function/ls/main/misc/operator/option) + getdate.y
+# (yacc-generated date parser used by -newerXY / get_date()).
+# Apple guards <unistd.h> behind #ifdef __APPLE__ in find.c (line 53-55)
+# but uses X_OK at line 242 — force-include unistd.h to declare it.
+# join-style fix: define unix2003_compat=0 so the BSD path is taken.
+find/getdate.c: find/getdate.y
+	yacc -o $@ find/getdate.y
+find/find: find/find.c find/function.c find/ls.c find/main.c \
+           find/misc.c find/operator.c find/option.c find/getdate.c
+	cc $(CFLAGS) -include unistd.h -include libgen.h \
+	    -Dunix2003_compat=0 \
+	    -o $@ find/find.c find/function.c find/ls.c \
+	    find/main.c find/misc.c find/operator.c find/option.c \
+	    find/getdate.c
+who/who: who/who.c
+	cc $(CFLAGS) -o $@ who/who.c
+
 install: all
 	mkdir -p $(DESTDIR)/bin $(DESTDIR)/usr/bin
 	# iter 1
@@ -176,8 +201,11 @@ install: all
 	install -m 0555 whereis/whereis $(DESTDIR)/usr/bin/whereis
 	install -m 0555 which/which $(DESTDIR)/usr/bin/which
 	install -m 0555 xargs/xargs $(DESTDIR)/usr/bin/xargs
+	# iter 4
+	install -m 0555 find/find $(DESTDIR)/usr/bin/find
+	install -m 0555 who/who $(DESTDIR)/usr/bin/who
 
 clean:
-	rm -f $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS)
+	rm -f $(ITER1_BINS) $(ITER2_BINS) $(ITER3_BINS) $(ITER4_BINS)
 
 .PHONY: all clean install

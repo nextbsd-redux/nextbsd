@@ -370,7 +370,7 @@ ls -lh "$WORK/rootfs/bin/chflags" "$WORK/rootfs/bin/rm" \
 #
 #      Plan: https://pkgdemon.github.io/freebsd-apple-userland-cmds-plan.html#shell_cmds
 #
-echo "==> building Apple shell_cmds (iter 1+2+3: 36 POSIX tools)"
+echo "==> building Apple shell_cmds (iter 1+2+3+4: 38 POSIX tools)"
 make -C "$ROOT/src/shell_cmds" install DESTDIR="$WORK/rootfs"
 
 for SHELLCMD_BIN in /usr/bin/true /usr/bin/false \
@@ -385,7 +385,8 @@ for SHELLCMD_BIN in /usr/bin/true /usr/bin/false \
                     /usr/sbin/chroot /bin/date /usr/bin/hexdump \
                     /usr/bin/od /usr/bin/lockf /usr/bin/script \
                     /usr/bin/shlock /usr/bin/stdbuf /bin/test "/bin/[" \
-                    /usr/bin/whereis /usr/bin/which /usr/bin/xargs; do
+                    /usr/bin/whereis /usr/bin/which /usr/bin/xargs \
+                    /usr/bin/find /usr/bin/who; do
     if [ ! -x "$WORK/rootfs$SHELLCMD_BIN" ]; then
         echo "ERROR: shell_cmds install didn't land $SHELLCMD_BIN" >&2
         exit 1
