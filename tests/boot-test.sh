@@ -395,7 +395,7 @@ expect {
         puts "\nFAIL: adv_cmds leaf binaries missing or non-functional"
         exit 1
     }
-    "ADVCMD-LEAF-OK" { puts "\nOK: adv_cmds iter 1+2 (6 Apple tools overlaid) (#113)" }
+    "ADVCMD-LEAF-OK" { puts "\nOK: adv_cmds iter 1+2+3 (7 Apple tools overlaid) (#113)" }
 }
 expect {
     timeout {
