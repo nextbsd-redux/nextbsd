@@ -191,18 +191,14 @@ if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
             pkg set -y -A 0 -n FreeBSD-pam FreeBSD-pam-lib \
                                 FreeBSD-pam-dev 2>/dev/null || true
 
-        # Same pattern for FreeBSD-runtime + FreeBSD-utilities (#111 /
-        # #105b file_cmds port iter 1, and all subsequent Apple-userland-
-        # cmds repo ports through #105h). Our /usr/src builds via
-        # srclist-fbsdglue.txt + Apple-source builds via src/file_cmds/
-        # etc. overlay-overwrite their pkgbase paths. Mark non-automatic
-        # so a stray pkg autoremove doesn't cull them as orphans (which
-        # would also remove THEIR file ownership entries from the pkg
-        # DB; our overlayed files survive but pkg's manifest goes
-        # incoherent).
-        chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
-            pkg set -y -A 0 -n FreeBSD-runtime FreeBSD-utilities \
-                                2>/dev/null || true
+        # FreeBSD-runtime + FreeBSD-utilities pins REMOVED 2026-05-27
+        # (#105h drop probe). Both pkgs are now commented out in
+        # pkglist-base.txt — if they get pulled in as transitive deps
+        # they'll be subject to autoremove at end-of-build, which is
+        # fine because every path they used to own is now either an
+        # Apple-source overlay or a srclist-fbsdglue /usr/src build.
+        # CI will surface any path that's NOT covered as a concrete
+        # boot failure or missing-binary error.
     fi
 
     if [ -n "$BUILD_PKGS" ]; then

@@ -39,22 +39,21 @@ FreeBSD-kernel-generic
 #   Historical: #104 (closed not-planned), PR #107 (closed unmerged).
 #   The earlier /init.sh comment about /rescue/sh etc. was stale —
 #   current boot path is direct kernel → /sbin/launchd as PID 1.
-# runtime: STAYS INSTALLED. Source-of-truth pivots over the
-#   #105a iter 1 → #105g iter sequence (per srclist build plan §9.2):
-#   - The ~11 irreducibly-FreeBSD-only paths (kld*, mount/umount/fsck,
-#     devfs, ldconfig, kenv, freebsd-version) get rebuilt from /usr/src
-#     via srclist-fbsdglue.txt + build.sh step 3a2, overlay-overwriting
-#     pkgbase's same paths.
-#   - The remaining ~155 Apple-replaceable paths get overlaid by Apple
-#     binaries from the seven sequential Apple-repo PRs (#105b-#105g).
-#   - #105h commits to the final drop of FreeBSD-runtime from this list
-#     once every path it provides is either Apple-source or fbsdglue.
+# runtime: DROPPED 2026-05-27 (#105h probe).
+# utilities: DROPPED 2026-05-27 (#105h probe). With ~109 Apple-source
+# overlay paths from src/*/Makefile (file_cmds + shell_cmds + adv_cmds
+# + text_cmds + system_cmds) plus the srclist-fbsdglue.txt /usr/src
+# builds (kld*, mount/fsck/newfs, devfs, ldconfig, kenv, freebsd-
+# version, pw, nologin, …), the paths these pkgs uniquely provide are
+# now (in theory) all covered. This probe verifies that experimentally
+# — CI failures will surface concrete gaps that need either a new
+# Apple-overlay iter or a new srclist-fbsdglue entry.
 #FreeBSD-rescue
-FreeBSD-runtime
+#FreeBSD-runtime
 
 # ---- core libc + base userland ----
 FreeBSD-clibs
-FreeBSD-utilities
+#FreeBSD-utilities
 FreeBSD-csh
 FreeBSD-vi
 
