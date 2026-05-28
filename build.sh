@@ -2252,10 +2252,14 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hostnamedhcpset" \
 # record over loopback mDNS via mDNSResponder. Same -fblocks + CF/SC
 # linkage as the iter 3a fixture, plus -ldns_sd.
 echo "==> building hostnamedmdnsset"
+# SYSROOT include path FIRST so libdns_sd's real dns_sd.h shadows the
+# empty stub at src/launchd/freebsd-shims/dns_sd.h (same fix the
+# hostnamed Makefile applies — the shim was a launchctl-only stub
+# that wins the include race if listed first).
 cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
    -I"$ROOT/src/launchd/liblaunch" \
    -I"$ROOT/src/launchd/freebsd-shims" \
-   -I"$WORK/rootfs/usr/include" \
    -L"$WORK/rootfs/usr/lib/system" \
    -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
    -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hostnamedmdnsset" \
