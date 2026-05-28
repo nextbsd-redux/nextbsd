@@ -921,26 +921,30 @@ refresh_hostname(SCDynamicStoreRef store, const char *trigger)
 	xlog("refresh_hostname[%s]: '%s' -> '%s'",
 	    trigger, last_published[0] ? last_published : "(none)", name);
 
-	/* sethostname(2) FIRST — moved here at PAM port iter 4 (#99) so the
-	 * kernel hostname is set as early as possible at boot, winning the
-	 * race against getty's banner-print. iter 3c preserves the order
-	 * for the boot-time path (the same trigger="boot" call); reactive
-	 * refreshes don't race the banner, but we keep the order anyway
-	 * for consistency. */
+	/* DIAGNOSTIC (iter 3c bring-up): explicit xlogs around every
+	 * step so future failures pinpoint exactly where the daemon
+	 * dies in the publish chain. Remove once iter 3c is settled. */
+	xlog("refresh_hostname[%s]: pre-sethostname", trigger);
 	if (sethostname(name, (int)strlen(name)) != 0) {
 		xlog("HOSTNAMED-FAIL: sethostname: %s", strerror(errno));
 		return;
 	}
+	xlog("refresh_hostname[%s]: post-sethostname", trigger);
 
 	if (publish_system(store, name) != 0)
 		xlog("HOSTNAMED-FAIL: publish_system");
+	xlog("refresh_hostname[%s]: post-publish_system", trigger);
+
 	if (publish_hostnames(store, name) != 0)
 		xlog("HOSTNAMED-FAIL: publish_hostnames");
+	xlog("refresh_hostname[%s]: post-publish_hostnames", trigger);
 
 	nrc = notify_post("com.apple.system.hostname");
 	if (nrc != NOTIFY_STATUS_OK)
 		xlog("WARN: notify_post returned %u (non-fatal)",
 		    (unsigned)nrc);
+	xlog("refresh_hostname[%s]: post-notify_post (nrc=%u)",
+	    trigger, (unsigned)nrc);
 
 	(void)strncpy(last_published, name, sizeof(last_published) - 1);
 	last_published[sizeof(last_published) - 1] = '\0';
