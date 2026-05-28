@@ -1,18 +1,26 @@
 /*
- * hostnameprefset — CI fixture helper for hostnamed iter 2.
+ * hostnameprefset — CI fixture helper for hostnamed iter 2 / 3c.
  *
  * Usage:  hostnameprefset <computer-name>
+ *         hostnameprefset --clear
  *
- * Writes ComputerName=<computer-name> into the default
+ * With a value: writes ComputerName=<computer-name> into the default
  * SCPreferences file (/Library/Preferences/SystemConfiguration/
- * preferences.plist) at path /System/System, commits, and exits.
- * The next hostnamed run will read that value and use it instead
- * of synthesizing — proving Tier 2 fires.
+ * preferences.plist) at path /System/System, commits, and exits. The
+ * next hostnamed refresh will read that value and use it instead of
+ * synthesizing — proving Tier 2 fires.
+ *
+ * With --clear: removes the /System/System dict (which carries
+ * ComputerName) and commits. Iter 3c needs this between rounds so the
+ * launchd-started persistent daemon's SCPreferencesSetCallback fires
+ * with the cleared state, falling through to lower tiers. Filesystem
+ * `rm preferences.plist` would NOT trigger the callback — only an
+ * SCPreferencesCommitChanges path does.
  *
  * Not shipped to real images (CI-only tool); lives next to
  * hostnametest under /usr/tests/freebsd-launchd-mach/.
  *
- * Issue: #86
+ * Issue: #86 (iter 2); iter 3c (--clear flag, persistent loop).
  */
 
 #include <SystemConfiguration/SCPreferences.h>
@@ -28,13 +36,17 @@ main(int argc, char **argv)
 	SCPreferencesRef prefs = NULL;
 	CFStringRef session = NULL, path = NULL, key = NULL, value = NULL;
 	CFMutableDictionaryRef dict = NULL;
+	int clear_mode = 0;
 	int rc = 1;
 
 	if (argc != 2 || argv[1][0] == '\0') {
 		(void)fprintf(stderr,
-		    "usage: %s <computer-name>\n", argv[0]);
+		    "usage: %s <computer-name>\n"
+		    "       %s --clear\n", argv[0], argv[0]);
 		return (2);
 	}
+	if (strcmp(argv[1], "--clear") == 0)
+		clear_mode = 1;
 
 	session = CFStringCreateWithCString(NULL, "hostnameprefset",
 	    kCFStringEncodingUTF8);
@@ -42,9 +54,11 @@ main(int argc, char **argv)
 	    kCFStringEncodingUTF8);
 	key = CFStringCreateWithCString(NULL, "ComputerName",
 	    kCFStringEncodingUTF8);
-	value = CFStringCreateWithCString(NULL, argv[1],
-	    kCFStringEncodingUTF8);
-	if (session == NULL || path == NULL || key == NULL || value == NULL) {
+	if (!clear_mode)
+		value = CFStringCreateWithCString(NULL, argv[1],
+		    kCFStringEncodingUTF8);
+	if (session == NULL || path == NULL || key == NULL ||
+	    (!clear_mode && value == NULL)) {
 		(void)fprintf(stderr, "CFString allocation failed\n");
 		goto out;
 	}
@@ -53,6 +67,24 @@ main(int argc, char **argv)
 	if (prefs == NULL) {
 		(void)fprintf(stderr, "SCPreferencesCreate failed: %s\n",
 		    SCErrorString(SCError()));
+		goto out;
+	}
+
+	if (clear_mode) {
+		/* SCPreferencesPathRemoveValue removes the dict at the path;
+		 * commit fires the SCPreferencesSetCallback in the persistent
+		 * hostnamed daemon (iter 3c) so it re-synthesizes. Idempotent
+		 * — succeeds even if the dict was already absent. */
+		(void)SCPreferencesPathRemoveValue(prefs, path);
+		if (!SCPreferencesCommitChanges(prefs)) {
+			(void)fprintf(stderr,
+			    "SCPreferencesCommitChanges(--clear) failed: %s\n",
+			    SCErrorString(SCError()));
+			goto out;
+		}
+		(void)printf("hostnameprefset: cleared /System/System "
+		    "(ComputerName removed, commit fired)\n");
+		rc = 0;
 		goto out;
 	}
 

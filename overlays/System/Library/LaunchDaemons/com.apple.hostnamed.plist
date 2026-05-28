@@ -5,11 +5,21 @@
 	<key>Label</key>
 	<string>com.apple.hostnamed</string>
 
-	<!-- One-shot at boot. iter 1 synthesizes the hostname, publishes
-	     it to SCDynamicStore + kernel + notifyd, then exits. No
-	     persistent loop, no MachServices (no RPC surface yet — iter 3+
-	     adds SCPreferences integration). KeepAlive=false so launchd
-	     doesn't keep relaunching the one-shot.
+	<!-- Persistent libdispatch event loop (iter 3c). Runs initial
+	     synthesize + sethostname at boot, then enters dispatch_main()
+	     waiting on SCDynamicStore notifications (DHCP Option_12 +
+	     IPv4 changes), SCPreferencesSetCallback (ComputerName edits),
+	     and a SIGHUP dispatch source (operator/CI re-synth nudge,
+	     also the mDNS PTR appearance trigger since that's not an
+	     SCDS event). Refreshes the 5-tier precedence chain (kenv >
+	     SCPrefs > DHCP > mDNS > synthesis) on every callback; the
+	     refresh memoizes the last-published value so no-op rebuilds
+	     are skipped.
+
+	     KeepAlive=true: if the daemon ever crashes, launchd restarts
+	     it — the hostname is system-of-record state, can't be
+	     ephemeral. SIGTERM (launchctl unload) is the clean-shutdown
+	     path; the dispatch SIGTERM source exits cleanly.
 
 	     PAM port iter 4 (issue #99): RunAtLoad RESTORED. The
 	     original iter-1 drop was specifically because the additional
@@ -21,11 +31,12 @@
 	     anymore. The race is structurally resolved.
 
 	     With RunAtLoad=true, hostnamed runs at boot before getty
-	     prints its banner; the synthesized hostname appears in
+	     prints its banner; the initial refresh_hostname() calls
+	     sethostname() FIRST (before SCDS publishes do their CF
+	     allocation), so the kernel hostname is set before getty
+	     can print its banner. The synthesized hostname appears in
 	     "FreeBSD/amd64 (HOSTNAME) (console)" instead of the
-	     unset-placeholder "Amnesiac". run.sh's manual hostnamed
-	     invocations remain (covering the SCPrefs + DHCP fixture
-	     rounds in run.sh — those run after the boot-time one).
+	     unset-placeholder "Amnesiac".
 
 	     NOTE: com.apple.syslogd.plist has a separate, unrelated
 	     reason its RunAtLoad is dropped (the launch_msg LAUNCH_KEY_CHECKIN
@@ -33,7 +44,7 @@
 	     issue isn't fixed by the PAM port — syslogd stays dropped.
 
 	     Plan: https://pkgdemon.github.io/freebsd-hostnamed-plan.html
-	     Issue: #63 (hostnamed iter 1), #99 (RunAtLoad restoration) -->
+	     Issue: #63 (iter 1), #99 (RunAtLoad), iter 3c (persistent loop) -->
 	<key>ProgramArguments</key>
 	<array>
 		<string>/usr/sbin/hostnamed</string>
@@ -41,7 +52,7 @@
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
-	<false/>
+	<true/>
 
 	<!-- Capture stderr for post-mortem + the HOSTNAMED-OK marker
 	     visibility from the on-image test runner. -->

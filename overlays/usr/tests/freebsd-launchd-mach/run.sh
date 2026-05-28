@@ -1374,61 +1374,69 @@ else
     esac
 fi
 
-# HOSTNAMED — issue #63 (iter 1) + #86 (iter 2). The plist's RunAtLoad
-# is intentionally disabled (see com.apple.hostnamed.plist comment):
-# the launchd-port RunAtLoad scan race wedges pam_xdg's /var/run/xdg
-# bring-up and breaks root login. Invoke hostnamed directly here, same
-# workaround syslogd's run.sh-side spawn uses. A later iter restores
-# RunAtLoad after the launchd MachServices/checkin race is fixed.
+# HOSTNAMED — iters 1/2/3a/3b shipped via #63/#86/#90/#155.  iter 3c
+# (this revision) flips hostnamed to a persistent libdispatch event
+# loop: launchd starts it at boot with RunAtLoad=true + KeepAlive=true,
+# it does its initial synthesize + sethostname, then enters
+# dispatch_main() watching SCDynamicStore (/DHCP, /IPv4, Global/IPv4),
+# SCPreferences (/System/System/ComputerName), and SIGHUP. Each round
+# below mutates one of those watched sources (or sends SIGHUP for the
+# mDNS round, whose source isn't an SCDS event) and observes the
+# launchd-started daemon react WITHOUT being restarted — refresh
+# happens via its dispatch callbacks.
 #
-# Four test rounds prove the precedence chain:
-#   ROUND 1 (iter 1 regression): no SCPrefs ComputerName set; hostnamed
-#     synthesizes "${slug}-${suffix}" from SMBIOS+MAC. hostnametest
-#     (no arg) emits HOSTNAMED-OK / HOSTNAMED-FAIL.
-#   ROUND 2 (iter 2 Tier-2 read): hostnameprefset writes a fixture
-#     ComputerName into SCPrefs; hostnamed re-reads, finds the prefs
-#     value, sethostname()s to it (bypassing synthesis). hostnametest
-#     with the same expected fixture emits HOSTNAMED-PREFS-OK /
-#     HOSTNAMED-PREFS-FAIL.
-#   ROUND 3 (iter 3a Tier-3a DHCP): hostnamedhcpset injects Option_12
-#     into the live State:/Network/Service/<UUID>/DHCP dict; hostnamed
-#     consumes it via try_dhcp(). Marker HOSTNAMED-DHCP-OK / -FAIL.
-#   ROUND 4 (iter 3b Tier-3b mDNS): hostnamedhcpset --clear strips
-#     Option_12; hostnamedmdnsset registers a PTR for our bound IPv4
-#     over mDNS; hostnamed's try_mdns() forced-multicast PTR query
-#     hits the local mDNSResponder and adopts the first label of the
-#     returned name. Marker HOSTNAMED-MDNS-OK / -FAIL.
+# Setup probe: confirm the persistent daemon is alive before rounds.
+echo "==> hostnamed: persistent daemon liveness check"
+echo "    pgrep -x hostnamed -> $(pgrep -x hostnamed 2>/dev/null || echo MISSING)"
+if [ -f /var/log/hostnamed.stderr ]; then
+    echo "    --- /var/log/hostnamed.stderr (boot-time log) ---"
+    cat /var/log/hostnamed.stderr
+    echo "    --- end hostnamed.stderr ---"
+fi
 
-run_hostnamed() {
-    label="$1"
-    echo "==> hostnamed [$label]: kernel hostname BEFORE = '$(hostname 2>/dev/null)'"
-    if [ -x /usr/sbin/hostnamed ]; then
-        /usr/sbin/hostnamed > /var/log/hostnamed.stderr 2>&1
-        rc=$?
-        echo "--- /var/log/hostnamed.stderr ($label, exit=$rc) ---"
-        cat /var/log/hostnamed.stderr
-        echo "--- end hostnamed.stderr ---"
-    else
-        echo "HOSTNAMED-FAIL: /usr/sbin/hostnamed not installed"
-        return 1
+hostnamed_nudge() {
+    pid="$(pgrep -x hostnamed 2>/dev/null | head -1)"
+    if [ -z "$pid" ]; then
+        echo "    WARN: pgrep found no hostnamed pid for SIGHUP"
+        return
     fi
-    echo "==> hostnamed [$label]: kernel hostname AFTER  = '$(hostname 2>/dev/null)'"
+    echo "    kill -HUP $pid"
+    kill -HUP "$pid" 2>/dev/null || true
 }
 
-# ROUND 1: synthesis regression. Make sure no leftover SCPrefs ComputerName
-# from any earlier test cycle pollutes the result — the iter 1 path
-# should reach the slug+suffix synthesis branch.
-rm -f /Library/Preferences/SystemConfiguration/preferences.plist
-run_hostnamed "iter 1 synthesis"
+hostnamed_wait_settle() {
+    # The persistent daemon's refresh runs on its dispatch queue.
+    # SCDS/SCPrefs callbacks arrive within ms; mDNS PTR query has a
+    # 5s libdns_sd budget; sethostname + SCDS publish is sub-ms.
+    # 4s covers the worst case (mDNS round).
+    sleep 4
+}
+
+# ROUND 1: synthesis path. Clear all upper-tier sources (SCPrefs +
+# DHCP Option_12), SIGHUP to force a re-synth, then verify the
+# kernel + SCDS publishes carry a synthesized slug+suffix (not
+# "Amnesiac" and not any prior round's fixture).
+echo "==> hostnamed ROUND 1 (synthesis path)"
+if [ -x /usr/tests/freebsd-launchd-mach/hostnameprefset ]; then
+    /usr/tests/freebsd-launchd-mach/hostnameprefset --clear || true
+fi
+if [ -x /usr/tests/freebsd-launchd-mach/hostnamedhcpset ]; then
+    /usr/tests/freebsd-launchd-mach/hostnamedhcpset --clear || true
+fi
+hostnamed_nudge
+hostnamed_wait_settle
+echo "    kernel hostname = '$(hostname 2>/dev/null)'"
 if [ -x /usr/tests/freebsd-launchd-mach/hostnametest ]; then
     /usr/tests/freebsd-launchd-mach/hostnametest
 else
     echo "HOSTNAMED-FAIL: hostnametest binary not installed"
 fi
 
-# ROUND 2: SCPrefs Tier-2 read (issue #86). Write a fixture ComputerName
-# into preferences.plist via hostnameprefset, re-run hostnamed (one-shot
-# — fresh process), then verify the published value matches the fixture.
+# ROUND 2: SCPrefs Tier-2 read (issue #86). hostnameprefset's
+# SCPreferencesCommitChanges fires the SCPreferencesSetCallback in the
+# persistent daemon, which re-runs refresh_hostname() and picks up the
+# new ComputerName.
+echo "==> hostnamed ROUND 2 (SCPrefs path)"
 HOSTNAMED_FIXTURE="hostnamed-iter2-fixture"
 if [ -x /usr/tests/freebsd-launchd-mach/hostnameprefset ]; then
     /usr/tests/freebsd-launchd-mach/hostnameprefset "$HOSTNAMED_FIXTURE"
@@ -1436,44 +1444,47 @@ if [ -x /usr/tests/freebsd-launchd-mach/hostnameprefset ]; then
     if [ "$rc" -ne 0 ]; then
         echo "HOSTNAMED-PREFS-FAIL: hostnameprefset exit=$rc"
     else
-        run_hostnamed "iter 2 SCPrefs read"
+        hostnamed_wait_settle
+        echo "    kernel hostname = '$(hostname 2>/dev/null)'"
         /usr/tests/freebsd-launchd-mach/hostnametest "$HOSTNAMED_FIXTURE"
     fi
 else
     echo "HOSTNAMED-PREFS-FAIL: hostnameprefset binary not installed"
 fi
 
-# ROUND 3: DHCP Tier-3a read (issue #90). hostnamedhcpset injects
-# Option_12 into the existing State:/Network/Service/<UUID>/DHCP dict
-# that ipconfigd published; with prefs.plist cleared and no kenv
-# override, hostnamed's precedence chain falls through to try_dhcp(),
-# which finds Option_12 and uses it. SLIRP doesn't supply Option_12
-# itself, so the fixture is the only way to exercise this tier in CI.
+# ROUND 3: DHCP Tier-3a read (issue #90). Clear SCPrefs (so it doesn't
+# win precedence over DHCP), inject Option_12 via hostnamedhcpset —
+# SCDS Set fires the SCDynamicStore notification callback in the
+# persistent daemon.
+echo "==> hostnamed ROUND 3 (DHCP path)"
 HOSTNAMED_DHCP_FIXTURE="hostnamed-iter3a-fixture"
-rm -f /Library/Preferences/SystemConfiguration/preferences.plist
+if [ -x /usr/tests/freebsd-launchd-mach/hostnameprefset ]; then
+    /usr/tests/freebsd-launchd-mach/hostnameprefset --clear || true
+fi
 if [ -x /usr/tests/freebsd-launchd-mach/hostnamedhcpset ]; then
     /usr/tests/freebsd-launchd-mach/hostnamedhcpset "$HOSTNAMED_DHCP_FIXTURE"
     rc=$?
     if [ "$rc" -ne 0 ]; then
         echo "HOSTNAMED-DHCP-FAIL: hostnamedhcpset exit=$rc"
     else
-        run_hostnamed "iter 3a DHCP read"
+        hostnamed_wait_settle
+        echo "    kernel hostname = '$(hostname 2>/dev/null)'"
         /usr/tests/freebsd-launchd-mach/hostnametest "$HOSTNAMED_DHCP_FIXTURE" DHCP
     fi
 else
     echo "HOSTNAMED-DHCP-FAIL: hostnamedhcpset binary not installed"
 fi
 
-# ROUND 4: mDNS Tier-3b read (iter 3b). With prefs.plist cleared and
-# Option_12 stripped from any /DHCP dict (so DHCP doesn't short-circuit),
-# hostnamed's precedence chain falls through to try_mdns(), which issues
-# a forced-multicast PTR query for our bound IPv4 via libdns_sd.
-# hostnamedmdnsset is backgrounded; it registers the matching PTR
-# (<reverse>.in-addr.arpa -> <fixture>.local) against the local
-# mDNSResponder, then sleeps. Once it prints MDNSSET-READY: the
-# registration is live and hostnamed will see it.
+# ROUND 4: mDNS Tier-3b read (#155 / iter 3b). Clear SCPrefs + DHCP,
+# background hostnamedmdnsset to publish a PTR for our bound IPv4,
+# SIGHUP the persistent daemon — mDNS PTR appearance isn't an SCDS
+# event so we need the explicit nudge — and observe try_mdns() pick
+# up the fixture name.
+echo "==> hostnamed ROUND 4 (mDNS path)"
 HOSTNAMED_MDNS_FIXTURE="hostnamed-iter3b-fixture"
-rm -f /Library/Preferences/SystemConfiguration/preferences.plist
+if [ -x /usr/tests/freebsd-launchd-mach/hostnameprefset ]; then
+    /usr/tests/freebsd-launchd-mach/hostnameprefset --clear || true
+fi
 if [ -x /usr/tests/freebsd-launchd-mach/hostnamedhcpset ]; then
     /usr/tests/freebsd-launchd-mach/hostnamedhcpset --clear || true
 fi
@@ -1498,7 +1509,9 @@ if [ -x /usr/tests/freebsd-launchd-mach/hostnamedmdnsset ]; then
     echo "--- end hostnamedmdnsset logs ---"
     if grep -q "MDNSSET-READY" /var/log/hostnamedmdnsset.stdout \
         2>/dev/null; then
-        run_hostnamed "iter 3b mDNS PTR read"
+        hostnamed_nudge
+        hostnamed_wait_settle
+        echo "    kernel hostname = '$(hostname 2>/dev/null)'"
         /usr/tests/freebsd-launchd-mach/hostnametest \
             "$HOSTNAMED_MDNS_FIXTURE" MDNS
     else
@@ -1509,6 +1522,16 @@ if [ -x /usr/tests/freebsd-launchd-mach/hostnamedmdnsset ]; then
 else
     echo "HOSTNAMED-MDNS-FAIL: hostnamedmdnsset binary not installed"
 fi
+
+# After all rounds: persistent-daemon liveness post-check. If the
+# daemon died during any round (panic, signal-handling bug, etc.)
+# this will catch it. launchd would have restarted via KeepAlive=true
+# but the new pid wouldn't match the boot-time logs.
+echo "==> hostnamed: persistent daemon liveness POST-rounds check"
+echo "    pgrep -x hostnamed -> $(pgrep -x hostnamed 2>/dev/null || echo MISSING)"
+echo "--- /var/log/hostnamed.stderr (after all rounds) ---"
+cat /var/log/hostnamed.stderr 2>/dev/null
+echo "--- end hostnamed.stderr ---"
 
 # PAM-FRAMEWORK — PAM port iter 1 (issue #93). Verifies our vendored
 # Apple OpenPAM-35 libpam.so.6 loads our vendored pam_deny.so via the

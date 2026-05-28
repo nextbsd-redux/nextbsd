@@ -28,6 +28,8 @@
 #include <SystemConfiguration/SCPreferences.h>
 #include <CoreFoundation/CoreFoundation.h>
 
+#include <dispatch/dispatch.h>
+
 #include <dns_sd.h>
 
 #include <sys/types.h>
@@ -47,6 +49,7 @@
 #include <kenv.h>
 #include <limits.h>
 #include <notify.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -892,78 +895,264 @@ out:
 	return (rc);
 }
 
-int
-main(int argc, char **argv)
+/* refresh_hostname — re-walk the precedence chain, sethostname, publish
+ * to SCDynamicStore, broadcast notify_post. Idempotent: memoizes the
+ * last-published value in a function-static buffer and skips all output
+ * (no sethostname, no SCDS Set, no notify_post) when the synthesized
+ * value is identical to last time. Called once at startup (boot-time
+ * synthesis) and again on every SCDS/SCPrefs notification + SIGHUP.
+ *
+ * The trigger label distinguishes reasons in the log — "boot", "SCDS",
+ * "SCPrefs", "SIGHUP" — so failures are diagnosable. */
+static void
+refresh_hostname(SCDynamicStoreRef store, const char *trigger)
 {
+	static char last_published[HOSTNAMED_MAX];
 	char name[HOSTNAMED_MAX];
-	SCDynamicStoreRef store = NULL;
-	CFStringRef session = NULL;
 	uint32_t nrc;
-	int rc = 1;
-
-	(void)argc;
-	(void)argv;
-
-	xlog("starting (iter 1: synthesize + publish hostname, issue #63)");
 
 	synthesize(name, sizeof(name));
 
-	/*
-	 * sethostname(2) FIRST — moved here at PAM port iter 4 (#99) so
-	 * the kernel hostname is set as early as possible after fork+exec,
-	 * winning the race against getty's banner-print at boot. The
-	 * SCDynamicStore publishes below do ~50-80ms of CF allocation
-	 * work; without this reorder, getty (dispatched earlier in the
-	 * launchd plist scan) finishes its banner before sethostname()
-	 * gets called.
-	 *
-	 * sethostname() needs nothing CF-side, just the synthesized
-	 * string. Failure here is fatal (we can't continue with
-	 * publish_*) but extremely unlikely in practice.
-	 */
+	if (strcmp(name, last_published) == 0) {
+		xlog("refresh_hostname[%s]: unchanged ('%s')", trigger, name);
+		return;
+	}
+
+	xlog("refresh_hostname[%s]: '%s' -> '%s'",
+	    trigger, last_published[0] ? last_published : "(none)", name);
+
+	/* sethostname(2) FIRST — moved here at PAM port iter 4 (#99) so the
+	 * kernel hostname is set as early as possible at boot, winning the
+	 * race against getty's banner-print. iter 3c preserves the order
+	 * for the boot-time path (the same trigger="boot" call); reactive
+	 * refreshes don't race the banner, but we keep the order anyway
+	 * for consistency. */
 	if (sethostname(name, (int)strlen(name)) != 0) {
 		xlog("HOSTNAMED-FAIL: sethostname: %s", strerror(errno));
-		goto out;
+		return;
 	}
 
-	session = mkstr("com.apple.hostnamed");
-	if (session == NULL) {
-		xlog("HOSTNAMED-FAIL: CFStringCreate failed for session name");
-		goto out;
-	}
-	store = SCDynamicStoreCreate(NULL, session, NULL, NULL);
-	if (store == NULL) {
-		xlog("HOSTNAMED-FAIL: SCDynamicStoreCreate: %s",
-		    SCErrorString(SCError()));
-		goto out;
-	}
-
-	if (publish_system(store, name) != 0) {
+	if (publish_system(store, name) != 0)
 		xlog("HOSTNAMED-FAIL: publish_system");
-		goto out;
-	}
-	if (publish_hostnames(store, name) != 0) {
+	if (publish_hostnames(store, name) != 0)
 		xlog("HOSTNAMED-FAIL: publish_hostnames");
-		goto out;
-	}
 
-	/* notify_post is the Apple-canonical broadcast on hostname change.
-	 * mDNSResponder, the ASL store, and any other notify_register_check
-	 * client picks up the new value on this token. */
 	nrc = notify_post("com.apple.system.hostname");
-	if (nrc != NOTIFY_STATUS_OK) {
-		/* Non-fatal: notifyd may not be up yet at first boot, but
-		 * the store + kernel hostname are already set. */
+	if (nrc != NOTIFY_STATUS_OK)
 		xlog("WARN: notify_post returned %u (non-fatal)",
 		    (unsigned)nrc);
-	}
+
+	(void)strncpy(last_published, name, sizeof(last_published) - 1);
+	last_published[sizeof(last_published) - 1] = '\0';
 
 	xlog("HOSTNAMED-OK: published '%s' "
 	    "(Setup:/System + Setup:/Network/HostNames + sethostname)",
 	    name);
+}
+
+/* SCDynamicStore notification callback. Fires when any watched key
+ * changes (DHCP Option_12 mutates, IPv4 address rebinds, etc.). We
+ * don't bother inspecting changedKeys — refresh_hostname() re-walks
+ * the whole 5-tier chain so a single trigger is enough. */
+static void
+scds_cb(SCDynamicStoreRef store, CFArrayRef changedKeys, void *info)
+{
+	(void)changedKeys;
+	(void)info;
+	refresh_hostname(store, "SCDS");
+}
+
+struct hostnamed_ctx {
+	SCDynamicStoreRef store;
+};
+
+/* SCPreferences commit callback. Fires when /Library/Preferences/
+ * SystemConfiguration/preferences.plist is committed — covers the iter
+ * 2 ComputerName tier (hostnameprefset is the CI fixture that
+ * exercises this path). */
+static void
+scprefs_cb(SCPreferencesRef prefs, SCPreferencesNotification notificationType,
+    void *info)
+{
+	struct hostnamed_ctx *ctx = (struct hostnamed_ctx *)info;
+
+	(void)prefs;
+	(void)notificationType;
+	if (ctx == NULL || ctx->store == NULL)
+		return;
+	refresh_hostname(ctx->store, "SCPrefs");
+}
+
+/* dispatch_source_set_event_handler_f context-bearing callbacks. The
+ * SCDynamicStoreRef is set into the source's context via
+ * dispatch_set_context. SIGHUP triggers a re-synth (covers the mDNS
+ * round in CI, since mDNS PTR appearance isn't an SCDS event, and
+ * any operator/script nudge). SIGTERM/SIGINT cleanly exit
+ * dispatch_main(). */
+static void
+sighup_handler(void *ctx)
+{
+	refresh_hostname((SCDynamicStoreRef)ctx, "SIGHUP");
+}
+
+static void
+sigterm_handler(void *ctx)
+{
+	(void)ctx;
+	xlog("SIGTERM/INT — exiting");
+	exit(0);
+}
+
+/* Build the watched-keys + watched-patterns CFArrays for
+ * SCDynamicStoreSetNotificationKeys. Patterns cover the iter 3a
+ * (DHCP Option_12) and iter 3b (IPv4 → mDNS PTR) tiers. The explicit
+ * Global/IPv4 key prepares for primary-service selection (deferred —
+ * try_dhcp/try_mdns don't consume it yet, but registering now is
+ * harmless and avoids a churn iter later). */
+static int
+setup_scds_notifications(SCDynamicStoreRef store)
+{
+	CFStringRef pat_dhcp = NULL, pat_ipv4 = NULL, k_global = NULL;
+	CFArrayRef patterns = NULL, keys = NULL;
+	const void *pat_arr[2];
+	const void *key_arr[1];
+	int rc = -1;
+
+	pat_dhcp = mkstr("State:/Network/Service/.+/DHCP");
+	pat_ipv4 = mkstr("State:/Network/Service/.+/IPv4");
+	k_global = mkstr("State:/Network/Global/IPv4");
+	if (pat_dhcp == NULL || pat_ipv4 == NULL || k_global == NULL)
+		goto out;
+
+	pat_arr[0] = pat_dhcp;
+	pat_arr[1] = pat_ipv4;
+	patterns = CFArrayCreate(NULL, pat_arr, 2, &kCFTypeArrayCallBacks);
+
+	key_arr[0] = k_global;
+	keys = CFArrayCreate(NULL, key_arr, 1, &kCFTypeArrayCallBacks);
+	if (patterns == NULL || keys == NULL)
+		goto out;
+
+	if (!SCDynamicStoreSetNotificationKeys(store, keys, patterns)) {
+		xlog("HOSTNAMED-FAIL: SCDynamicStoreSetNotificationKeys: %s",
+		    SCErrorString(SCError()));
+		goto out;
+	}
 	rc = 0;
 out:
-	if (store != NULL) CFRelease(store);
-	if (session != NULL) CFRelease(session);
+	if (keys != NULL) CFRelease(keys);
+	if (patterns != NULL) CFRelease(patterns);
+	if (k_global != NULL) CFRelease(k_global);
+	if (pat_ipv4 != NULL) CFRelease(pat_ipv4);
+	if (pat_dhcp != NULL) CFRelease(pat_dhcp);
 	return (rc);
+}
+
+int
+main(int argc, char **argv)
+{
+	SCDynamicStoreRef store = NULL;
+	SCPreferencesRef prefs = NULL;
+	SCDynamicStoreContext scds_ctx;
+	static struct hostnamed_ctx scprefs_ctx;
+	dispatch_queue_t queue;
+	dispatch_source_t sig_hup_src, sig_term_src, sig_int_src;
+	CFStringRef session = NULL, prefs_id = NULL;
+	sigset_t mask;
+
+	(void)argc;
+	(void)argv;
+
+	xlog("starting (iter 3c: persistent libdispatch event loop)");
+
+	session = mkstr("com.apple.hostnamed");
+	prefs_id = mkstr("preferences.plist");
+	if (session == NULL || prefs_id == NULL) {
+		xlog("HOSTNAMED-FAIL: CFStringCreate failed");
+		return (1);
+	}
+
+	memset(&scds_ctx, 0, sizeof(scds_ctx));
+	store = SCDynamicStoreCreate(NULL, session, scds_cb, &scds_ctx);
+	if (store == NULL) {
+		xlog("HOSTNAMED-FAIL: SCDynamicStoreCreate: %s",
+		    SCErrorString(SCError()));
+		return (1);
+	}
+
+	/* Initial boot-time refresh. Keeps PAM iter 4's banner-race
+	 * guarantee — sethostname runs before getty prints its banner,
+	 * same as before iter 3c. */
+	refresh_hostname(store, "boot");
+
+	queue = dispatch_queue_create("com.apple.hostnamed.events", NULL);
+	if (queue == NULL) {
+		xlog("HOSTNAMED-FAIL: dispatch_queue_create");
+		return (1);
+	}
+
+	if (setup_scds_notifications(store) != 0)
+		return (1);
+	if (!SCDynamicStoreSetDispatchQueue(store, queue)) {
+		xlog("HOSTNAMED-FAIL: SCDynamicStoreSetDispatchQueue: %s",
+		    SCErrorString(SCError()));
+		return (1);
+	}
+	xlog("SCDS notifications: scheduled on dispatch queue "
+	    "(patterns: /DHCP, /IPv4; key: Global/IPv4)");
+
+	prefs = SCPreferencesCreate(NULL, session, prefs_id);
+	if (prefs == NULL) {
+		xlog("HOSTNAMED-FAIL: SCPreferencesCreate: %s",
+		    SCErrorString(SCError()));
+		return (1);
+	}
+	scprefs_ctx.store = store;
+	{
+		SCPreferencesContext pctx;
+		memset(&pctx, 0, sizeof(pctx));
+		pctx.info = &scprefs_ctx;
+		if (!SCPreferencesSetCallback(prefs, scprefs_cb, &pctx)) {
+			xlog("HOSTNAMED-FAIL: SCPreferencesSetCallback: %s",
+			    SCErrorString(SCError()));
+			return (1);
+		}
+	}
+	if (!SCPreferencesSetDispatchQueue(prefs, queue)) {
+		xlog("HOSTNAMED-FAIL: SCPreferencesSetDispatchQueue: %s",
+		    SCErrorString(SCError()));
+		return (1);
+	}
+	xlog("SCPrefs notifications: scheduled on dispatch queue "
+	    "(/System/System/ComputerName watch)");
+
+	/* Block SIGHUP/TERM/INT in the C signal-mask sense, then create
+	 * dispatch sources to deliver them via EVFILT_SIGNAL on our queue.
+	 * Without the block, the kernel would default-kill the process on
+	 * the first SIGHUP. Pattern from notifyd.c:1480-1503. */
+	(void)sigemptyset(&mask);
+	(void)sigaddset(&mask, SIGHUP);
+	(void)sigaddset(&mask, SIGTERM);
+	(void)sigaddset(&mask, SIGINT);
+	(void)sigprocmask(SIG_BLOCK, &mask, NULL);
+
+	sig_hup_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL,
+	    (uintptr_t)SIGHUP, 0, queue);
+	dispatch_set_context(sig_hup_src, store);
+	dispatch_source_set_event_handler_f(sig_hup_src, sighup_handler);
+	dispatch_activate(sig_hup_src);
+
+	sig_term_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL,
+	    (uintptr_t)SIGTERM, 0, queue);
+	dispatch_source_set_event_handler_f(sig_term_src, sigterm_handler);
+	dispatch_activate(sig_term_src);
+
+	sig_int_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL,
+	    (uintptr_t)SIGINT, 0, queue);
+	dispatch_source_set_event_handler_f(sig_int_src, sigterm_handler);
+	dispatch_activate(sig_int_src);
+
+	xlog("event loop entered — waiting for SCDS/SCPrefs deltas and signals");
+	dispatch_main();
+	/* NOTREACHED */
 }
