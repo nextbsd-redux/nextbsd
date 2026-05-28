@@ -950,6 +950,22 @@ refresh_hostname(SCDynamicStoreRef store, const char *trigger)
 	    name);
 }
 
+/* Two-store split, mirroring scnotifytest.c's writer/watcher pattern:
+ * we use one SCDynamicStoreRef without a callback for SCDynamicStoreSetValue
+ * (the "publish" path used by publish_system / publish_hostnames), and a
+ * separate one with a callback for SCDynamicStoreSetNotificationKeys +
+ * SCDynamicStoreSetDispatchQueue (the "watch" path). This avoids the
+ * SC-internal interaction where publishing on a callback-bearing store
+ * before its dispatch queue is attached crashes the daemon (observed
+ * silent death in the initial iter-3c CI run).
+ *
+ * Callbacks need access to the PUBLISH store (so refresh_hostname can
+ * SCDynamicStoreSetValue), which we pass via the dispatch source /
+ * SCPreferences info pointer. */
+struct hostnamed_ctx {
+	SCDynamicStoreRef publish_store;
+};
+
 /* SCDynamicStore notification callback. Fires when any watched key
  * changes (DHCP Option_12 mutates, IPv4 address rebinds, etc.). We
  * don't bother inspecting changedKeys — refresh_hostname() re-walks
@@ -957,14 +973,14 @@ refresh_hostname(SCDynamicStoreRef store, const char *trigger)
 static void
 scds_cb(SCDynamicStoreRef store, CFArrayRef changedKeys, void *info)
 {
-	(void)changedKeys;
-	(void)info;
-	refresh_hostname(store, "SCDS");
-}
+	struct hostnamed_ctx *ctx = (struct hostnamed_ctx *)info;
 
-struct hostnamed_ctx {
-	SCDynamicStoreRef store;
-};
+	(void)store;
+	(void)changedKeys;
+	if (ctx == NULL || ctx->publish_store == NULL)
+		return;
+	refresh_hostname(ctx->publish_store, "SCDS");
+}
 
 /* SCPreferences commit callback. Fires when /Library/Preferences/
  * SystemConfiguration/preferences.plist is committed — covers the iter
@@ -978,9 +994,9 @@ scprefs_cb(SCPreferencesRef prefs, SCPreferencesNotification notificationType,
 
 	(void)prefs;
 	(void)notificationType;
-	if (ctx == NULL || ctx->store == NULL)
+	if (ctx == NULL || ctx->publish_store == NULL)
 		return;
-	refresh_hostname(ctx->store, "SCPrefs");
+	refresh_hostname(ctx->publish_store, "SCPrefs");
 }
 
 /* dispatch_source_set_event_handler_f context-bearing callbacks. The
@@ -1051,13 +1067,14 @@ out:
 int
 main(int argc, char **argv)
 {
-	SCDynamicStoreRef store = NULL;
+	SCDynamicStoreRef publish_store = NULL;
+	SCDynamicStoreRef watch_store = NULL;
 	SCPreferencesRef prefs = NULL;
 	SCDynamicStoreContext scds_ctx;
-	static struct hostnamed_ctx scprefs_ctx;
+	static struct hostnamed_ctx ctx;
 	dispatch_queue_t queue;
 	dispatch_source_t sig_hup_src, sig_term_src, sig_int_src;
-	CFStringRef session = NULL, prefs_id = NULL;
+	CFStringRef publish_name = NULL, watch_name = NULL, prefs_id = NULL;
 	sigset_t mask;
 
 	(void)argc;
@@ -1065,35 +1082,54 @@ main(int argc, char **argv)
 
 	xlog("starting (iter 3c: persistent libdispatch event loop)");
 
-	session = mkstr("com.apple.hostnamed");
+	publish_name = mkstr("com.apple.hostnamed.publish");
+	watch_name = mkstr("com.apple.hostnamed.watch");
 	prefs_id = mkstr("preferences.plist");
-	if (session == NULL || prefs_id == NULL) {
+	if (publish_name == NULL || watch_name == NULL || prefs_id == NULL) {
 		xlog("HOSTNAMED-FAIL: CFStringCreate failed");
 		return (1);
 	}
 
-	memset(&scds_ctx, 0, sizeof(scds_ctx));
-	store = SCDynamicStoreCreate(NULL, session, scds_cb, &scds_ctx);
-	if (store == NULL) {
-		xlog("HOSTNAMED-FAIL: SCDynamicStoreCreate: %s",
+	/* Publish store has NO callback — used only for SCDynamicStoreSetValue
+	 * in publish_system / publish_hostnames. Mirrors scnotifytest.c's
+	 * "writer" half of the pattern. */
+	publish_store = SCDynamicStoreCreate(NULL, publish_name, NULL, NULL);
+	if (publish_store == NULL) {
+		xlog("HOSTNAMED-FAIL: SCDynamicStoreCreate(publish): %s",
 		    SCErrorString(SCError()));
 		return (1);
 	}
 
-	/* Initial boot-time refresh. Keeps PAM iter 4's banner-race
-	 * guarantee — sethostname runs before getty prints its banner,
-	 * same as before iter 3c. */
-	refresh_hostname(store, "boot");
+	/* Initial boot-time refresh. Uses publish_store only; PAM iter 4's
+	 * banner-race guarantee preserved — sethostname runs before any of
+	 * the dispatch / SCDS-notify / SCPrefs / signal-source setup work
+	 * below, so it still beats getty (when the race is winnable). */
+	refresh_hostname(publish_store, "boot");
 
+	/* Now stand up the watch path. From here on the daemon is reactive
+	 * — every SCDS / SCPrefs / SIGHUP triggers refresh_hostname via
+	 * the publish_store carried in `ctx`. */
 	queue = dispatch_queue_create("com.apple.hostnamed.events", NULL);
 	if (queue == NULL) {
 		xlog("HOSTNAMED-FAIL: dispatch_queue_create");
 		return (1);
 	}
 
-	if (setup_scds_notifications(store) != 0)
+	ctx.publish_store = publish_store;
+
+	memset(&scds_ctx, 0, sizeof(scds_ctx));
+	scds_ctx.info = &ctx;
+	watch_store = SCDynamicStoreCreate(NULL, watch_name, scds_cb,
+	    &scds_ctx);
+	if (watch_store == NULL) {
+		xlog("HOSTNAMED-FAIL: SCDynamicStoreCreate(watch): %s",
+		    SCErrorString(SCError()));
 		return (1);
-	if (!SCDynamicStoreSetDispatchQueue(store, queue)) {
+	}
+
+	if (setup_scds_notifications(watch_store) != 0)
+		return (1);
+	if (!SCDynamicStoreSetDispatchQueue(watch_store, queue)) {
 		xlog("HOSTNAMED-FAIL: SCDynamicStoreSetDispatchQueue: %s",
 		    SCErrorString(SCError()));
 		return (1);
@@ -1101,17 +1137,16 @@ main(int argc, char **argv)
 	xlog("SCDS notifications: scheduled on dispatch queue "
 	    "(patterns: /DHCP, /IPv4; key: Global/IPv4)");
 
-	prefs = SCPreferencesCreate(NULL, session, prefs_id);
+	prefs = SCPreferencesCreate(NULL, watch_name, prefs_id);
 	if (prefs == NULL) {
 		xlog("HOSTNAMED-FAIL: SCPreferencesCreate: %s",
 		    SCErrorString(SCError()));
 		return (1);
 	}
-	scprefs_ctx.store = store;
 	{
 		SCPreferencesContext pctx;
 		memset(&pctx, 0, sizeof(pctx));
-		pctx.info = &scprefs_ctx;
+		pctx.info = &ctx;
 		if (!SCPreferencesSetCallback(prefs, scprefs_cb, &pctx)) {
 			xlog("HOSTNAMED-FAIL: SCPreferencesSetCallback: %s",
 			    SCErrorString(SCError()));
@@ -1138,7 +1173,7 @@ main(int argc, char **argv)
 
 	sig_hup_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL,
 	    (uintptr_t)SIGHUP, 0, queue);
-	dispatch_set_context(sig_hup_src, store);
+	dispatch_set_context(sig_hup_src, publish_store);
 	dispatch_source_set_event_handler_f(sig_hup_src, sighup_handler);
 	dispatch_activate(sig_hup_src);
 
