@@ -24,6 +24,7 @@ SRCS=		SCD.c SCDynamicStore.c SCNotify.c SCDMultiple.c SCPreferences.c
 SRCS+=		SCNetworkConfigurationInternal.c SCNetworkInterface.c
 SRCS+=		SCNetworkProtocol.c SCNetworkService.c SCNetworkSet.c
 SRCS+=		SCVLANInterface.c SCBondInterface.c SCBridgeInterface.c
+SRCS+=		SCDynamicStoreKeys.c
 
 # configUser.c — MIG-generated config.defs client stubs (same file
 # configd's test clients link). config_wire.c — configd's shared
@@ -73,6 +74,7 @@ LDADD+=		-L${SYSROOT}/usr/lib/system
 INCS=		SystemConfiguration/SCDynamicStore.h \
 		SystemConfiguration/SCNetworkConfiguration.h \
 		SystemConfiguration/SCPreferences.h \
+		SystemConfiguration/SCSchemaDefinitions.h \
 		SystemConfiguration/SystemConfiguration.h
 INCSDIR=	${PREFIX}/include/SystemConfiguration
 LIBDIR=		${PREFIX}/lib/system
