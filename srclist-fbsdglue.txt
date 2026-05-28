@@ -70,6 +70,15 @@ usr.bin/ldd
 # revealed PAM-LOGIN-FAIL: /usr/bin/su missing after FreeBSD-utilities
 # was dropped.
 usr.bin/su
+# login: /usr/bin/login from FreeBSD's usr.bin/login. Apple's vendored
+#   system_cmds/login has drifted from upstream FreeBSD (auth_pam
+#   signature, USE_PAM/LOGIN_CAP gating) AND the Apple-specific
+#   features (BSM audit session, Open Directory, kicker per-user
+#   launchd) are all dead code on this system (no auditd, no OD,
+#   no Aqua-style per-user sessions). Skip the source patching;
+#   FreeBSD's login does the same core PAM-auth-then-exec-shell job
+#   against our Apple OpenPAM overlay.
+usr.bin/login
 
 # --- usr.sbin/ FreeBSD HW/FS introspection + user mgmt ---
 usr.sbin/crashinfo
