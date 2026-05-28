@@ -686,6 +686,16 @@ build_reverse_inaddr(const char *ipv4, char *out, size_t outsz)
 	return (n > 0 && (size_t)n < outsz);
 }
 
+/* iter 3c: try_mdns has a 5s libdns_sd timeout on miss, which is fine
+ * on boot (one-shot) but ruinous on the reactive path — ipconfigd
+ * republishes State:/Network/Service/<UUID>/{IPv4,DHCP} every 5s, so
+ * each SCDS notification would push another 5s mDNS wait onto the
+ * dispatch queue and starve real test-round mutations. refresh_hostname
+ * sets g_skip_mdns=1 around synthesize() for SCDS/SCPrefs triggers;
+ * try_mdns short-circuits in that mode and falls through to the slug
+ * synthesis tier. boot + SIGHUP triggers still run the full chain. */
+static int g_skip_mdns;
+
 static int
 try_mdns(char *out, size_t outsz)
 {
@@ -697,6 +707,12 @@ try_mdns(char *out, size_t outsz)
 	char ipv4[INET_ADDRSTRLEN];
 	char reverse[128];
 	int sock_fd;
+
+	if (g_skip_mdns) {
+		/* Quiet — fires every reactive callback; would otherwise
+		 * dominate the log. */
+		return (0);
+	}
 	time_t deadline;
 	int rc = 0;
 
@@ -910,7 +926,13 @@ refresh_hostname(SCDynamicStoreRef store, const char *trigger)
 	static char last_published[HOSTNAMED_MAX];
 	char name[HOSTNAMED_MAX];
 
+	/* See g_skip_mdns above: only the boot-time refresh and SIGHUP
+	 * (operator/CI nudge) pay the mDNS PTR 5s budget; reactive
+	 * SCDS/SCPrefs callbacks short-circuit try_mdns. */
+	g_skip_mdns = (strcmp(trigger, "boot") != 0 &&
+	    strcmp(trigger, "SIGHUP") != 0);
 	synthesize(name, sizeof(name));
+	g_skip_mdns = 0;
 
 	if (strcmp(name, last_published) == 0) {
 		xlog("refresh_hostname[%s]: unchanged ('%s')", trigger, name);
@@ -975,35 +997,19 @@ struct hostnamed_ctx {
 };
 
 /* SCDynamicStore notification callback. Fires when any watched key
- * changes (DHCP Option_12 mutates, IPv4 address rebinds, etc.).
- *
- * iter 3c bring-up: log the changed keys so we can identify whatever
- * is churning at 5s intervals and driving a runaway refresh loop in
- * CI. Each refresh_hostname includes a 5s try_mdns wait; if any
- * watched key updates that often, the daemon burns its event-loop
- * budget on no-op refreshes and can't react to the test rounds'
- * actual mutations in time. */
+ * changes (DHCP Option_12 mutates, IPv4 address rebinds, etc.). We
+ * don't inspect changedKeys — refresh_hostname() re-walks the chain,
+ * and on this reactive trigger g_skip_mdns short-circuits the 5s
+ * libdns_sd path so the callback is cheap. */
 static void
 scds_cb(SCDynamicStoreRef store, CFArrayRef changedKeys, void *info)
 {
 	struct hostnamed_ctx *ctx = (struct hostnamed_ctx *)info;
-	CFIndex i, n;
 
 	(void)store;
+	(void)changedKeys;
 	if (ctx == NULL || ctx->publish_store == NULL)
 		return;
-	if (changedKeys != NULL) {
-		n = CFArrayGetCount(changedKeys);
-		for (i = 0; i < n; i++) {
-			CFStringRef k = (CFStringRef)CFArrayGetValueAtIndex(
-			    changedKeys, i);
-			char buf[256];
-			if (k != NULL && CFStringGetCString(k, buf,
-			    sizeof(buf), kCFStringEncodingUTF8))
-				xlog("scds_cb: changedKey[%ld]=%s",
-				    (long)i, buf);
-		}
-	}
 	refresh_hostname(ctx->publish_store, "SCDS");
 }
 
