@@ -28,13 +28,18 @@
 #include <SystemConfiguration/SCPreferences.h>
 #include <CoreFoundation/CoreFoundation.h>
 
+#include <dns_sd.h>
+
 #include <sys/types.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
 
 #include <net/if.h>
 #include <net/if_dl.h>
 #include <net/if_types.h>
+
+#include <netinet/in.h>
 
 #include <ctype.h>
 #include <errno.h>
@@ -517,6 +522,256 @@ out:
 	return (rc);
 }
 
+/* Tier 3b: mDNS PTR lookup. Find our bound IPv4 via
+ * State:/Network/Service/<UUID>/IPv4 (Addresses array element 0), build
+ * the reverse in-addr.arpa name, issue a PTR query via libdns_sd with
+ * kDNSServiceFlagsForceMulticast so it hits mDNS not unicast DNS, and
+ * extract the first label from the returned name. If a peer on the link
+ * has registered an A record for our IP, the returned PTR tells us the
+ * .local name they know us by — we adopt that first label as our
+ * hostname. Returns 1 if a usable PTR answer was decoded; 0 on no IPv4
+ * yet / timeout / decode failure / validation reject. Always falls
+ * through to synthesis on failure — never aborts the daemon. */
+#define MDNS_QUERY_TIMEOUT	5	/* seconds wall-clock budget */
+
+struct mdns_ctx {
+	char *out;
+	size_t outsz;
+	int got_answer;
+	int success;
+};
+
+static void DNSSD_API
+mdns_ptr_cb(DNSServiceRef sdRef, DNSServiceFlags flags, uint32_t ifIdx,
+    DNSServiceErrorType err, const char *fullname, uint16_t rrtype,
+    uint16_t rrclass, uint16_t rdlen, const void *rdata, uint32_t ttl,
+    void *context)
+{
+	struct mdns_ctx *ctx = (struct mdns_ctx *)context;
+	const uint8_t *p;
+	uint8_t label_len;
+	char label[64];
+
+	(void)sdRef;
+	(void)flags;
+	(void)ifIdx;
+	(void)fullname;
+	(void)rrtype;
+	(void)rrclass;
+	(void)ttl;
+
+	ctx->got_answer = 1;
+	if (err != kDNSServiceErr_NoError) {
+		xlog("try_mdns: callback err=%d", (int)err);
+		return;
+	}
+	if (rdata == NULL || rdlen < 2) {
+		xlog("try_mdns: rdata empty (rdlen=%u)", (unsigned)rdlen);
+		return;
+	}
+	p = (const uint8_t *)rdata;
+	label_len = p[0];
+	/* Reject DNS compression pointers (top two bits set, 0xC0+) — they
+	 * shouldn't appear in libdns_sd callbacks (uds_daemon delivers
+	 * decompressed labels) but defend anyway. Also reject 0-length and
+	 * any length that would overrun rdata. */
+	if (label_len == 0 || label_len >= 64 ||
+	    (uint16_t)(1 + label_len) > rdlen) {
+		xlog("try_mdns: rdata first label invalid "
+		    "(label_len=%u rdlen=%u)",
+		    (unsigned)label_len, (unsigned)rdlen);
+		return;
+	}
+	(void)memcpy(label, p + 1, label_len);
+	label[label_len] = '\0';
+	if (!validate_and_normalize(label, "mDNS PTR",
+	    ctx->out, ctx->outsz))
+		return;
+	ctx->success = 1;
+}
+
+/* Find a usable bound IPv4 in State:/Network/Service/<UUID>/IPv4 's
+ * Addresses array (key + dict shape per src/IPConfiguration/sc_publish.c:
+ * 199-220). Skips loopback, unspecified, and link-local. Returns 1 if a
+ * dotted-quad was copied into out; 0 otherwise. iter 3b doesn't yet
+ * consult State:/Network/Global/IPv4 to pick the primary service —
+ * same as iter 3a's try_dhcp, deferred. */
+static int
+pick_primary_ipv4(SCDynamicStoreRef store, char *out, size_t outsz)
+{
+	CFStringRef pattern = NULL, k_addresses = NULL;
+	CFArrayRef keys = NULL;
+	CFIndex i, n;
+	int rc = 0;
+
+	pattern = mkstr("State:/Network/Service/[^/]+/IPv4");
+	k_addresses = mkstr("Addresses");
+	if (pattern == NULL || k_addresses == NULL)
+		goto out;
+
+	keys = SCDynamicStoreCopyKeyList(store, pattern);
+	if (keys == NULL)
+		goto out;
+	n = CFArrayGetCount(keys);
+	for (i = 0; i < n; i++) {
+		CFStringRef key;
+		CFPropertyListRef plist;
+		CFArrayRef addrs;
+		CFStringRef addr0;
+		char buf[INET_ADDRSTRLEN];
+
+		key = (CFStringRef)CFArrayGetValueAtIndex(keys, i);
+		if (key == NULL)
+			continue;
+		plist = SCDynamicStoreCopyValue(store, key);
+		if (plist == NULL)
+			continue;
+		if (CFGetTypeID(plist) != CFDictionaryGetTypeID()) {
+			CFRelease(plist);
+			continue;
+		}
+		addrs = CFDictionaryGetValue((CFDictionaryRef)plist,
+		    k_addresses);
+		if (addrs == NULL ||
+		    CFGetTypeID(addrs) != CFArrayGetTypeID() ||
+		    CFArrayGetCount(addrs) == 0) {
+			CFRelease(plist);
+			continue;
+		}
+		addr0 = (CFStringRef)CFArrayGetValueAtIndex(addrs, 0);
+		if (addr0 == NULL ||
+		    CFGetTypeID(addr0) != CFStringGetTypeID()) {
+			CFRelease(plist);
+			continue;
+		}
+		if (!CFStringGetCString(addr0, buf, sizeof(buf),
+		    kCFStringEncodingUTF8)) {
+			CFRelease(plist);
+			continue;
+		}
+		CFRelease(plist);
+		if (strncmp(buf, "127.", 4) == 0 ||
+		    strcmp(buf, "0.0.0.0") == 0 ||
+		    strncmp(buf, "169.254.", 8) == 0)
+			continue;
+		(void)strncpy(out, buf, outsz - 1);
+		out[outsz - 1] = '\0';
+		rc = 1;
+		break;
+	}
+out:
+	if (keys != NULL) CFRelease(keys);
+	if (k_addresses != NULL) CFRelease(k_addresses);
+	if (pattern != NULL) CFRelease(pattern);
+	return (rc);
+}
+
+/* Build reverse in-addr.arpa name from a dotted-quad IPv4 string.
+ * "10.0.2.15" -> "15.2.0.10.in-addr.arpa". */
+static int
+build_reverse_inaddr(const char *ipv4, char *out, size_t outsz)
+{
+	unsigned a, b, c, d;
+	int n;
+
+	if (sscanf(ipv4, "%u.%u.%u.%u", &a, &b, &c, &d) != 4)
+		return (0);
+	if (a > 255 || b > 255 || c > 255 || d > 255)
+		return (0);
+	n = snprintf(out, outsz, "%u.%u.%u.%u.in-addr.arpa",
+	    d, c, b, a);
+	return (n > 0 && (size_t)n < outsz);
+}
+
+static int
+try_mdns(char *out, size_t outsz)
+{
+	SCDynamicStoreRef store = NULL;
+	CFStringRef session = NULL;
+	DNSServiceRef sd_ref = NULL;
+	DNSServiceErrorType derr;
+	struct mdns_ctx ctx;
+	char ipv4[INET_ADDRSTRLEN];
+	char reverse[128];
+	int sock_fd;
+	time_t deadline;
+	int rc = 0;
+
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.out = out;
+	ctx.outsz = outsz;
+
+	session = mkstr("com.apple.hostnamed");
+	if (session == NULL)
+		goto out;
+	store = SCDynamicStoreCreate(NULL, session, NULL, NULL);
+	if (store == NULL) {
+		xlog("try_mdns: SCDynamicStoreCreate failed: %s "
+		    "(falling through to synthesis)",
+		    SCErrorString(SCError()));
+		goto out;
+	}
+	if (!pick_primary_ipv4(store, ipv4, sizeof(ipv4))) {
+		xlog("try_mdns: no usable IPv4 in "
+		    "State:/Network/Service/<UUID>/IPv4 yet");
+		goto out;
+	}
+	if (!build_reverse_inaddr(ipv4, reverse, sizeof(reverse))) {
+		xlog("try_mdns: build_reverse_inaddr failed for '%s'", ipv4);
+		goto out;
+	}
+	xlog("try_mdns: PTR query %s (primary IPv4 %s)", reverse, ipv4);
+
+	derr = DNSServiceQueryRecord(&sd_ref,
+	    kDNSServiceFlagsForceMulticast | kDNSServiceFlagsTimeout,
+	    0 /* any interface */, reverse,
+	    kDNSServiceType_PTR, kDNSServiceClass_IN,
+	    mdns_ptr_cb, &ctx);
+	if (derr != kDNSServiceErr_NoError) {
+		xlog("try_mdns: DNSServiceQueryRecord returned %d",
+		    (int)derr);
+		goto out;
+	}
+	sock_fd = DNSServiceRefSockFD(sd_ref);
+	if (sock_fd < 0) {
+		xlog("try_mdns: DNSServiceRefSockFD returned %d", sock_fd);
+		goto out;
+	}
+
+	/* Drive the libdns_sd socket through select() with a 5s wall-clock
+	 * deadline (mirrors dnssdtest.c). kDNSServiceFlagsTimeout drives a
+	 * system-side timeout independently — whichever fires first ends
+	 * the wait by firing the callback with err=Timeout. */
+	deadline = time(NULL) + MDNS_QUERY_TIMEOUT;
+	while (!ctx.got_answer && time(NULL) < deadline) {
+		fd_set rfds;
+		struct timeval tv;
+		int r;
+
+		FD_ZERO(&rfds);
+		FD_SET(sock_fd, &rfds);
+		tv.tv_sec = 1;
+		tv.tv_usec = 0;
+		r = select(sock_fd + 1, &rfds, NULL, NULL, &tv);
+		if (r > 0 && FD_ISSET(sock_fd, &rfds))
+			(void)DNSServiceProcessResult(sd_ref);
+	}
+	if (!ctx.got_answer) {
+		xlog("try_mdns: PTR %s timed out after %ds",
+		    reverse, MDNS_QUERY_TIMEOUT);
+		goto out;
+	}
+	if (ctx.success) {
+		xlog("hostname from mDNS PTR %s -> '%s'", reverse, out);
+		rc = 1;
+	}
+out:
+	if (sd_ref != NULL) DNSServiceRefDeallocate(sd_ref);
+	if (store != NULL) CFRelease(store);
+	if (session != NULL) CFRelease(session);
+	return (rc);
+}
+
 /* Compose the final hostname into out (HOSTNAMED_MAX chars). */
 static void
 synthesize(char *out, size_t outsz)
@@ -529,6 +784,8 @@ synthesize(char *out, size_t outsz)
 	if (try_scprefs(out, outsz))
 		return;
 	if (try_dhcp(out, outsz))
+		return;
+	if (try_mdns(out, outsz))
 		return;
 
 	derive_slug(slug, sizeof(slug));

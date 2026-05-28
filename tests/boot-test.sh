@@ -1158,6 +1158,29 @@ expect {
     }
 }
 
+# HOSTNAMED-MDNS — iter 3b gate. ROUND 4 in run.sh: hostnamedhcpset
+# --clear strips iter-3a's Option_12 fixture from /DHCP dicts;
+# hostnamedmdnsset registers a forced-multicast PTR for our bound IPv4
+# pointing at "hostnamed-iter3b-fixture.local"; hostnamed's try_mdns()
+# issues a forced-multicast PTR query via libdns_sd, mDNSResponder
+# answers locally, and hostnamed adopts the first label of the
+# returned name. hostnametest verifies all publish surfaces carry the
+# fixture (proving mDNS PTR beats synthesis but loses to DHCP, SCPrefs,
+# and kenv override).
+expect {
+    timeout {
+        puts "\nFAIL: HOSTNAMED-MDNS marker not seen"
+        exit 1
+    }
+    "HOSTNAMED-MDNS-FAIL" {
+        puts "\nFAIL: hostnamed Tier-3b mDNS PTR read did not override synthesis"
+        exit 1
+    }
+    "HOSTNAMED-MDNS-OK" {
+        puts "\nOK: hostnamed Tier-3b mDNS PTR beats synthesis (libdns_sd round-trips via mDNSResponder, kernel + Setup:/System + Setup:/Network/HostNames all carry the fixture value)"
+    }
+}
+
 # PAM-FRAMEWORK — issue #93 iter 1 gate. pamframeworktest exercises
 # /usr/lib/libpam.so.6 (our vendored Apple OpenPAM-35) by pam_start
 # against /etc/pam.d/test_iter1 (which references pam_deny.so) and

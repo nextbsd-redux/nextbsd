@@ -1,13 +1,19 @@
 /*
- * hostnamedhcpset — CI fixture helper for hostnamed iter 3a.
+ * hostnamedhcpset — CI fixture helper for hostnamed iter 3a / 3b.
  *
  * Usage:  hostnamedhcpset <option-12-value>
+ *         hostnamedhcpset --clear
  *
- * Finds the State:/Network/Service/<UUID>/DHCP dict that ipconfigd
- * already published (issue #88), adds Option_12=<argv[1]> to it, and
- * writes the augmented dict back to SCDynamicStore. The next hostnamed
- * run will read that value via its DHCP tier (try_dhcp) and use it,
- * proving Tier-3a fires.
+ * With a value: finds the State:/Network/Service/<UUID>/DHCP dict that
+ * ipconfigd already published (issue #88), adds Option_12=<argv[1]> to
+ * it, and writes the augmented dict back to SCDynamicStore. The next
+ * hostnamed run will read that value via its DHCP tier (try_dhcp) and
+ * use it, proving Tier-3a fires.
+ *
+ * With --clear: enumerates all matching /DHCP dicts and removes
+ * Option_12 from each, so a previously-injected fixture does not
+ * short-circuit later tiers (iter 3b's ROUND 4 needs this to exercise
+ * the mDNS path with the DHCP tier guaranteed empty).
  *
  * Why we modify ipconfigd's existing /DHCP key rather than minting our
  * own: the live key is already shaped correctly (InterfaceName +
@@ -28,6 +34,61 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Clear Option_12 from every matching /DHCP dict. Returns 0 on success
+ * (even when no dicts contained Option_12 — the empty-key case is fine
+ * for run.sh which calls --clear unconditionally). Returns 1 on SCDS
+ * error. */
+static int
+clear_all_option12(SCDynamicStoreRef store, CFStringRef pattern,
+    CFStringRef k_opt12)
+{
+	CFArrayRef keys;
+	CFIndex i, n;
+	int cleared = 0;
+
+	keys = SCDynamicStoreCopyKeyList(store, pattern);
+	if (keys == NULL)
+		return (0);	/* no /DHCP keys at all — nothing to clear */
+	n = CFArrayGetCount(keys);
+	for (i = 0; i < n; i++) {
+		CFStringRef key;
+		CFPropertyListRef plist;
+		CFMutableDictionaryRef dict;
+
+		key = (CFStringRef)CFArrayGetValueAtIndex(keys, i);
+		if (key == NULL)
+			continue;
+		plist = SCDynamicStoreCopyValue(store, key);
+		if (plist == NULL)
+			continue;
+		if (CFGetTypeID(plist) != CFDictionaryGetTypeID() ||
+		    !CFDictionaryContainsKey((CFDictionaryRef)plist, k_opt12)) {
+			CFRelease(plist);
+			continue;
+		}
+		dict = CFDictionaryCreateMutableCopy(NULL, 0,
+		    (CFDictionaryRef)plist);
+		CFRelease(plist);
+		if (dict == NULL)
+			continue;
+		CFDictionaryRemoveValue(dict, k_opt12);
+		if (SCDynamicStoreSetValue(store, key, dict)) {
+			char keybuf[256];
+			if (CFStringGetCString(key, keybuf, sizeof(keybuf),
+			    kCFStringEncodingUTF8))
+				(void)printf("hostnamedhcpset: cleared "
+				    "Option_12 from %s\n", keybuf);
+			cleared++;
+		}
+		CFRelease(dict);
+	}
+	CFRelease(keys);
+	if (cleared == 0)
+		(void)printf("hostnamedhcpset: no /DHCP dict carried "
+		    "Option_12 (already clear)\n");
+	return (0);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -38,13 +99,17 @@ main(int argc, char **argv)
 	CFPropertyListRef plist = NULL;
 	CFMutableDictionaryRef dict = NULL;
 	CFIndex n;
+	int clear_mode = 0;
 	int rc = 1;
 
 	if (argc != 2 || argv[1][0] == '\0') {
 		(void)fprintf(stderr,
-		    "usage: %s <option-12-value>\n", argv[0]);
+		    "usage: %s <option-12-value>\n"
+		    "       %s --clear\n", argv[0], argv[0]);
 		return (2);
 	}
+	if (strcmp(argv[1], "--clear") == 0)
+		clear_mode = 1;
 
 	session = CFStringCreateWithCString(NULL, "hostnamedhcpset",
 	    kCFStringEncodingUTF8);
@@ -52,10 +117,11 @@ main(int argc, char **argv)
 	    "State:/Network/Service/[^/]+/DHCP", kCFStringEncodingUTF8);
 	k_opt12 = CFStringCreateWithCString(NULL, "Option_12",
 	    kCFStringEncodingUTF8);
-	value = CFStringCreateWithCString(NULL, argv[1],
-	    kCFStringEncodingUTF8);
+	if (!clear_mode)
+		value = CFStringCreateWithCString(NULL, argv[1],
+		    kCFStringEncodingUTF8);
 	if (session == NULL || pattern == NULL || k_opt12 == NULL ||
-	    value == NULL) {
+	    (!clear_mode && value == NULL)) {
 		(void)fprintf(stderr, "CFString allocation failed\n");
 		goto out;
 	}
@@ -64,6 +130,11 @@ main(int argc, char **argv)
 	if (store == NULL) {
 		(void)fprintf(stderr, "SCDynamicStoreCreate failed: %s\n",
 		    SCErrorString(SCError()));
+		goto out;
+	}
+
+	if (clear_mode) {
+		rc = clear_all_option12(store, pattern, k_opt12);
 		goto out;
 	}
 

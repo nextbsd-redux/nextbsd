@@ -55,6 +55,9 @@ LDFLAGS+=	-Wl,--allow-shlib-undefined
 # shape we build for Setup:/System + Setup:/Network/HostNames.
 # -lnotify: notify_post("com.apple.system.hostname") — Apple-canonical
 # hostname-change broadcast.
+# -ldns_sd: libdns_sd client API — DNSServiceQueryRecord for the iter 3b
+# mDNS PTR tier. The library is built by src/mDNSResponder/libdns_sd
+# and installed to /usr/lib/system/libdns_sd.so.1 alongside dns_sd.h.
 # -ldispatch -lBlocksRuntime: transitively pulled by the SC umbrella
 # (SCDynamicStoreSetDispatchQueue ABI surface).
 # -lsystem_kernel: kenv(2) syscall trampoline + the FreeBSD libc base
@@ -62,6 +65,7 @@ LDFLAGS+=	-Wl,--allow-shlib-undefined
 LDADD+=		-lsystem_kernel
 LDADD+=		-lSystemConfiguration -lCoreFoundation
 LDADD+=		-lnotify
+LDADD+=		-ldns_sd
 LDADD+=		-ldispatch -lBlocksRuntime -lpthread
 
 BINDIR=		/usr/sbin
