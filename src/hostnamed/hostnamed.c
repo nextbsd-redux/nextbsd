@@ -909,7 +909,6 @@ refresh_hostname(SCDynamicStoreRef store, const char *trigger)
 {
 	static char last_published[HOSTNAMED_MAX];
 	char name[HOSTNAMED_MAX];
-	uint32_t nrc;
 
 	synthesize(name, sizeof(name));
 
@@ -921,36 +920,41 @@ refresh_hostname(SCDynamicStoreRef store, const char *trigger)
 	xlog("refresh_hostname[%s]: '%s' -> '%s'",
 	    trigger, last_published[0] ? last_published : "(none)", name);
 
-	/* DIAGNOSTIC (iter 3c bring-up): explicit xlogs around every
-	 * step so future failures pinpoint exactly where the daemon
-	 * dies in the publish chain. Remove once iter 3c is settled. */
-	xlog("refresh_hostname[%s]: pre-sethostname", trigger);
+	/* sethostname(2) FIRST — preserves PAM iter 4's banner-race
+	 * guarantee on the boot-time refresh path. */
 	if (sethostname(name, (int)strlen(name)) != 0) {
 		xlog("HOSTNAMED-FAIL: sethostname: %s", strerror(errno));
 		return;
 	}
-	xlog("refresh_hostname[%s]: post-sethostname", trigger);
 
 	if (publish_system(store, name) != 0)
 		xlog("HOSTNAMED-FAIL: publish_system");
-	xlog("refresh_hostname[%s]: post-publish_system", trigger);
-
 	if (publish_hostnames(store, name) != 0)
 		xlog("HOSTNAMED-FAIL: publish_hostnames");
-	xlog("refresh_hostname[%s]: post-publish_hostnames", trigger);
 
-	nrc = notify_post("com.apple.system.hostname");
-	if (nrc != NOTIFY_STATUS_OK)
-		xlog("WARN: notify_post returned %u (non-fatal)",
-		    (unsigned)nrc);
-	xlog("refresh_hostname[%s]: post-notify_post (nrc=%u)",
-	    trigger, (unsigned)nrc);
+	/* notify_post("com.apple.system.hostname") is intentionally
+	 * SKIPPED in iter 3c. CI bisect xlogs (commit 505d016) pinned
+	 * the iter-3c restart loop on notify_post: every refresh
+	 * reached post-publish_hostnames then died silently — no
+	 * post-notify_post log, KeepAlive=true relaunched at launchd's
+	 * 10s throttle interval. The iter-3a/3b one-shot daemons called
+	 * notify_post successfully and exited; only the iter-3c
+	 * persistent shape provokes the crash, suggesting libnotify's
+	 * lazy state interacts badly with the upcoming libdispatch /
+	 * dispatch_main setup. The notify was already marked non-fatal
+	 * (the WARN-on-non-OK path), and mDNSResponder + the SC
+	 * publishes still announce the change, so dropping it
+	 * temporarily is a safe degradation. See follow-up issue for
+	 * the proper fix: defer the notify_post to a dispatch_async on
+	 * the events queue so it runs in steady-state context, AFTER
+	 * dispatch_main has bootstrapped libdispatch. */
 
 	(void)strncpy(last_published, name, sizeof(last_published) - 1);
 	last_published[sizeof(last_published) - 1] = '\0';
 
 	xlog("HOSTNAMED-OK: published '%s' "
-	    "(Setup:/System + Setup:/Network/HostNames + sethostname)",
+	    "(Setup:/System + Setup:/Network/HostNames + sethostname; "
+	    "notify_post skipped for iter 3c)",
 	    name);
 }
 
