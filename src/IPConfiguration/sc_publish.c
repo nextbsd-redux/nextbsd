@@ -227,6 +227,44 @@ sc_publish_ipv4(struct sc_publish *p, const char *ifname,
 		return (-1);
 	}
 
+	/* State:/Network/Global/IPv4 — PrimaryService + PrimaryInterface.
+	 * Set whenever ANY service binds, since CI runs single-NIC; a
+	 * future cross-cutting fix selects the actual primary from a
+	 * preferences-driven service order (Apple's IPMonitor does this).
+	 * Apple's set-hostname.c (in hostnamed once vendored) reads this
+	 * key to pick the service whose DHCP entity it should consult.
+	 * mDNSResponder (#62) reads it to pick the interface for default-
+	 * route mDNS. */
+	{
+		CFMutableDictionaryRef gdict;
+		CFStringRef gkey, gk_svc, gk_iface, svc_uuid;
+
+		gdict = CFDictionaryCreateMutable(NULL, 0,
+		    &kCFTypeDictionaryKeyCallBacks,
+		    &kCFTypeDictionaryValueCallBacks);
+		gkey = mkstr("State:/Network/Global/IPv4");
+		gk_svc = mkstr("PrimaryService");
+		gk_iface = mkstr("PrimaryInterface");
+		svc_uuid = make_service_uuid(ifname);
+		iface_str = mkstr(ifname);
+		if (gdict != NULL && gkey != NULL && gk_svc != NULL &&
+		    gk_iface != NULL && svc_uuid != NULL &&
+		    iface_str != NULL) {
+			CFDictionarySetValue(gdict, gk_svc, svc_uuid);
+			CFDictionarySetValue(gdict, gk_iface, iface_str);
+			if (!SCDynamicStoreSetValue(p->store, gkey, gdict))
+				xlog("SCDynamicStoreSetValue("
+				    "State:/Network/Global/IPv4) failed: %s",
+				    SCErrorString(SCError()));
+		}
+		if (iface_str != NULL) CFRelease(iface_str);
+		if (svc_uuid != NULL) CFRelease(svc_uuid);
+		if (gk_iface != NULL) CFRelease(gk_iface);
+		if (gk_svc != NULL) CFRelease(gk_svc);
+		if (gkey != NULL) CFRelease(gkey);
+		if (gdict != NULL) CFRelease(gdict);
+	}
+
 	/* DNS — optional, only if the lease carried DNS option 6. */
 	if (lease->dns_count > 0) {
 		CFMutableDictionaryRef dns_dict;
