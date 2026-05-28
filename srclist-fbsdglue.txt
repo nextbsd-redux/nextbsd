@@ -127,6 +127,27 @@ lib/libbsm
 lib/libmd
 lib/libutil
 lib/libnv
+# Added 2026-05-27 to drop the pkgbase pkgs whose .so / binary content
+# we want to own ourselves (FreeBSD-libarchive, FreeBSD-libexecinfo,
+# FreeBSD-mtree, FreeBSD-ufs, FreeBSD-geom, FreeBSD-xz/-xz-lib). Each
+# entry below corresponds to commenting one explicit FreeBSD-* pkg out
+# in pkglist-base.txt; the pkg-DB chain that pulls in FreeBSD-runtime
+# via these consumers' shlib manifests goes away.
+#
+# Still pulls FreeBSD-runtime: ports `pkg` itself (libelf/libjail/libmd
+# shlib deps in its ports manifest — can't be resolved by fbsdglue's
+# on-disk files alone). Tracked separately; needs either a shadow-
+# manifest local repo OR dropping pkg from the booted image. Out of
+# scope for this PR.
+lib/libarchive
+lib/libexecinfo
+lib/libufs
+lib/liblzma
+sbin/gpart
+sbin/glabel
+usr.sbin/mtree
+# xz tool (companion to lib/liblzma above)
+usr.bin/xz
 # Remaining FreeBSD-runtime shlibs — finishing the foundational-shlib
 # set so on-disk content at /lib/lib*.so.* is all from our build, even
 # though FreeBSD-runtime stays in the pkg DB (shlib-manifest reasons).
