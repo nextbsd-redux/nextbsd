@@ -282,13 +282,17 @@ SRCBUILD_MAKE_FLAGS="__MAKE_CONF=/dev/null SRCCONF=/dev/null \
 # /etc/mtree/BSD.include.dist before make install). Without these
 # the `install` command exits 71 (EX_OSERR / no such directory).
 #
-#   casper/   ← lib/libcasper installs cap_*.h here
-#   bsm/      ← lib/libbsm installs <bsm/*.h> here
-#   editline/ ← lib/libedit installs <editline/readline/readline.h> here
+#   casper/         ← lib/libcasper installs cap_*.h here
+#   bsm/            ← lib/libbsm installs <bsm/*.h> here
+#   editline/       ← lib/libedit installs <editline/readline/readline.h>
+#   lzma/           ← lib/liblzma installs <lzma/*.h>
+#   libdata/pkgconfig/ ← lib/liblzma installs liblzma.pc here
 mkdir -p "$WORK/rootfs/usr/include/casper" \
          "$WORK/rootfs/usr/include/bsm" \
          "$WORK/rootfs/usr/include/editline" \
-         "$WORK/rootfs/usr/include/editline/readline"
+         "$WORK/rootfs/usr/include/editline/readline" \
+         "$WORK/rootfs/usr/include/lzma" \
+         "$WORK/rootfs/usr/libdata/pkgconfig"
 
 for DIR in $FBSDGLUE_LIST; do
     SRC="$WORK/freebsd-src/usr/src/$DIR"
@@ -2339,8 +2343,30 @@ if [ -n "$BUILD_PKGS" ] || [ -n "$BASE_BUILD_PKGS" ]; then
         chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
             pkg delete -y $BASE_BUILD_PKGS
     fi
-    chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
-        pkg autoremove -y || true
+    # pkg autoremove DISABLED 2026-05-27 — when no installed pkg
+    # requires FreeBSD-runtime (consumers libarchive/libexecinfo/mtree/
+    # ufs/geom/xz commented out, replaced by fbsdglue /usr/src builds),
+    # autoremove cleans up runtime AND its file manifest entries —
+    # which includes paths we overlay-overwrote with fbsdglue content
+    # (/lib/libutil.so.10, libmd, libnv, libelf, …). Those files get
+    # deleted, /sbin/launchd can no longer link, kernel panics with
+    # "Going nowhere without my init!"
+    #
+    # Skipping autoremove keeps the overlay-overwrite pattern intact:
+    # pkg DB still knows about FreeBSD-runtime + FreeBSD-pam-lib (they
+    # come in transitively via FreeBSD-pkg-bootstrap's libmd shlib dep),
+    # but our overlays survive because nothing tries to delete them.
+    #
+    # The "drop runtime + pam-lib from the pkg DB" goal is deferred
+    # — needs a robust solution that doesn't wipe our overlays. Tracked
+    # as a follow-up ticket. For now the practical state is unchanged
+    # from before this PR (runtime + pam-lib in pkg DB but content-
+    # overlay'd everywhere we care about); the WIN of this PR is moving
+    # libarchive/libexecinfo/mtree/ufs/geom/xz to fbsdglue so they no
+    # longer get installed as pkgs (one fewer manifest entry per).
+    #
+    # chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
+    #     pkg autoremove -y || true
 fi
 
 if [ -n "$RUNTIME_PKGS" ] || [ -n "$BUILD_PKGS" ]; then

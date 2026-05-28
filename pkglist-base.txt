@@ -66,13 +66,20 @@ FreeBSD-clibs
 FreeBSD-vt-data
 
 # ---- filesystems ----
-# UFS userland (mount_ufs, fsck_ffs, newfs) — /init.sh mounts the uzip
-# as ufs ro at /sysroot.
-FreeBSD-ufs
+# UFS userland (mount_ufs, fsck_ffs, newfs) — DROPPED 2026-05-27:
+#   binaries now from srclist-fbsdglue.txt (sbin/fsck_ffs, sbin/newfs,
+#   sbin/tunefs, sbin/mount, sbin/umount) + lib/libufs. Removes the
+#   FreeBSD-ufs→libedit→FreeBSD-runtime chain.
+#FreeBSD-ufs
 
-# geom: gpart/glabel/etc. for any post-boot partitioning the user does.
-FreeBSD-geom
-FreeBSD-mtree
+# geom: DROPPED 2026-05-27 — gpart + glabel now from srclist-fbsdglue.txt
+#   (sbin/gpart, sbin/glabel) + lib/libgeom already there. Removes the
+#   FreeBSD-geom→libgeom/libmd/libutil→FreeBSD-runtime chain.
+#FreeBSD-geom
+# mtree: DROPPED 2026-05-27 — /usr/sbin/mtree now from srclist-fbsdglue.txt
+#   (usr.sbin/mtree). Removes the FreeBSD-mtree→libmd/libutil→FreeBSD-
+#   runtime chain.
+#FreeBSD-mtree
 
 # ---- network ----
 # (Empty post-2026-05-16: FreeBSD-ssh, -resolvconf, -syslogd removed;
@@ -84,7 +91,12 @@ FreeBSD-pkg-bootstrap
 FreeBSD-fetch
 FreeBSD-libsqlite3
 FreeBSD-libucl
-FreeBSD-libarchive
+# libarchive: DROPPED 2026-05-27 — libarchive.so now from srclist-fbsdglue.
+#   txt (lib/libarchive). Removes the FreeBSD-libarchive→libbsdxml→
+#   FreeBSD-runtime chain. pkg(8) links libarchive at runtime; rtld
+#   resolves from /usr/lib/libarchive.so (our fbsdglue file) regardless
+#   of whether there's a pkg-DB entry.
+#FreeBSD-libarchive
 
 # ---- TLS / certs (sshd, pkg, dhcpcd) ----
 FreeBSD-openssl
@@ -97,7 +109,10 @@ FreeBSD-caroot
 
 # ---- compression ----
 FreeBSD-zlib
-FreeBSD-xz
+# xz: DROPPED 2026-05-27 — /usr/bin/xz from srclist-fbsdglue.txt
+#   (usr.bin/xz); liblzma.so from lib/liblzma. Removes the
+#   FreeBSD-xz-lib→libmd→FreeBSD-runtime chain.
+#FreeBSD-xz
 FreeBSD-bzip2
 
 # ---- pam / login ----
@@ -130,7 +145,11 @@ FreeBSD-bzip2
 #FreeBSD-libcasper
 # Note: there is no FreeBSD-libcompiler_rt runtime pkg — only the -dev
 # variant. The runtime libcompiler_rt.so is bundled in FreeBSD-clibs.
-FreeBSD-libexecinfo
+# libexecinfo: DROPPED 2026-05-27 — libexecinfo.so from srclist-fbsdglue.
+#   txt (lib/libexecinfo). syslogd / libdispatch / libmach use backtrace_
+#   symbols; rtld resolves from our overlay. Removes the FreeBSD-libexec
+#   info→libelf→FreeBSD-runtime chain.
+#FreeBSD-libexecinfo
 
 # ---- locale / timezone ----
 # zoneinfo: many libs misbehave without /usr/share/zoneinfo/UTC.
