@@ -282,13 +282,17 @@ SRCBUILD_MAKE_FLAGS="__MAKE_CONF=/dev/null SRCCONF=/dev/null \
 # /etc/mtree/BSD.include.dist before make install). Without these
 # the `install` command exits 71 (EX_OSERR / no such directory).
 #
-#   casper/   ← lib/libcasper installs cap_*.h here
-#   bsm/      ← lib/libbsm installs <bsm/*.h> here
-#   editline/ ← lib/libedit installs <editline/readline/readline.h> here
+#   casper/         ← lib/libcasper installs cap_*.h here
+#   bsm/            ← lib/libbsm installs <bsm/*.h> here
+#   editline/       ← lib/libedit installs <editline/readline/readline.h>
+#   lzma/           ← lib/liblzma installs <lzma/*.h>
+#   libdata/pkgconfig/ ← lib/liblzma installs liblzma.pc here
 mkdir -p "$WORK/rootfs/usr/include/casper" \
          "$WORK/rootfs/usr/include/bsm" \
          "$WORK/rootfs/usr/include/editline" \
-         "$WORK/rootfs/usr/include/editline/readline"
+         "$WORK/rootfs/usr/include/editline/readline" \
+         "$WORK/rootfs/usr/include/lzma" \
+         "$WORK/rootfs/usr/libdata/pkgconfig"
 
 for DIR in $FBSDGLUE_LIST; do
     SRC="$WORK/freebsd-src/usr/src/$DIR"
