@@ -975,18 +975,35 @@ struct hostnamed_ctx {
 };
 
 /* SCDynamicStore notification callback. Fires when any watched key
- * changes (DHCP Option_12 mutates, IPv4 address rebinds, etc.). We
- * don't bother inspecting changedKeys — refresh_hostname() re-walks
- * the whole 5-tier chain so a single trigger is enough. */
+ * changes (DHCP Option_12 mutates, IPv4 address rebinds, etc.).
+ *
+ * iter 3c bring-up: log the changed keys so we can identify whatever
+ * is churning at 5s intervals and driving a runaway refresh loop in
+ * CI. Each refresh_hostname includes a 5s try_mdns wait; if any
+ * watched key updates that often, the daemon burns its event-loop
+ * budget on no-op refreshes and can't react to the test rounds'
+ * actual mutations in time. */
 static void
 scds_cb(SCDynamicStoreRef store, CFArrayRef changedKeys, void *info)
 {
 	struct hostnamed_ctx *ctx = (struct hostnamed_ctx *)info;
+	CFIndex i, n;
 
 	(void)store;
-	(void)changedKeys;
 	if (ctx == NULL || ctx->publish_store == NULL)
 		return;
+	if (changedKeys != NULL) {
+		n = CFArrayGetCount(changedKeys);
+		for (i = 0; i < n; i++) {
+			CFStringRef k = (CFStringRef)CFArrayGetValueAtIndex(
+			    changedKeys, i);
+			char buf[256];
+			if (k != NULL && CFStringGetCString(k, buf,
+			    sizeof(buf), kCFStringEncodingUTF8))
+				xlog("scds_cb: changedKey[%ld]=%s",
+				    (long)i, buf);
+		}
+	}
 	refresh_hostname(ctx->publish_store, "SCDS");
 }
 
