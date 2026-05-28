@@ -495,17 +495,11 @@ ls -lh "$WORK/rootfs/bin/sync" "$WORK/rootfs/bin/wait4path" \
        "$WORK/rootfs/usr/sbin/mkfile" "$WORK/rootfs/usr/bin/newgrp" \
        "$WORK/rootfs/usr/sbin/vipw"
 
-# 3a8. Flip root's default shell from /bin/csh to /bin/sh.
-#      FreeBSD-csh was dropped from pkglist-base.txt 2026-05-27, but
-#      FreeBSD-runtime's stock /etc/master.passwd still names /bin/csh
-#      as root's shell. Without this fix login(1) sets SHELL=/bin/csh
-#      which doesn't exist on the booted system, dropping the user
-#      into a non-functional shell. /usr/sbin/pw comes from srclist-
-#      fbsdglue.txt (always built earlier).
-echo "==> flipping root shell to /bin/sh (FreeBSD-csh dropped)"
-chroot "$WORK/rootfs" /usr/sbin/pw usermod root -s /bin/sh
-chroot "$WORK/rootfs" /usr/bin/grep '^root:' /etc/master.passwd | \
-    /usr/bin/awk -F: '{print "    root shell now: " $10}'
+# Note: the earlier `pw usermod root -s /bin/sh` step is no longer
+# needed. overlays/etc/master.passwd already ships with /bin/sh as
+# root's shell, applied later in the build via the overlay copy step.
+# (We previously needed pw usermod because FreeBSD-runtime's stock
+# master.passwd named /bin/csh and we dropped FreeBSD-csh.)
 
 #
 # 3b. build mach.ko against the freshly-extracted kernel sources and
@@ -2372,6 +2366,19 @@ fi
 
 # rc.local needs to be executable
 [ -f "$WORK/rootfs/etc/rc.local" ] && chmod +x "$WORK/rootfs/etc/rc.local"
+
+# Regenerate auth + login DB indices for the freshly-overlayed config:
+#   - pwd_mkdb (Apple, system_cmds iter 5) reads /etc/master.passwd and
+#     emits /etc/passwd + /etc/pwd.db + /etc/spwd.db. FreeBSD-runtime's
+#     pkg-install ran pwd_mkdb earlier against its OWN master.passwd;
+#     our overlay just replaced /etc/master.passwd, so the .db files
+#     are now stale.
+#   - cap_mkdb (Apple, adv_cmds iter 2) reads /etc/login.conf and emits
+#     /etc/login.conf.db. login(1) reads .db, not the plain file, so
+#     missing/stale .db means login_getclass() returns NULL.
+echo "==> regenerating /etc/{pwd,spwd,login.conf}.db from overlays"
+chroot "$WORK/rootfs" /usr/sbin/pwd_mkdb -p /etc/master.passwd
+chroot "$WORK/rootfs" /usr/bin/cap_mkdb /etc/login.conf
 
 #
 # 6. assemble the bootable GPT disk image (BIOS + UEFI, rw UFS root).
