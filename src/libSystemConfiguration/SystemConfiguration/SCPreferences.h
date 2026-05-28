@@ -245,6 +245,20 @@ Boolean
 SCPreferencesSetDispatchQueue	(SCPreferencesRef		prefs,
 				 dispatch_queue_t		queue);
 
+/*!
+	@function _SCPreferencesCopyComputerName
+	@discussion Reads the user-set ComputerName from the prefs file
+		(stored at path /System/System). Returns CFString or NULL.
+		If `nameEncoding` is non-NULL, also writes the stored
+		ComputerNameEncoding (kCFStringEncodingUTF8 by default).
+		Apple's SystemConfiguration.fproj exposes this as an "_SC"
+		SPI; vendored consumers like set-hostname.c call it directly.
+		Caller releases.
+ */
+CFStringRef
+_SCPreferencesCopyComputerName	(SCPreferencesRef		prefs,
+				 CFStringEncoding *		nameEncoding);
+
 __END_DECLS
 
 #endif	/* _SCPREFERENCES_H */

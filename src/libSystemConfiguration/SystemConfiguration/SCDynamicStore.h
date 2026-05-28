@@ -322,6 +322,26 @@ SCDynamicStoreKeyCreateNetworkInterfaceEntity
 					 CFStringRef			entity);
 
 /*!
+	@function SCDynamicStoreCopyLocalHostName
+	@discussion Reads Setup:/Network/HostNames and returns the
+		LocalHostName (Bonjour label, no .local suffix), or NULL
+		if absent. Caller releases.
+ */
+CFStringRef
+SCDynamicStoreCopyLocalHostName	(SCDynamicStoreRef		store);
+
+/*!
+	@function SCDynamicStoreCopyComputerName
+	@discussion Reads Setup:/System and returns the user-visible
+		ComputerName, or NULL if absent. If `nameEncoding` is
+		non-NULL, also writes the stored ComputerNameEncoding
+		(defaults to kCFStringEncodingUTF8). Caller releases.
+ */
+CFStringRef
+SCDynamicStoreCopyComputerName	(SCDynamicStoreRef		store,
+				 CFStringEncoding *		nameEncoding);
+
+/*!
 	@function SCError
 	@discussion Returns the most recent status/error code, as a
 		kSCStatus* value, for the calling thread.
