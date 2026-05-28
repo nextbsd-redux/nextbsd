@@ -2243,7 +2243,32 @@ cc -fblocks \
    -lsystem_kernel -lpthread
 test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hostnamedhcpset" \
     || { echo "FAIL: hostnamedhcpset not built"; exit 1; }
-echo "==> hostnamed + hostnametest + hostnameprefset + hostnamedhcpset built"
+
+# hostnamedmdnsset — iter 3b CI fixture. Discovers the bound IPv4 via
+# the same State:/Network/Service/<UUID>/IPv4 path hostnamed will use,
+# registers a forced-multicast PTR record (<reverse>.in-addr.arpa ->
+# <fixture>.local) via libdns_sd, then holds the registration open
+# until SIGTERM. The next hostnamed run's try_mdns() picks up the
+# record over loopback mDNS via mDNSResponder. Same -fblocks + CF/SC
+# linkage as the iter 3a fixture, plus -ldns_sd.
+echo "==> building hostnamedmdnsset"
+# SYSROOT include path FIRST so libdns_sd's real dns_sd.h shadows the
+# empty stub at src/launchd/freebsd-shims/dns_sd.h (same fix the
+# hostnamed Makefile applies — the shim was a launchctl-only stub
+# that wins the include race if listed first).
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
+   -I"$ROOT/src/launchd/liblaunch" \
+   -I"$ROOT/src/launchd/freebsd-shims" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hostnamedmdnsset" \
+   "$ROOT/src/hostnamed/hostnamedmdnsset.c" \
+   -lSystemConfiguration -lCoreFoundation -ldispatch -lBlocksRuntime \
+   -ldns_sd -lsystem_kernel -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hostnamedmdnsset" \
+    || { echo "FAIL: hostnamedmdnsset not built"; exit 1; }
+echo "==> hostnamed + hostnametest + hostnameprefset + hostnamedhcpset + hostnamedmdnsset built"
 
 #
 # 3y2. PAM port iter 1 — vendor Apple OpenPAM (issue #93). Builds

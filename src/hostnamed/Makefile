@@ -32,6 +32,19 @@ CFLAGS+=	-O2 -pipe -fblocks
 CFLAGS+=	-Wall -Wextra -Wshadow -Wstrict-prototypes
 CFLAGS+=	-Wmissing-prototypes -Wpointer-arith
 
+# SYSROOT include path FIRST so real Apple-source headers (dns_sd.h
+# from libdns_sd, IOKit, ...) shadow the empty stubs that
+# launchd/freebsd-shims carries for launchctl's dead includes — iter 3b
+# added a real <dns_sd.h> dependency, and the launchd/freebsd-shims
+# /dns_sd.h stub would otherwise win the include-path race.
+SYSROOT?=
+.if !empty(SYSROOT)
+CFLAGS+=	-I${SYSROOT}/usr/include
+LDFLAGS+=	-L${SYSROOT}/usr/lib/system
+LDFLAGS+=	-Wl,-rpath,/usr/lib/system
+LDFLAGS+=	-Wl,--allow-shlib-undefined
+.endif
+
 # liblaunch / launchd-shims pulled for parity with other daemons even
 # though iter 1 doesn't call bootstrap_check_in — the CF umbrella
 # transitively wants the same shim availability macros. libnotify
@@ -41,20 +54,15 @@ CFLAGS+=	-I${.CURDIR}/../launchd/liblaunch
 CFLAGS+=	-I${.CURDIR}/../launchd/freebsd-shims
 CFLAGS+=	-I${.CURDIR}/../Libnotify/freebsd-shims
 
-SYSROOT?=
-.if !empty(SYSROOT)
-CFLAGS+=	-I${SYSROOT}/usr/include
-LDFLAGS+=	-L${SYSROOT}/usr/lib/system
-LDFLAGS+=	-Wl,-rpath,/usr/lib/system
-LDFLAGS+=	-Wl,--allow-shlib-undefined
-.endif
-
 # -lSystemConfiguration: SCDynamicStoreCreate / SCDynamicStoreSetValue
 # / SCErrorString — the configd publish surface.
 # -lCoreFoundation: CFDictionary / CFString / CFNumber, dictionary
 # shape we build for Setup:/System + Setup:/Network/HostNames.
 # -lnotify: notify_post("com.apple.system.hostname") — Apple-canonical
 # hostname-change broadcast.
+# -ldns_sd: libdns_sd client API — DNSServiceQueryRecord for the iter 3b
+# mDNS PTR tier. The library is built by src/mDNSResponder/libdns_sd
+# and installed to /usr/lib/system/libdns_sd.so.1 alongside dns_sd.h.
 # -ldispatch -lBlocksRuntime: transitively pulled by the SC umbrella
 # (SCDynamicStoreSetDispatchQueue ABI surface).
 # -lsystem_kernel: kenv(2) syscall trampoline + the FreeBSD libc base
@@ -62,6 +70,7 @@ LDFLAGS+=	-Wl,--allow-shlib-undefined
 LDADD+=		-lsystem_kernel
 LDADD+=		-lSystemConfiguration -lCoreFoundation
 LDADD+=		-lnotify
+LDADD+=		-ldns_sd
 LDADD+=		-ldispatch -lBlocksRuntime -lpthread
 
 BINDIR=		/usr/sbin

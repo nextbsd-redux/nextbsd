@@ -1381,7 +1381,7 @@ fi
 # workaround syslogd's run.sh-side spawn uses. A later iter restores
 # RunAtLoad after the launchd MachServices/checkin race is fixed.
 #
-# Two test rounds prove the precedence chain:
+# Four test rounds prove the precedence chain:
 #   ROUND 1 (iter 1 regression): no SCPrefs ComputerName set; hostnamed
 #     synthesizes "${slug}-${suffix}" from SMBIOS+MAC. hostnametest
 #     (no arg) emits HOSTNAMED-OK / HOSTNAMED-FAIL.
@@ -1390,6 +1390,14 @@ fi
 #     value, sethostname()s to it (bypassing synthesis). hostnametest
 #     with the same expected fixture emits HOSTNAMED-PREFS-OK /
 #     HOSTNAMED-PREFS-FAIL.
+#   ROUND 3 (iter 3a Tier-3a DHCP): hostnamedhcpset injects Option_12
+#     into the live State:/Network/Service/<UUID>/DHCP dict; hostnamed
+#     consumes it via try_dhcp(). Marker HOSTNAMED-DHCP-OK / -FAIL.
+#   ROUND 4 (iter 3b Tier-3b mDNS): hostnamedhcpset --clear strips
+#     Option_12; hostnamedmdnsset registers a PTR for our bound IPv4
+#     over mDNS; hostnamed's try_mdns() forced-multicast PTR query
+#     hits the local mDNSResponder and adopts the first label of the
+#     returned name. Marker HOSTNAMED-MDNS-OK / -FAIL.
 
 run_hostnamed() {
     label="$1"
@@ -1454,6 +1462,52 @@ if [ -x /usr/tests/freebsd-launchd-mach/hostnamedhcpset ]; then
     fi
 else
     echo "HOSTNAMED-DHCP-FAIL: hostnamedhcpset binary not installed"
+fi
+
+# ROUND 4: mDNS Tier-3b read (iter 3b). With prefs.plist cleared and
+# Option_12 stripped from any /DHCP dict (so DHCP doesn't short-circuit),
+# hostnamed's precedence chain falls through to try_mdns(), which issues
+# a forced-multicast PTR query for our bound IPv4 via libdns_sd.
+# hostnamedmdnsset is backgrounded; it registers the matching PTR
+# (<reverse>.in-addr.arpa -> <fixture>.local) against the local
+# mDNSResponder, then sleeps. Once it prints MDNSSET-READY: the
+# registration is live and hostnamed will see it.
+HOSTNAMED_MDNS_FIXTURE="hostnamed-iter3b-fixture"
+rm -f /Library/Preferences/SystemConfiguration/preferences.plist
+if [ -x /usr/tests/freebsd-launchd-mach/hostnamedhcpset ]; then
+    /usr/tests/freebsd-launchd-mach/hostnamedhcpset --clear || true
+fi
+if [ -x /usr/tests/freebsd-launchd-mach/hostnamedmdnsset ]; then
+    /usr/tests/freebsd-launchd-mach/hostnamedmdnsset \
+        "$HOSTNAMED_MDNS_FIXTURE" > /var/log/hostnamedmdnsset.stdout \
+        2> /var/log/hostnamedmdnsset.stderr &
+    HOSTNAMED_MDNSSET_PID=$!
+    # Wait up to 10s for MDNSSET-READY (mDNSResponder's register
+    # callback fires the moment it accepts the record).
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        if grep -q "MDNSSET-READY" /var/log/hostnamedmdnsset.stdout \
+            2>/dev/null; then
+            break
+        fi
+        sleep 1
+    done
+    echo "--- /var/log/hostnamedmdnsset.stdout ---"
+    cat /var/log/hostnamedmdnsset.stdout 2>/dev/null
+    echo "--- /var/log/hostnamedmdnsset.stderr ---"
+    cat /var/log/hostnamedmdnsset.stderr 2>/dev/null
+    echo "--- end hostnamedmdnsset logs ---"
+    if grep -q "MDNSSET-READY" /var/log/hostnamedmdnsset.stdout \
+        2>/dev/null; then
+        run_hostnamed "iter 3b mDNS PTR read"
+        /usr/tests/freebsd-launchd-mach/hostnametest \
+            "$HOSTNAMED_MDNS_FIXTURE" MDNS
+    else
+        echo "HOSTNAMED-MDNS-FAIL: hostnamedmdnsset never reached READY"
+    fi
+    kill "$HOSTNAMED_MDNSSET_PID" 2>/dev/null || true
+    wait "$HOSTNAMED_MDNSSET_PID" 2>/dev/null || true
+else
+    echo "HOSTNAMED-MDNS-FAIL: hostnamedmdnsset binary not installed"
 fi
 
 # PAM-FRAMEWORK — PAM port iter 1 (issue #93). Verifies our vendored
