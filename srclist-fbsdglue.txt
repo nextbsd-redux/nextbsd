@@ -143,6 +143,9 @@ lib/libarchive
 lib/libexecinfo
 lib/libufs
 lib/liblzma
+# libnetbsd: NetBSD compatibility shim required by usr.sbin/nmtree
+#   (FreeBSD's mtree is the NetBSD port, links -lnetbsd_pie).
+lib/libnetbsd
 # sbin/geom builds the geom(8) multi-tool framework (gpart, glabel,
 # geli, etc.) — single entry replaces what FreeBSD-geom pkg provided.
 sbin/geom
