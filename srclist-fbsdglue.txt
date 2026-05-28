@@ -143,8 +143,9 @@ lib/libarchive
 lib/libexecinfo
 lib/libufs
 lib/liblzma
-sbin/gpart
-sbin/glabel
+# sbin/geom builds the geom(8) multi-tool framework (gpart, glabel,
+# geli, etc.) — single entry replaces what FreeBSD-geom pkg provided.
+sbin/geom
 usr.sbin/mtree
 # xz tool (companion to lib/liblzma above)
 usr.bin/xz
