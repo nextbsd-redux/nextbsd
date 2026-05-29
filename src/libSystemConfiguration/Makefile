@@ -98,9 +98,13 @@ LIBDIR=		${PREFIX}/lib/system
 # handlers are blocks (-fblocks).
 LDADD+=		-lCoreFoundation -ldispatch -lBlocksRuntime
 LDADD+=		-lsystem_kernel -llaunch -lpthread
-# -ldns_sd: SCNetworkReachability is a PTR shim over libdns_sd
-# (DNSServiceQueryRecord against mDNSResponder).
-LDADD+=		-ldns_sd
+# SCNetworkReachability.c calls into libdns_sd (DNSServiceQueryRecord
+# against mDNSResponder) but libdns_sd builds AFTER libSC in
+# build.sh's Phase K order, so we cannot link -ldns_sd here. Leave
+# the libdns_sd symbols as undefined-at-libSC-link-time; consumers
+# (hostnamed's Makefile already does this) link -ldns_sd in their
+# own LDADD which resolves the references at exec-link time.
+LDADD+=		-Wl,--allow-shlib-undefined
 LDADD+=		-Wl,--allow-shlib-undefined
 LDADD+=		-Wl,-rpath,${PREFIX}/lib/system
 
