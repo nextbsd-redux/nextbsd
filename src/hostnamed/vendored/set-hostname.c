@@ -588,9 +588,17 @@ load_hostname(dispatch_queue_t queue)
 	/* remember this for scheduling reachability callbacks */
 	S_queue = queue;
 
+	/* freebsd-launchd-mach carry: bisect xlogs (temporary) for the
+	 * iter-3c bring-up of vendored set-hostname.c. Daemon exits
+	 * during load_hostname; pinpointing the step. Will revert. */
+	fprintf(stderr, "vendored/load_hostname: pre-SCDynamicStoreCreate\n");
+	fflush(stderr);
+
 	/* register for notifications */
 	store = SCDynamicStoreCreate(NULL, CFSTR("set-hostname"),
 				     update_hostname, NULL);
+	fprintf(stderr, "vendored/load_hostname: post-SCDynamicStoreCreate (store=%p)\n", (void*)store);
+	fflush(stderr);
 	if (store == NULL) {
 		my_log(LOG_ERR,
 		       "SCDynamicStoreCreate() failed: %s",
@@ -600,6 +608,7 @@ load_hostname(dispatch_queue_t queue)
 	keys     = CFArrayCreateMutable(NULL, 0, &kCFTypeArrayCallBacks);
 	patterns = CFArrayCreateMutable(NULL, 0, &kCFTypeArrayCallBacks);
 
+	fprintf(stderr, "vendored/load_hostname: pre-KeyCreateNetworkServiceEntity\n"); fflush(stderr);
 	/* per-service DHCP option (may contain hostname option) */
 	key = SCDynamicStoreKeyCreateNetworkServiceEntity(NULL,
 							  kSCDynamicStoreDomainState,
@@ -608,17 +617,21 @@ load_hostname(dispatch_queue_t queue)
 	CFArrayAppendValue(patterns, key);
 	CFRelease(key);
 
+	fprintf(stderr, "vendored/load_hostname: pre-KeyCreateComputerName\n"); fflush(stderr);
 	/* BSD hostname */
 	key = SCDynamicStoreKeyCreateComputerName(NULL);
 	CFArrayAppendValue(keys, key);
 	CFRelease(key);
 
+	fprintf(stderr, "vendored/load_hostname: pre-KeyCreateHostNames\n"); fflush(stderr);
 	/* multicast DNS hostname */
 	key = SCDynamicStoreKeyCreateHostNames(NULL);
 	CFArrayAppendValue(keys, key);
 	CFRelease(key);
 
+	fprintf(stderr, "vendored/load_hostname: pre-SetNotificationKeys\n"); fflush(stderr);
 	ok = SCDynamicStoreSetNotificationKeys(store, keys, patterns);
+	fprintf(stderr, "vendored/load_hostname: post-SetNotificationKeys ok=%d\n", ok); fflush(stderr);
 	CFRelease(keys);
 	CFRelease(patterns);
 	if (!ok) {
@@ -627,26 +640,31 @@ load_hostname(dispatch_queue_t queue)
 		       SCErrorString(SCError()));
 		goto error;
 	}
+	fprintf(stderr, "vendored/load_hostname: pre-SetDispatchQueue\n"); fflush(stderr);
 	if (!SCDynamicStoreSetDispatchQueue(store, queue)) {
 		my_log(LOG_ERR,
 		       "SCDynamicStoreSetDispatchQueue() failed: %s",
 		       SCErrorString(SCError()));
 		goto error;
 	}
+	fprintf(stderr, "vendored/load_hostname: post-SetDispatchQueue\n"); fflush(stderr);
 
 	/* watch for primary service/interface and DNS configuration changes */
 	notify_handler = ^(int token){
 #pragma unused(token)
 		update_hostname(store, NULL, NULL);
 	};
+	fprintf(stderr, "vendored/load_hostname: pre-notify_register_dispatch\n"); fflush(stderr);
 	status = notify_register_dispatch(_SC_NOTIFY_NETWORK_CHANGE,
 					  &notify_token,
 					  queue,
 					  notify_handler);
+	fprintf(stderr, "vendored/load_hostname: post-notify_register_dispatch status=%u\n", status); fflush(stderr);
 	if (status != NOTIFY_STATUS_OK) {
 		my_log(LOG_ERR, "notify_register_dispatch() failed: %u", status);
 		goto error;
 	}
+	fprintf(stderr, "vendored/load_hostname: returning normally\n"); fflush(stderr);
 
 	return;
 
