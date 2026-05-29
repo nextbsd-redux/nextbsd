@@ -75,20 +75,23 @@ read_prefs_computer_name(SCPreferencesRef prefs)
 	return (name);
 }
 
-/* Compute the name we want to publish: SCPrefs ComputerName if set,
- * otherwise synthesized slug+suffix fallback. Caller releases. */
+/* Returns the SCPrefs ComputerName if set, otherwise NULL. The
+ * caller distinguishes "publish this value" from "unpublish so the
+ * engine falls through to DHCP / PTR / mDNS / freebsd_synthesize
+ * (the carry) on its own." Previously this returned the synth
+ * fallback unconditionally — which made set-hostname.c's SCPrefs
+ * tier always win, masking DHCP / mDNS / PTR. */
 static CFStringRef
 compute_publish_name(SCPreferencesRef prefs)
 {
-	CFStringRef name = read_prefs_computer_name(prefs);
-	if (name != NULL)
-		return (name);
-	return (freebsd_synthesize_hostname());
+	return (read_prefs_computer_name(prefs));
 }
 
-/* Build and publish Setup:/System (ComputerName + ComputerNameEncoding=
- * UTF-8) and Setup:/Network/HostNames (HostName + LocalHostName, same
- * value). */
+/* Publish (name non-NULL) or unpublish (name NULL) Setup:/System +
+ * Setup:/Network/HostNames. Unpublish removes the dicts so
+ * set-hostname.c's copy_prefs_hostname / SCDynamicStoreCopyLocalHostName
+ * return NULL and the engine falls through to the lower-precedence
+ * tiers. */
 static void
 publish(SCDynamicStoreRef store, CFStringRef name)
 {
@@ -97,8 +100,21 @@ publish(SCDynamicStoreRef store, CFStringRef name)
 	CFNumberRef enc_num;
 	SInt32 enc_val = (SInt32)kCFStringEncodingUTF8;
 
-	if (store == NULL || name == NULL)
+	if (store == NULL)
 		return;
+	if (name == NULL) {
+		key = SCDynamicStoreKeyCreateComputerName(NULL);
+		if (key != NULL) {
+			(void)SCDynamicStoreRemoveValue(store, key);
+			CFRelease(key);
+		}
+		key = SCDynamicStoreKeyCreateHostNames(NULL);
+		if (key != NULL) {
+			(void)SCDynamicStoreRemoveValue(store, key);
+			CFRelease(key);
+		}
+		return;
+	}
 
 	/* Setup:/System — both ComputerName (user-visible) AND HostName
 	 * (DNS-safe form). set-hostname.c's copy_prefs_hostname reads
@@ -160,8 +176,12 @@ prefs_cb(SCPreferencesRef prefs, SCPreferencesNotification type,
 	 * stays at the snapshot loaded at SCPreferencesCreate time. */
 	SCPreferencesSynchronize(prefs);
 	name = compute_publish_name(prefs);
-	if (name == NULL)
+	if (name == NULL) {
+		xlog("prefs_monitor: SCPrefs ComputerName absent — "
+		    "unpublishing Setup:/System (engine falls through)");
+		publish(st->store, NULL);
 		return;
+	}
 	{
 		char buf[256];
 		if (CFStringGetCString(name, buf, sizeof(buf),
@@ -198,20 +218,22 @@ prefs_monitor_start(dispatch_queue_t queue)
 		return (-1);
 	}
 
-	/* Initial publish FIRST (synthesized fallback if needed). */
+	/* Initial publish (or unpublish if SCPrefs ComputerName is
+	 * absent — first boot, --clear, etc.). */
 	name = compute_publish_name(g_state.prefs);
 	if (name == NULL) {
-		xlog("prefs_monitor: compute_publish_name returned NULL");
-		return (-1);
-	}
-	{
+		xlog("prefs_monitor: SCPrefs ComputerName absent at boot — "
+		    "leaving Setup:/System empty (engine will synthesize "
+		    "via the localhost-fallback carry)");
+		publish(g_state.store, NULL);
+	} else {
 		char buf[256];
 		if (CFStringGetCString(name, buf, sizeof(buf),
 		    kCFStringEncodingUTF8))
 			xlog("prefs_monitor: initial publish '%s'", buf);
+		publish(g_state.store, name);
+		CFRelease(name);
 	}
-	publish(g_state.store, name);
-	CFRelease(name);
 
 	/* Register the callback for ongoing changes. */
 	memset(&pctx, 0, sizeof(pctx));
