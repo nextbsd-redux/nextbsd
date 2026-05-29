@@ -13,20 +13,24 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 
-#define	_FREEBSD_ISA(NAME, TYPEID_FN)					\
-	static inline NAME					 	\
-	isA_ ## NAME(CFTypeRef cf)					\
+/* Apple's convention: isA_CFString / isA_CFArray / ... — NO "Ref"
+ * suffix on the function name, even though the return type IS the
+ * Ref. The two macro arguments split the name (no-Ref) from the
+ * type (with-Ref). */
+#define	_FREEBSD_ISA(BASE, TYPE, TYPEID_FN)				\
+	static inline TYPE					 	\
+	isA_ ## BASE(CFTypeRef cf)					\
 	{								\
 		return ((cf != NULL && CFGetTypeID(cf) == TYPEID_FN()) ? \
-		    (NAME)cf : NULL);					\
+		    (TYPE)cf : NULL);					\
 	}
 
-_FREEBSD_ISA(CFStringRef, CFStringGetTypeID)
-_FREEBSD_ISA(CFArrayRef, CFArrayGetTypeID)
-_FREEBSD_ISA(CFDictionaryRef, CFDictionaryGetTypeID)
-_FREEBSD_ISA(CFNumberRef, CFNumberGetTypeID)
-_FREEBSD_ISA(CFDataRef, CFDataGetTypeID)
-_FREEBSD_ISA(CFBooleanRef, CFBooleanGetTypeID)
+_FREEBSD_ISA(CFString, CFStringRef, CFStringGetTypeID)
+_FREEBSD_ISA(CFArray, CFArrayRef, CFArrayGetTypeID)
+_FREEBSD_ISA(CFDictionary, CFDictionaryRef, CFDictionaryGetTypeID)
+_FREEBSD_ISA(CFNumber, CFNumberRef, CFNumberGetTypeID)
+_FREEBSD_ISA(CFData, CFDataRef, CFDataGetTypeID)
+_FREEBSD_ISA(CFBoolean, CFBooleanRef, CFBooleanGetTypeID)
 
 #undef	_FREEBSD_ISA
 
