@@ -1413,6 +1413,8 @@ fi
 
 echo "==> hostnamed: persistent daemon liveness check (pre-rounds)"
 echo "    pgrep -x hostnamed -> $(pgrep -x hostnamed 2>/dev/null || echo MISSING)"
+echo "    pre-rounds kernel hostname (before any ROUND): '$(hostname 2>/dev/null)'"
+echo "    pre-rounds sysctl kern.hostname: '$(sysctl -n kern.hostname 2>/dev/null)'"
 if [ -f /var/log/hostnamed.stderr ]; then
     bytes=$(wc -c < /var/log/hostnamed.stderr 2>/dev/null || echo 0)
     lines=$(wc -l < /var/log/hostnamed.stderr 2>/dev/null || echo 0)
