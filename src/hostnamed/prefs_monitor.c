@@ -87,13 +87,16 @@ compute_publish_name(SCPreferencesRef prefs)
 	return (read_prefs_computer_name(prefs));
 }
 
-/* Publish (name non-NULL) or unpublish (name NULL) Setup:/System +
- * Setup:/Network/HostNames. Unpublish removes the dicts so
- * set-hostname.c's copy_prefs_hostname / SCDynamicStoreCopyLocalHostName
- * return NULL and the engine falls through to the lower-precedence
- * tiers. */
+/* Publish (name non-NULL) or unpublish (name NULL) Setup:/System.
+ * Unpublish lets set-hostname.c's copy_prefs_hostname return NULL so
+ * the engine falls through to DHCP / PTR / mDNS / synth carry.
+ *
+ * Both kSCPropSystemComputerName (user-visible) and kSCPropSystemHostName
+ * (DNS-safe) carry the same value here; the synthesised slug+suffix is
+ * already DNS-safe so no second derivation is needed. ComputerNameEncoding
+ * is informational (UTF-8). */
 static void
-publish(SCDynamicStoreRef store, CFStringRef name)
+publish_setup_system(SCDynamicStoreRef store, CFStringRef name)
 {
 	CFStringRef key;
 	CFMutableDictionaryRef dict;
@@ -102,33 +105,19 @@ publish(SCDynamicStoreRef store, CFStringRef name)
 
 	if (store == NULL)
 		return;
+	key = SCDynamicStoreKeyCreateComputerName(NULL);
+	if (key == NULL)
+		return;
 	if (name == NULL) {
-		key = SCDynamicStoreKeyCreateComputerName(NULL);
-		if (key != NULL) {
-			(void)SCDynamicStoreRemoveValue(store, key);
-			CFRelease(key);
-		}
-		key = SCDynamicStoreKeyCreateHostNames(NULL);
-		if (key != NULL) {
-			(void)SCDynamicStoreRemoveValue(store, key);
-			CFRelease(key);
-		}
+		(void)SCDynamicStoreRemoveValue(store, key);
+		CFRelease(key);
 		return;
 	}
-
-	/* Setup:/System — both ComputerName (user-visible) AND HostName
-	 * (DNS-safe form). set-hostname.c's copy_prefs_hostname reads
-	 * the HostName key out of this dict; without it the engine
-	 * never sees the SCPrefs tier and falls all the way to mDNS /
-	 * localhost. For our build the two values are the same — the
-	 * synthesized slug+suffix is already DNS-safe. ComputerNameEncoding
-	 * is informational (UTF-8). */
-	key = SCDynamicStoreKeyCreateComputerName(NULL);
 	dict = CFDictionaryCreateMutable(NULL, 0,
 	    &kCFTypeDictionaryKeyCallBacks,
 	    &kCFTypeDictionaryValueCallBacks);
 	enc_num = CFNumberCreate(NULL, kCFNumberSInt32Type, &enc_val);
-	if (key != NULL && dict != NULL && enc_num != NULL) {
+	if (dict != NULL && enc_num != NULL) {
 		CFDictionarySetValue(dict, kSCPropSystemComputerName, name);
 		CFDictionarySetValue(dict, kSCPropSystemHostName, name);
 		CFDictionarySetValue(dict,
@@ -138,22 +127,80 @@ publish(SCDynamicStoreRef store, CFStringRef name)
 	}
 	if (enc_num != NULL) CFRelease(enc_num);
 	if (dict != NULL) CFRelease(dict);
-	if (key != NULL) CFRelease(key);
+	CFRelease(key);
+}
 
-	/* Setup:/Network/HostNames */
+/* Publish (name non-NULL) or unpublish (name NULL) Setup:/Network/HostNames.
+ * The HostNames key carries kSCPropNetHostName + kSCPropNetLocalHostName —
+ * mDNSResponder reads LocalHostName for the .local broadcast (see
+ * apple-oss-distributions/mDNSResponder mDNSMacOSX.c:3404
+ * GetUserSpecifiedLocalHostName). When SCPrefs is empty we want this
+ * key POPULATED (with the synthesised name) even though Setup:/System
+ * is empty — that's the freebsd-launchd-mach split:
+ *
+ *   - Setup:/System mirrors SCPrefs ComputerName, so absent = empty
+ *     (lets set-hostname.c's decision engine fall through to DHCP /
+ *     PTR / mDNS tiers in the test rounds and on real first boots).
+ *   - Setup:/Network/HostNames carries a usable .local name regardless,
+ *     either the SCPrefs value when set, or the synthesised slug+suffix
+ *     otherwise. mDNSResponder gets a real name to announce on a fresh
+ *     machine instead of "Amnesiac".
+ */
+static void
+publish_hostnames(SCDynamicStoreRef store, CFStringRef name)
+{
+	CFStringRef key;
+	CFMutableDictionaryRef dict;
+
+	if (store == NULL)
+		return;
 	key = SCDynamicStoreKeyCreateHostNames(NULL);
+	if (key == NULL)
+		return;
+	if (name == NULL) {
+		(void)SCDynamicStoreRemoveValue(store, key);
+		CFRelease(key);
+		return;
+	}
 	dict = CFDictionaryCreateMutable(NULL, 0,
 	    &kCFTypeDictionaryKeyCallBacks,
 	    &kCFTypeDictionaryValueCallBacks);
-	if (key != NULL && dict != NULL) {
+	if (dict != NULL) {
 		CFDictionarySetValue(dict, kSCPropNetHostName, name);
 		CFDictionarySetValue(dict, kSCPropNetLocalHostName, name);
 		if (!SCDynamicStoreSetValue(store, key, dict))
 			xlog("prefs_monitor: SetValue("
 			    "Setup:/Network/HostNames) failed");
+		CFRelease(dict);
 	}
-	if (dict != NULL) CFRelease(dict);
-	if (key != NULL) CFRelease(key);
+	CFRelease(key);
+}
+
+/* Apply the current state: if SCPrefs ComputerName is set, mirror it
+ * into BOTH Setup:/System and Setup:/Network/HostNames. If absent,
+ * unpublish Setup:/System (engine falls through) but publish the
+ * synthesised name to Setup:/Network/HostNames so mDNSResponder has
+ * a real .local broadcast name on a fresh machine. */
+static void
+apply(SCDynamicStoreRef store, CFStringRef scprefs_name)
+{
+	if (store == NULL)
+		return;
+	if (scprefs_name != NULL) {
+		publish_setup_system(store, scprefs_name);
+		publish_hostnames(store, scprefs_name);
+		return;
+	}
+	publish_setup_system(store, NULL);
+	{
+		CFStringRef synth = freebsd_synthesize_hostname();
+		if (synth != NULL) {
+			publish_hostnames(store, synth);
+			CFRelease(synth);
+		} else {
+			publish_hostnames(store, NULL);
+		}
+	}
 }
 
 /* SCPrefs commit callback: re-read SCPrefs (which may have just been
@@ -178,17 +225,20 @@ prefs_cb(SCPreferencesRef prefs, SCPreferencesNotification type,
 	name = compute_publish_name(prefs);
 	if (name == NULL) {
 		xlog("prefs_monitor: SCPrefs ComputerName absent — "
-		    "unpublishing Setup:/System (engine falls through)");
-		publish(st->store, NULL);
+		    "Setup:/System empty (engine falls through); "
+		    "Setup:/Network/HostNames = synthesised");
+		apply(st->store, NULL);
 		return;
 	}
 	{
 		char buf[256];
 		if (CFStringGetCString(name, buf, sizeof(buf),
 		    kCFStringEncodingUTF8))
-			xlog("prefs_monitor: re-publishing '%s'", buf);
+			xlog("prefs_monitor: re-publishing '%s' "
+			    "(both Setup:/System and Setup:/Network/HostNames)",
+			    buf);
 	}
-	publish(st->store, name);
+	apply(st->store, name);
 	CFRelease(name);
 }
 
@@ -218,20 +268,26 @@ prefs_monitor_start(dispatch_queue_t queue)
 		return (-1);
 	}
 
-	/* Initial publish (or unpublish if SCPrefs ComputerName is
-	 * absent — first boot, --clear, etc.). */
+	/* Initial publish. SCPrefs absent → Setup:/System empty (engine
+	 * falls through to DHCP / PTR / mDNS), Setup:/Network/HostNames
+	 * carries the synthesised slug+suffix so mDNSResponder broadcasts
+	 * a real .local name on a fresh machine. SCPrefs set → both keys
+	 * carry that user value (Apple-shape mirror). */
 	name = compute_publish_name(g_state.prefs);
 	if (name == NULL) {
 		xlog("prefs_monitor: SCPrefs ComputerName absent at boot — "
-		    "leaving Setup:/System empty (engine will synthesize "
-		    "via the localhost-fallback carry)");
-		publish(g_state.store, NULL);
+		    "Setup:/System empty (engine falls through); "
+		    "Setup:/Network/HostNames will carry synthesised name "
+		    "(mDNSResponder broadcasts <synth>.local)");
+		apply(g_state.store, NULL);
 	} else {
 		char buf[256];
 		if (CFStringGetCString(name, buf, sizeof(buf),
 		    kCFStringEncodingUTF8))
-			xlog("prefs_monitor: initial publish '%s'", buf);
-		publish(g_state.store, name);
+			xlog("prefs_monitor: initial publish '%s' "
+			    "(both Setup:/System and Setup:/Network/HostNames)",
+			    buf);
+		apply(g_state.store, name);
 		CFRelease(name);
 	}
 
