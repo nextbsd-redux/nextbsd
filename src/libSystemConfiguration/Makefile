@@ -60,12 +60,15 @@ NO_MAN=		yes
 CFLAGS+=	-O2 -pipe -fblocks
 CFLAGS+=	-I${.CURDIR}		# <SystemConfiguration/...> umbrella path
 
-# SYSROOT include path FIRST so real Apple-source headers (dns_sd.h
-# from libdns_sd, used by SCNetworkReachability.c's PTR shim) shadow
-# the empty launchd/freebsd-shims stubs. See user memory
-# [[launchd-shims-shadowing-trap]]. The canonical libmach <servers/
-# bootstrap.h> now carries BOOTSTRAP_SUCCESS so SCDynamicStore.c
-# still resolves it via SYSROOT instead of liblaunch.
+# dns_sd.h source-tree path FIRST so SCNetworkReachability.c can
+# resolve <dns_sd.h> at libSC build time — libdns_sd installs the
+# header to SYSROOT but builds AFTER libSC in build.sh's Phase K
+# order, so SYSROOT alone doesn't carry it. Pointing at the mDNS
+# source tree directly works either way (pre- or post-libdns_sd
+# install) and shadows the launchd-shims/dns_sd.h stub (see user
+# memory [[launchd-shims-shadowing-trap]]).
+CFLAGS+=	-I${.CURDIR}/../mDNSResponder/mDNSShared
+
 SYSROOT?=
 .if !empty(SYSROOT)
 CFLAGS+=	-I${SYSROOT}/usr/include
