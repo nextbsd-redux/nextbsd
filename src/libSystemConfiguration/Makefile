@@ -25,6 +25,7 @@ SRCS+=		SCNetworkConfigurationInternal.c SCNetworkInterface.c
 SRCS+=		SCNetworkProtocol.c SCNetworkService.c SCNetworkSet.c
 SRCS+=		SCVLANInterface.c SCBondInterface.c SCBridgeInterface.c
 SRCS+=		SCDynamicStoreKeys.c SCDName.c SCPName.c
+SRCS+=		SCNetworkReachability.c
 
 # configUser.c — MIG-generated config.defs client stubs (same file
 # configd's test clients link). config_wire.c — configd's shared
@@ -73,6 +74,7 @@ LDADD+=		-L${SYSROOT}/usr/lib/system
 
 INCS=		SystemConfiguration/SCDynamicStore.h \
 		SystemConfiguration/SCNetworkConfiguration.h \
+		SystemConfiguration/SCNetworkReachability.h \
 		SystemConfiguration/SCPreferences.h \
 		SystemConfiguration/SCSchemaDefinitions.h \
 		SystemConfiguration/SystemConfiguration.h
@@ -87,6 +89,9 @@ LIBDIR=		${PREFIX}/lib/system
 # handlers are blocks (-fblocks).
 LDADD+=		-lCoreFoundation -ldispatch -lBlocksRuntime
 LDADD+=		-lsystem_kernel -llaunch -lpthread
+# -ldns_sd: SCNetworkReachability is a PTR shim over libdns_sd
+# (DNSServiceQueryRecord against mDNSResponder).
+LDADD+=		-ldns_sd
 LDADD+=		-Wl,--allow-shlib-undefined
 LDADD+=		-Wl,-rpath,${PREFIX}/lib/system
 
