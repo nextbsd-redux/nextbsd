@@ -342,6 +342,30 @@ __SCPreferencesAccess(SCPreferencesRef prefs)
 #pragma mark -
 #pragma mark Preferences access
 
+/*
+ * SCPreferencesSynchronize — drop the cached in-memory copy of the
+ * prefs plist so the next access re-reads from disk. Apple semantics:
+ * a no-op for a session that has uncommitted changes; otherwise clears
+ * the cache. We follow the cleared-cache path unconditionally — our
+ * port doesn't expose the "uncommitted" state separately, and clients
+ * (like prefs_monitor's SCPrefs callback) need a way to see values
+ * committed by another process.
+ */
+void
+SCPreferencesSynchronize(SCPreferencesRef prefs)
+{
+	SCPreferencesPrivateRef	prefsPrivate	= (SCPreferencesPrivateRef)prefs;
+
+	if (!isA_SCPreferences(prefs)) {
+		return;
+	}
+	if (prefsPrivate->prefs != NULL) {
+		CFRelease(prefsPrivate->prefs);
+		prefsPrivate->prefs = NULL;
+	}
+	prefsPrivate->accessed = FALSE;
+}
+
 CFPropertyListRef
 SCPreferencesGetValue(SCPreferencesRef prefs, CFStringRef key)
 {

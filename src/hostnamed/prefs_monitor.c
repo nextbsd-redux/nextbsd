@@ -154,13 +154,11 @@ prefs_cb(SCPreferencesRef prefs, SCPreferencesNotification type,
 	(void)type;
 	if (st == NULL || st->store == NULL)
 		return;
-	/* Note: Apple's SCPreferencesSynchronize would normally drop the
-	 * in-memory cache so the next read picks up the just-committed
-	 * value; our libSC port doesn't ship it yet. SCPreferencesPath
-	 * GetValue against the in-tree port re-reads from the on-disk
-	 * plist on each call (no cache), so the synchronize is currently
-	 * a no-op. If that changes (libSC adds caching), add the sync
-	 * back and ship a SCPreferencesSynchronize stub in libSC. */
+	/* Drop the cached in-memory plist so the next PathGetValue picks
+	 * up the value just committed by another process (e.g. the
+	 * hostnameprefset CI fixture). Without this, our SCPrefs ref
+	 * stays at the snapshot loaded at SCPreferencesCreate time. */
+	SCPreferencesSynchronize(prefs);
 	name = compute_publish_name(prefs);
 	if (name == NULL)
 		return;

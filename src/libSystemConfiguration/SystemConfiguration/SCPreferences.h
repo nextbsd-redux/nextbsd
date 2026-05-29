@@ -246,6 +246,15 @@ SCPreferencesSetDispatchQueue	(SCPreferencesRef		prefs,
 				 dispatch_queue_t		queue);
 
 /*!
+	@function SCPreferencesSynchronize
+	@discussion Drops the cached in-memory copy of the prefs plist
+		so subsequent reads pick up changes another process may
+		have committed since this session was opened.
+ */
+void
+SCPreferencesSynchronize	(SCPreferencesRef		prefs);
+
+/*!
 	@function _SCPreferencesCopyComputerName
 	@discussion Reads the user-set ComputerName from the prefs file
 		(stored at path /System/System). Returns CFString or NULL.
