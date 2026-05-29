@@ -62,8 +62,10 @@ CFLAGS+=	-I${.CURDIR}		# <SystemConfiguration/...> umbrella path
 
 # SYSROOT include path FIRST so real Apple-source headers (dns_sd.h
 # from libdns_sd, used by SCNetworkReachability.c's PTR shim) shadow
-# the empty launchd/freebsd-shims stubs that exist only to satisfy
-# launchctl's dead includes. See user memory [[launchd-shims-shadowing-trap]].
+# the empty launchd/freebsd-shims stubs. See user memory
+# [[launchd-shims-shadowing-trap]]. The canonical libmach <servers/
+# bootstrap.h> now carries BOOTSTRAP_SUCCESS so SCDynamicStore.c
+# still resolves it via SYSROOT instead of liblaunch.
 SYSROOT?=
 .if !empty(SYSROOT)
 CFLAGS+=	-I${SYSROOT}/usr/include
