@@ -39,6 +39,7 @@
 
 #include <dispatch/dispatch.h>
 
+#include <errno.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -111,11 +112,14 @@ main(int argc, char **argv)
 
 		if (synth != NULL && CFStringGetCString(synth, buf,
 		    sizeof(buf), kCFStringEncodingUTF8)) {
+			char readback[256] = "";
 			if (sethostname(buf, (int)strlen(buf)) == 0) {
-				xlog("boot-time sethostname('%s') OK", buf);
+				(void)gethostname(readback, sizeof(readback));
+				xlog("boot-time sethostname('%s') OK; "
+				    "gethostname readback='%s'", buf, readback);
 			} else {
-				xlog("boot-time sethostname('%s') FAILED",
-				    buf);
+				xlog("boot-time sethostname('%s') FAILED: "
+				    "errno=%d", buf, errno);
 			}
 		}
 		if (synth != NULL) CFRelease(synth);
