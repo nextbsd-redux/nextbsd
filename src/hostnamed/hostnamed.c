@@ -109,7 +109,9 @@ main(int argc, char **argv)
 
 	/* The decision engine. Subscribes + idles; every event reactively
 	 * re-runs the chain and sethostname()s the result. */
+	xlog("pre-load_hostname");
 	load_hostname(queue);
+	xlog("post-load_hostname");
 	xlog("HOSTNAMED-OK: load_hostname scheduled (Apple-shape engine "
 	    "subscribed to SCDS + notify_register_dispatch)");
 
@@ -119,16 +121,19 @@ main(int argc, char **argv)
 	(void)sigaddset(&mask, SIGTERM);
 	(void)sigaddset(&mask, SIGINT);
 	(void)sigprocmask(SIG_BLOCK, &mask, NULL);
+	xlog("post-sigprocmask");
 
 	sig_term_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL,
 	    (uintptr_t)SIGTERM, 0, queue);
 	dispatch_source_set_event_handler_f(sig_term_src, sigterm_handler);
 	dispatch_activate(sig_term_src);
+	xlog("post-SIGTERM-dispatch-source");
 
 	sig_int_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL,
 	    (uintptr_t)SIGINT, 0, queue);
 	dispatch_source_set_event_handler_f(sig_int_src, sigterm_handler);
 	dispatch_activate(sig_int_src);
+	xlog("post-SIGINT-dispatch-source");
 
 	xlog("event loop entered");
 	dispatch_main();
