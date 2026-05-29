@@ -100,7 +100,13 @@ publish(SCDynamicStoreRef store, CFStringRef name)
 	if (store == NULL || name == NULL)
 		return;
 
-	/* Setup:/System */
+	/* Setup:/System — both ComputerName (user-visible) AND HostName
+	 * (DNS-safe form). set-hostname.c's copy_prefs_hostname reads
+	 * the HostName key out of this dict; without it the engine
+	 * never sees the SCPrefs tier and falls all the way to mDNS /
+	 * localhost. For our build the two values are the same — the
+	 * synthesized slug+suffix is already DNS-safe. ComputerNameEncoding
+	 * is informational (UTF-8). */
 	key = SCDynamicStoreKeyCreateComputerName(NULL);
 	dict = CFDictionaryCreateMutable(NULL, 0,
 	    &kCFTypeDictionaryKeyCallBacks,
@@ -108,6 +114,7 @@ publish(SCDynamicStoreRef store, CFStringRef name)
 	enc_num = CFNumberCreate(NULL, kCFNumberSInt32Type, &enc_val);
 	if (key != NULL && dict != NULL && enc_num != NULL) {
 		CFDictionarySetValue(dict, kSCPropSystemComputerName, name);
+		CFDictionarySetValue(dict, kSCPropSystemHostName, name);
 		CFDictionarySetValue(dict,
 		    kSCPropSystemComputerNameEncoding, enc_num);
 		if (!SCDynamicStoreSetValue(store, key, dict))
