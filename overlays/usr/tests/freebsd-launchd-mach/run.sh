@@ -1414,8 +1414,13 @@ fi
 echo "==> hostnamed: persistent daemon liveness check (pre-rounds)"
 echo "    pgrep -x hostnamed -> $(pgrep -x hostnamed 2>/dev/null || echo MISSING)"
 if [ -f /var/log/hostnamed.stderr ]; then
-    echo "    --- /var/log/hostnamed.stderr (boot-time, last 40 lines) ---"
-    tail -40 /var/log/hostnamed.stderr 2>/dev/null
+    bytes=$(wc -c < /var/log/hostnamed.stderr 2>/dev/null || echo 0)
+    lines=$(wc -l < /var/log/hostnamed.stderr 2>/dev/null || echo 0)
+    echo "    /var/log/hostnamed.stderr -> ${bytes}B ${lines}L"
+    echo "    --- hostnamed.stderr (head -25, boot-time) ---"
+    head -25 /var/log/hostnamed.stderr 2>/dev/null
+    echo "    --- hostnamed.stderr (tail -30, latest) ---"
+    tail -30 /var/log/hostnamed.stderr 2>/dev/null
     echo "    --- end ---"
 fi
 
