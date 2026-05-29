@@ -536,6 +536,45 @@ update_hostname(SCDynamicStoreRef store, CFArrayRef changedKeys, void *info)
 		if (!isExpensive) {
 			Boolean	ok;
 
+			/* freebsd-launchd-mach carry: PTR is async and may
+			 * never complete on a quiet link (ipconfigd's CI-
+			 * accelerated DHCP renewals cancel + restart every
+			 * 5s). Without a synchronous floor, the kernel
+			 * hostname stays at whatever it was last set to —
+			 * empirically that becomes 'localhost' within a
+			 * minute of boot from something outside our daemon's
+			 * sethostname surface (the boot-time set in
+			 * hostnamed's main() runs once, then erodes). Set
+			 * the synthesized name now if the kernel is in an
+			 * "uninitialized" state (localhost / Amnesiac /
+			 * empty), THEN kick the async PTR. PTR's callback
+			 * still overrides this with the resolved name on
+			 * success — the synth is only a placeholder for
+			 * the resolution window. Skipping this when the
+			 * kernel already holds a real name (a previous
+			 * round's set_hostname result) avoids stomping the
+			 * mDNS-PTR / SCPrefs winners on subsequent
+			 * renewals. */
+			{
+				char	current[MAXHOSTNAMELEN];
+
+				current[0] = '\0';
+				if (gethostname(current, sizeof(current)) == 0
+				    && (current[0] == '\0'
+				        || strcmp(current, "localhost") == 0
+				        || strcmp(current, "Amnesiac") == 0)) {
+					CFStringRef synth =
+					    freebsd_synthesize_hostname();
+					if (synth != NULL) {
+						my_log(LOG_INFO,
+						    "hostname (synthesized "
+						    "placeholder) = %@", synth);
+						set_hostname(synth);
+						CFRelease(synth);
+					}
+				}
+			}
+
 			ok = ptr_query_start(address);
 			if (ok) {
 				// if query started

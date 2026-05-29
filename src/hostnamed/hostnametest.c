@@ -159,33 +159,65 @@ main(int argc, char **argv)
 		goto out;
 	}
 
-	/* When the caller supplied an expected value (SCPrefs / DHCP / mDNS
-	 * fixture rounds), enforce the full agreement contract: all three
-	 * publish surfaces must equal the expectation. The fixture wrote
-	 * to SCPrefs or State:/Network/Service/<UUID>/DHCP, prefs_monitor
-	 * mirrored it into Setup:/System + Setup:/Network/HostNames, and
-	 * set-hostname.c sethostname'd the kernel. Disagreement means a
-	 * lower-precedence tier won, or one publish path is broken. */
+	/* When the caller supplied an expected value, enforce a contract
+	 * appropriate to the tier:
+	 *
+	 *   - SCPrefs path (argv[2] absent OR == "PREFS"): prefs_monitor
+	 *     mirrors the SCPrefs ComputerName into Setup:/System +
+	 *     Setup:/Network/HostNames; set-hostname.c then sethostname()s
+	 *     the kernel from Setup:/System. All four surfaces must
+	 *     equal expected.
+	 *
+	 *   - DHCP / PTR / mDNS paths (argv[2] in {"DHCP", "MDNS", ...}):
+	 *     set-hostname.c sethostname()s the kernel from
+	 *     State:/Network/Service/.../DHCP/Option_12 (or the resolved
+	 *     PTR/mDNS name) directly. Setup:/System and Setup:/Network/
+	 *     HostNames are NOT touched — those mirror SCPrefs, which is
+	 *     empty in these rounds by construction. Only assert kernel
+	 *     hostname equals expected. */
 	if (expected != NULL) {
-		if (cn == NULL || hn == NULL || lhn == NULL) {
-			(void)printf("%s: %s path expected Setup keys populated "
-			    "(ComputerName='%s' HostName='%s' "
-			    "LocalHostName='%s')\n", fail_marker, mode_label,
-			    cn ? cn : "<absent>", hn ? hn : "<absent>",
-			    lhn ? lhn : "<absent>");
+		const Boolean uses_setup_mirror = (argc < 3 ||
+		    strcmp(argv[2], "PREFS") == 0);
+
+		if (uses_setup_mirror) {
+			if (cn == NULL || hn == NULL || lhn == NULL) {
+				(void)printf("%s: %s expected Setup keys "
+				    "populated (ComputerName='%s' "
+				    "HostName='%s' LocalHostName='%s')\n",
+				    fail_marker, mode_label,
+				    cn ? cn : "<absent>", hn ? hn : "<absent>",
+				    lhn ? lhn : "<absent>");
+				goto out;
+			}
+			if (strcmp(cn, expected) != 0 ||
+			    strcmp(hn, expected) != 0 ||
+			    strcmp(lhn, expected) != 0 ||
+			    strcmp(kn, expected) != 0) {
+				(void)printf("%s: expected='%s' but "
+				    "ComputerName='%s' HostName='%s' "
+				    "LocalHostName='%s' kernel='%s' — %s did "
+				    "not win\n", fail_marker, expected,
+				    cn, hn, lhn, kn, mode_label);
+				goto out;
+			}
+			(void)printf("%s: hostname='%s' (%s; Setup:/System "
+			    "+ Setup:/Network/HostNames + kernel all agree)\n",
+			    ok_marker, expected, mode_label);
+			rc = 0;
 			goto out;
 		}
-		if (strcmp(cn, expected) != 0 || strcmp(hn, expected) != 0 ||
-		    strcmp(lhn, expected) != 0 || strcmp(kn, expected) != 0) {
-			(void)printf("%s: expected='%s' but ComputerName='%s' "
-			    "HostName='%s' LocalHostName='%s' kernel='%s' — "
-			    "%s did not win (lower-precedence tier fired?)\n",
-			    fail_marker, expected, cn, hn, lhn, kn, mode_label);
+
+		/* Engine-direct tier (DHCP / PTR / mDNS): kernel-only. */
+		if (strcmp(kn, expected) != 0) {
+			(void)printf("%s: expected kernel='%s' but kernel='%s' "
+			    "— %s did not win (lower-precedence tier fired?)\n",
+			    fail_marker, expected, kn, mode_label);
 			goto out;
 		}
-		(void)printf("%s: hostname='%s' (%s; "
-		    "Setup:/System + Setup:/Network/HostNames + kernel "
-		    "all agree)\n", ok_marker, expected, mode_label);
+		(void)printf("%s: hostname='%s' (%s; kernel sethostname'd "
+		    "directly by engine; Setup:/System left empty per "
+		    "Apple-shape SCPrefs-mirroring)\n",
+		    ok_marker, expected, mode_label);
 		rc = 0;
 		goto out;
 	}
