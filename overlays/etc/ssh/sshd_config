@@ -18,17 +18,25 @@ HostKey /etc/ssh/ssh_host_ed25519_key
 HostKey /etc/ssh/ssh_host_rsa_key
 HostKey /etc/ssh/ssh_host_ecdsa_key
 
-# Root login + password auth for diagnosis.
+# Root login + EMPTY-PASSWORD auth for hands-off diagnosis.
+#
+# !!! WIDE OPEN !!! With the empty root hash in /etc/master.passwd this
+# lets anyone on the same network root the box with no credentials. Only
+# acceptable for a throwaway diagnosis image on a trusted lab network —
+# tighten (key-only + PermitRootLogin prohibit-password) before this
+# image is used anywhere real.
+#
+# PermitEmptyPasswords only takes effect with UsePAM no: under UsePAM yes
+# our pam_unix (no `nullok`) rejects empty passwords regardless. So PAM
+# is off here and sshd's own password path honors the empty root hash —
+# no console `passwd root` needed. (You still get a "password:" prompt;
+# just press Enter. For a truly promptless login, add a key to
+# /root/.ssh/authorized_keys instead.)
 PermitRootLogin yes
 PasswordAuthentication yes
-KbdInteractiveAuthentication yes
-PermitEmptyPasswords no
+PermitEmptyPasswords yes
 PubkeyAuthentication yes
-
-# Authenticate through the vendored Apple PAM stack. /etc/pam.d/sshd
-# references only modules we ship (pam_unix / pam_nologin / pam_uwtmp);
-# the pam_xdg RunAtLoad race that bit hostnamed/getty does not apply.
-UsePAM yes
+UsePAM no
 
 # Log to the AUTH facility (captured by syslogd / the console log).
 SyslogFacility AUTH
