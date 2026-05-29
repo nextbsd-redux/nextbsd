@@ -15,4 +15,18 @@
 # more robust shape for a rescue/diagnosis shell.
 set -e
 /usr/bin/ssh-keygen -A
+
+# Advertise sshd over Bonjour (_ssh._tcp) before handing off to sshd.
+# This also makes mDNSResponder publish the host's <name>.local address
+# record, which it otherwise withholds on a box with no registered
+# services — so the box becomes reachable by <name>.local. The helper
+# watches our pid (we exec sshd below, so it becomes its parent) and
+# exits when sshd does, keeping the advertisement tied to sshd. It is
+# backgrounded and guarded so a missing/failed helper never blocks the
+# rescue shell. (.home.local / the bare hostname resolve via the router
+# off DHCP, independent of this — see ipconfigd.)
+if [ -x /usr/libexec/sshd-mdns-register ]; then
+	/usr/libexec/sshd-mdns-register &
+fi
+
 exec /usr/sbin/sshd -D
