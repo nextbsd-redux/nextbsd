@@ -649,21 +649,18 @@ load_hostname(dispatch_queue_t queue)
 	}
 	fprintf(stderr, "vendored/load_hostname: post-SetDispatchQueue\n"); fflush(stderr);
 
-	/* watch for primary service/interface and DNS configuration changes */
-	notify_handler = ^(int token){
-#pragma unused(token)
-		update_hostname(store, NULL, NULL);
-	};
-	fprintf(stderr, "vendored/load_hostname: pre-notify_register_dispatch\n"); fflush(stderr);
-	status = notify_register_dispatch(_SC_NOTIFY_NETWORK_CHANGE,
-					  &notify_token,
-					  queue,
-					  notify_handler);
-	fprintf(stderr, "vendored/load_hostname: post-notify_register_dispatch status=%u\n", status); fflush(stderr);
-	if (status != NOTIFY_STATUS_OK) {
-		my_log(LOG_ERR, "notify_register_dispatch() failed: %u", status);
-		goto error;
-	}
+	/* freebsd-launchd-mach carry (bring-up): the
+	 * notify_register_dispatch call kills the daemon during iter-3c
+	 * bring-up — likely a libnotify+dispatch_queue interaction bug.
+	 * SKIP it for now; SCDS subscriptions above still drive the
+	 * decision engine on every state change. The notify(3) token is
+	 * an OPTIMIZATION layer ("react quickly to network-config events")
+	 * not the primary trigger. Re-enable once the libnotify issue
+	 * is diagnosed (TODO follow-up). */
+	(void)notify_handler;
+	(void)notify_token;
+	(void)status;
+	fprintf(stderr, "vendored/load_hostname: skipped notify_register_dispatch (bring-up workaround)\n"); fflush(stderr);
 	fprintf(stderr, "vendored/load_hostname: returning normally\n"); fflush(stderr);
 
 	return;
