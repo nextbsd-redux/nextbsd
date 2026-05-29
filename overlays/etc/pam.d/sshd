@@ -1,19 +1,21 @@
 # /etc/pam.d/sshd — sshd(8) SSH login.
 #
-# Apple-source PAM port iter 3 (issue #97). Drops vs FreeBSD's
-# stock pam.d/sshd:
-#   pam_login_access  (use sshd_config AllowUsers/DenyUsers instead)
-#   pam_ssh           (ssh-agent works directly without PAM glue)
+# !!! TEMPORARY WIDE-OPEN DIAGNOSIS CONFIG — REVERT BEFORE REAL USE !!!
+#
+# Every facility is pam_permit.so, so sshd's keyboard-interactive auth
+# succeeds with ZERO prompts: `ssh root@host` drops straight to a root
+# shell with no password and no key. This is zero-credential root for
+# anyone who can reach port 22 — acceptable ONLY on a trusted local test
+# LAN, for diagnosing boot/network issues off the slow console.
+#
+# To restore security, revert this file to the Apple-source PAM stack
+# (issue #97) and flip sshd_config back to a real policy:
+#   auth     required  pam_unix.so   no_warn try_first_pass
+#   account  required  pam_unix.so
+#   session  required  pam_uwtmp.so
+#   password required  pam_unix.so   no_warn try_first_pass
 
-# auth
-auth		required	pam_unix.so		no_warn try_first_pass
-
-# account
-account		required	pam_nologin.so
-account		required	pam_unix.so
-
-# session — pam_uwtmp for utmp/wtmp accounting (matches login/su).
-session		required	pam_uwtmp.so
-
-# password
-password	required	pam_unix.so		no_warn try_first_pass
+auth		required	pam_permit.so
+account		required	pam_permit.so
+session		required	pam_permit.so
+password	required	pam_permit.so

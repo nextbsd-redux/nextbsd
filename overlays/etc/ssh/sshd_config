@@ -5,10 +5,9 @@
 # DIAGNOSIS config, deliberately permissive; tighten it (key-only,
 # PermitRootLogin prohibit-password) once key-based access is set up.
 #
-# Flow: root ships with an empty password (see /etc/master.passwd), and
-# PermitEmptyPasswords is no — so the box is NOT remotely reachable until
-# you log in on the console and run `passwd root`. After that, password
-# login over SSH works.
+# Flow: keyboard-interactive auth is backed by pam_permit (see
+# /etc/pam.d/sshd), so `ssh root@host` drops straight to a root shell —
+# no password, no key, no prompt. WIDE OPEN; see the warning below.
 #
 # Host keys are generated on first boot by the launchd wrapper
 # /usr/libexec/sshd-keygen-wrapper (no rc.d on this image to do it).
@@ -18,25 +17,21 @@ HostKey /etc/ssh/ssh_host_ed25519_key
 HostKey /etc/ssh/ssh_host_rsa_key
 HostKey /etc/ssh/ssh_host_ecdsa_key
 
-# Root login + EMPTY-PASSWORD auth for hands-off diagnosis.
+# Root login — TEMPORARY WIDE-OPEN DIAGNOSIS CONFIG. REVERT BEFORE REAL USE.
 #
-# !!! WIDE OPEN !!! With the empty root hash in /etc/master.passwd this
-# lets anyone on the same network root the box with no credentials. Only
-# acceptable for a throwaway diagnosis image on a trusted lab network —
-# tighten (key-only + PermitRootLogin prohibit-password) before this
-# image is used anywhere real.
+# !!! ZERO-CREDENTIAL ROOT !!! keyboard-interactive auth runs the
+# /etc/pam.d/sshd stack, which is all pam_permit.so — it succeeds with no
+# prompts, so anyone who can reach port 22 gets an instant root shell with
+# no password and no key. Acceptable ONLY on a trusted local test LAN.
 #
-# PermitEmptyPasswords only takes effect with UsePAM no: under UsePAM yes
-# our pam_unix (no `nullok`) rejects empty passwords regardless. So PAM
-# is off here and sshd's own password path honors the empty root hash —
-# no console `passwd root` needed. (You still get a "password:" prompt;
-# just press Enter. For a truly promptless login, add a key to
-# /root/.ssh/authorized_keys instead.)
+# To restore security: revert /etc/pam.d/sshd to the Apple-PAM stack
+# (pam_unix / pam_uwtmp) and set a real policy here (ideally key-only +
+# PermitRootLogin prohibit-password).
 PermitRootLogin yes
-PasswordAuthentication yes
-PermitEmptyPasswords yes
+UsePAM yes
+KbdInteractiveAuthentication yes
+PasswordAuthentication no
 PubkeyAuthentication yes
-UsePAM no
 
 # Log to the AUTH facility (captured by syslogd / the console log).
 SyslogFacility AUTH
