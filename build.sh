@@ -2404,6 +2404,72 @@ if [ -n "$RUNTIME_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
 fi
 
 #
+# 3z. OpenSSH (built from source, Apple track) — remote root shell for
+#     diagnosing boot/network issues that are hard to read off the slow
+#     framebuffer console. OpenSSH is third-party upstream (Apple ships
+#     but does not author it), so it's fetched+cached in distfiles like
+#     src.txz rather than vendored in git. Links the rootfs's
+#     FreeBSD-openssl / FreeBSD-zlib (pkglist-base.txt) and our vendored
+#     libpam.so.6 (src/OpenPAM); /etc/pam.d/sshd is already in overlays.
+#
+#     Config + launchd plist + first-boot host-key wrapper ship via
+#     overlays/ (etc/ssh/sshd_config, com.openssh.sshd.plist,
+#     usr/libexec/sshd-keygen-wrapper) and are applied at step 4 below,
+#     overwriting OpenSSH's installed defaults.
+#
+#     NOTE: the configure flags below are a first cut. The build runs
+#     natively on the FreeBSD build VM; expect to iterate until sshd /
+#     ssh-keygen link cleanly against the rootfs OpenSSL/PAM. Bump
+#     OPENSSH_VER as upstream moves.
+#
+OPENSSH_VER=9.9p2
+OPENSSH_TARBALL="openssh-${OPENSSH_VER}.tar.gz"
+OPENSSH_URL="https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/${OPENSSH_TARBALL}"
+if [ ! -f "$DIST/$OPENSSH_TARBALL" ]; then
+    echo "==> downloading $OPENSSH_TARBALL"
+    fetch -o "$DIST/$OPENSSH_TARBALL" "$OPENSSH_URL"
+fi
+echo "==> building OpenSSH ${OPENSSH_VER} (src/openssh, Apple track)"
+rm -rf "$WORK/openssh-${OPENSSH_VER}"
+tar -xzf "$DIST/$OPENSSH_TARBALL" -C "$WORK"
+(
+    cd "$WORK/openssh-${OPENSSH_VER}"
+    # Build against the build host's base OpenSSL / zlib / PAM. The build
+    # VM is FreeBSD at the same release as the image's pkgbase, so the
+    # sonames the binaries link match what the image ships; at runtime the
+    # image resolves libcrypto/libssl/libz/libpam.so.6 from its own
+    # /usr/lib (libpam.so.6 = our vendored Apple OpenPAM — the PAM
+    # application API sshd uses is standard across implementations).
+    # configure autodetects base OpenSSL in /usr, so no --with-ssl-dir.
+    ./configure \
+        --prefix=/usr \
+        --sysconfdir=/etc/ssh \
+        --with-pam \
+        --with-privsep-path=/var/empty \
+        --with-privsep-user=sshd \
+        --with-mantype=doc
+    make
+    # install-nokeys: install binaries/config but DON'T generate host
+    # keys — the first-boot wrapper (overlays/usr/libexec/
+    # sshd-keygen-wrapper) does that on the target instead.
+    make install-nokeys DESTDIR="$WORK/rootfs"
+)
+test -x "$WORK/rootfs/usr/sbin/sshd" \
+    || { echo "FAIL: /usr/sbin/sshd not installed or not executable"; exit 1; }
+test -x "$WORK/rootfs/usr/bin/ssh-keygen" \
+    || { echo "FAIL: /usr/bin/ssh-keygen not installed or not executable"; exit 1; }
+echo "==> OpenSSH built + installed (sshd, ssh, ssh-keygen)"
+
+# /var/empty must exist, be root-owned, and NOT be group/world writable
+# or sshd refuses it for privsep. It already exists in the rootfs
+# (base-provided, root-owned 0755 — exactly what sshd wants) and OpenSSH's
+# `make install-nokeys` re-creates it, so we do NOT chmod it: a chmod by
+# the non-root build user fails EPERM and aborts the build. Belt-and-
+# braces ensure it exists; never fatal. (sshd privsep user is in
+# overlays/etc/master.passwd.)
+mkdir -p "$WORK/rootfs/var/empty" 2>/dev/null || true
+
+#
 # 4. apply local overlays (etc/rc.conf, etc/motd.template,
 #    /usr/tests/freebsd-launchd-mach/, ...). No "slim" rm -rf step:
 #    pkg curation owns rootfs content end-to-end. If something

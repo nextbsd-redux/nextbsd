@@ -1,0 +1,40 @@
+# /etc/ssh/sshd_config — freebsd-launchd-mach diagnosis access.
+#
+# Purpose: give a remote root shell for diagnosing boot/network issues
+# that are hard to read off the (slow, framebuffer) console. This is a
+# DIAGNOSIS config, deliberately permissive; tighten it (key-only,
+# PermitRootLogin prohibit-password) once key-based access is set up.
+#
+# Flow: keyboard-interactive auth is backed by pam_permit (see
+# /etc/pam.d/sshd), so `ssh root@host` drops straight to a root shell —
+# no password, no key, no prompt. WIDE OPEN; see the warning below.
+#
+# Host keys are generated on first boot by the launchd wrapper
+# /usr/libexec/sshd-keygen-wrapper (no rc.d on this image to do it).
+
+# Host keys (created on first boot if missing).
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+
+# Root login — TEMPORARY WIDE-OPEN DIAGNOSIS CONFIG. REVERT BEFORE REAL USE.
+#
+# !!! ZERO-CREDENTIAL ROOT !!! keyboard-interactive auth runs the
+# /etc/pam.d/sshd stack, which is all pam_permit.so — it succeeds with no
+# prompts, so anyone who can reach port 22 gets an instant root shell with
+# no password and no key. Acceptable ONLY on a trusted local test LAN.
+#
+# To restore security: revert /etc/pam.d/sshd to the Apple-PAM stack
+# (pam_unix / pam_uwtmp) and set a real policy here (ideally key-only +
+# PermitRootLogin prohibit-password).
+PermitRootLogin yes
+UsePAM yes
+KbdInteractiveAuthentication yes
+PasswordAuthentication no
+PubkeyAuthentication yes
+
+# Log to the AUTH facility (captured by syslogd / the console log).
+SyslogFacility AUTH
+LogLevel INFO
+
+Subsystem	sftp	/usr/libexec/sftp-server

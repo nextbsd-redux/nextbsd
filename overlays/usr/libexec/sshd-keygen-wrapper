@@ -1,0 +1,18 @@
+#!/bin/sh
+# sshd-keygen-wrapper — generate host keys on first boot, then exec sshd.
+#
+# This image runs launchd as PID 1 with NO rc.d, so the usual
+# /etc/rc.d/sshd "keygen" step that creates /etc/ssh/ssh_host_* never
+# runs. com.openssh.sshd.plist points its ProgramArguments here instead.
+#
+# `ssh-keygen -A` creates only the host-key types that are missing, so
+# this is idempotent and near-free on every later boot. We exec sshd -D
+# (foreground) so launchd's KeepAlive tracks the real sshd pid rather
+# than this wrapper.
+#
+# Mirrors Apple's /usr/libexec/sshd-keygen-wrapper, minus the macOS
+# socket-activation (-i) path: we run a standalone daemon, which is the
+# more robust shape for a rescue/diagnosis shell.
+set -e
+/usr/bin/ssh-keygen -A
+exec /usr/sbin/sshd -D
