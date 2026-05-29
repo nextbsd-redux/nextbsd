@@ -33,8 +33,6 @@
  * Plan: https://pkgdemon.github.io/freebsd-hostnamed-plan.html
  */
 
-#include "freebsd-shim/ip_plugin.h"
-
 #include <dispatch/dispatch.h>
 
 #include <signal.h>

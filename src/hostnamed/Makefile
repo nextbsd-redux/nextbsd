@@ -1,9 +1,15 @@
-# hostnamed — freebsd-launchd-mach hostname synthesis + publish daemon.
+# hostnamed — Apple-shape persistent hostname decision daemon
+# (freebsd-launchd-mach iter 3c).
 #
-# iter 1: one-shot daemon. Synthesizes a hostname at boot via kenv +
-# SMBIOS + NIC MAC + kern.hostuuid; publishes to SCDynamicStore +
-# kernel + notifyd. Replaces FreeBSD's "Amnesiac" placeholder when
-# the launchd boot path skips /etc/rc.conf.
+# Sources:
+#   hostnamed.c            — main(), event loop, signal handling, xlog.
+#   prefs_monitor.c        — SCPrefs → SCDS Setup: keys bridge.
+#   freebsd-shim/shim.c    — ip_plugin.h externs, SCPrivate SPI subset,
+#                            freebsd_synthesize_hostname, synthesis
+#                            machinery.
+#   vendored/set-hostname.c — Apple's decision engine, APSL 2.0,
+#                            sync'd from apple-oss-distributions/configd
+#                            Plugins/IPMonitor/set-hostname.c.
 #
 # Build:   cd src/hostnamed && make SYSROOT=/path/to/rootfs
 # Install: make DESTDIR=/path/to/rootfs install
@@ -16,7 +22,7 @@ PROG=		hostnamed
 # NO_MAN=yes alone is insufficient. Same suppression hwregd / configd /
 # ipconfigd use.
 MAN=
-SRCS=		hostnamed.c
+SRCS=		hostnamed.c prefs_monitor.c shim.c set-hostname.c
 
 # WARNS=0: hostnamed.c pulls the CoreFoundation + SystemConfiguration
 # public header tree. At WARNS>0 FreeBSD adds -Wsystem-headers -Werror
@@ -46,13 +52,24 @@ LDFLAGS+=	-Wl,--allow-shlib-undefined
 .endif
 
 # liblaunch / launchd-shims pulled for parity with other daemons even
-# though iter 1 doesn't call bootstrap_check_in — the CF umbrella
+# though hostnamed doesn't call bootstrap_check_in — the CF umbrella
 # transitively wants the same shim availability macros. libnotify
 # freebsd-shims provides os/base.h, which notify.h includes for the
 # Apple os/object.h ABI; notifyd / syslogd take the same -I path.
 CFLAGS+=	-I${.CURDIR}/../launchd/liblaunch
 CFLAGS+=	-I${.CURDIR}/../launchd/freebsd-shims
 CFLAGS+=	-I${.CURDIR}/../Libnotify/freebsd-shims
+
+# freebsd-shim — supplies ip_plugin.h, SCPrivate.h, SCValidation.h,
+# SCDynamicStoreCopyDHCPInfo.h, netdb_async.h that the vendored Apple
+# set-hostname.c expects to find. Listed BEFORE the launchd-shims path
+# so the SCPrivate.h shim wins over any launchctl-era stub at the same
+# include path.
+CFLAGS+=	-I${.CURDIR}/freebsd-shim
+
+.PATH:		${.CURDIR}
+.PATH:		${.CURDIR}/freebsd-shim
+.PATH:		${.CURDIR}/vendored
 
 # -lSystemConfiguration: SCDynamicStoreCreate / SCDynamicStoreSetValue
 # / SCErrorString — the configd publish surface.
