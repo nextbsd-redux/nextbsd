@@ -54,6 +54,17 @@
 #include <SystemConfiguration/SCSchemaDefinitions.h>
 #include <dispatch/dispatch.h>
 #include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+/* mDNSResponder core API for the re-announce path. */
+#include "mDNSEmbeddedAPI.h"		/* mDNS, mDNS_SetFQDN, domainlabel */
+#include "DNSCommon.h"			/* mDNS_Lock / mDNS_Unlock macros */
+
+/* PosixDaemon.c's global mDNS instance — the SCDS callback drives
+ * a re-announce on it whenever Setup:/Network/HostNames or
+ * Setup:/System/ComputerName changes. */
+extern mDNS mDNSStorage;
 
 /* Forward decl. mDNSResponder's logger; defined in mDNSDebug.c via
  * the LogMsg macro. We use plain fprintf(stderr) here to avoid pulling
@@ -62,6 +73,16 @@
 /* Singleton state — the daemon has exactly one SCDS subscriber. */
 static SCDynamicStoreRef	g_store;
 static dispatch_queue_t		g_queue;
+
+/* Debounce timer state. Apple's mDNSMacOSX.c:6534 SetNetworkChanged()
+ * coalesces SCDS bursts via a ~25ms timer before re-running the
+ * recompute path. We mirror that pattern: any SCDS callback schedules
+ * a dispatch_after at +DEBOUNCE_MS; the timer's handler does the
+ * actual SCDS read + label compare + mDNS_SetFQDN. Coalescing keeps
+ * a flurry of prefs_monitor publishes (one per key written) from
+ * triggering N separate re-announces. */
+#define DEBOUNCE_MS	25
+static dispatch_source_t	g_debounce_timer;
 
 static const char *
 key_kind(CFStringRef key)
@@ -76,7 +97,162 @@ key_kind(CFStringRef key)
 	return (buf);
 }
 
-/* SCDS callback — every registered key + pattern routes here. */
+/* Read Setup:/Network/HostNames/LocalHostName into *out, returning
+ * TRUE on success. The fallback chain is SCDS → gethostname(3). */
+static Boolean
+read_local_hostname(SCDynamicStoreRef store, char *out, size_t outsz)
+{
+	CFStringRef key;
+	CFDictionaryRef dict;
+	Boolean ok = FALSE;
+
+	if (store == NULL || out == NULL || outsz == 0)
+		return (FALSE);
+
+	key = SCDynamicStoreKeyCreateHostNames(NULL);
+	if (key != NULL) {
+		dict = SCDynamicStoreCopyValue(store, key);
+		CFRelease(key);
+		if (dict != NULL) {
+			CFStringRef name;
+
+			if (CFGetTypeID(dict) == CFDictionaryGetTypeID()) {
+				name = CFDictionaryGetValue(dict,
+				    kSCPropNetLocalHostName);
+				if (name != NULL &&
+				    CFGetTypeID(name) == CFStringGetTypeID() &&
+				    CFStringGetCString(name, out, outsz,
+				    kCFStringEncodingUTF8) &&
+				    out[0] != '\0')
+					ok = TRUE;
+			}
+			CFRelease(dict);
+		}
+	}
+	if (!ok) {
+		/* Fallback: kernel hostname (launchd PID-1 set this to the
+		 * synth value at early-init; later hostnamed refines it). */
+		if (gethostname(out, outsz) == 0 && out[0] != '\0') {
+			char *dot = strchr(out, '.');
+			if (dot != NULL) *dot = '\0';
+			ok = TRUE;
+		}
+	}
+	return (ok);
+}
+
+/* Read Setup:/System/ComputerName, falling back to LocalHostName. */
+static Boolean
+read_computer_name(SCDynamicStoreRef store, char *out, size_t outsz)
+{
+	CFStringRef key;
+	CFDictionaryRef dict;
+	Boolean ok = FALSE;
+
+	if (store == NULL || out == NULL || outsz == 0)
+		return (FALSE);
+	key = SCDynamicStoreKeyCreateComputerName(NULL);
+	if (key != NULL) {
+		dict = SCDynamicStoreCopyValue(store, key);
+		CFRelease(key);
+		if (dict != NULL) {
+			CFStringRef name;
+			if (CFGetTypeID(dict) == CFDictionaryGetTypeID()) {
+				name = CFDictionaryGetValue(dict,
+				    kSCPropSystemComputerName);
+				if (name != NULL &&
+				    CFGetTypeID(name) == CFStringGetTypeID() &&
+				    CFStringGetCString(name, out, outsz,
+				    kCFStringEncodingUTF8) &&
+				    out[0] != '\0')
+					ok = TRUE;
+			}
+			CFRelease(dict);
+		}
+	}
+	if (!ok)
+		return (read_local_hostname(store, out, outsz));
+	return (ok);
+}
+
+/* Populate a domainlabel from a C string, mirroring mDNSPosix.c:969
+ * GetUserSpecifiedRFC1034ComputerName (truncate at first dot, cap
+ * at MAX_DOMAIN_LABEL). */
+static void
+fill_domainlabel(domainlabel *label, const char *s)
+{
+	int len = 0;
+
+	label->c[0] = 0;
+	if (s == NULL || s[0] == '\0')
+		return;
+	while (len < MAX_DOMAIN_LABEL && s[len] != '\0' && s[len] != '.') {
+		label->c[len + 1] = (mDNSu8)s[len];
+		len++;
+	}
+	label->c[0] = (mDNSu8)len;
+}
+
+/* Debounce-fire handler. Reads the SCDS labels, compares them to the
+ * cached labels on mDNSStorage, and on change calls mDNS_SetFQDN(m)
+ * under mDNS_Lock — Apple's pattern (mDNSMacOSX.c:4239-4246). */
+static void
+mDNSConfigStoreRecompute(void *info)
+{
+	mDNS *const m = &mDNSStorage;
+	char host_cstr[MAX_DOMAIN_LABEL + 1] = "";
+	char nice_cstr[MAX_DOMAIN_LABEL + 1] = "";
+	domainlabel new_host, new_nice;
+	Boolean changed = FALSE;
+
+	(void)info;
+
+	if (!read_local_hostname(g_store, host_cstr, sizeof(host_cstr)))
+		return;
+	if (!read_computer_name(g_store, nice_cstr, sizeof(nice_cstr)))
+		(void)strncpy(nice_cstr, host_cstr, sizeof(nice_cstr) - 1);
+
+	fill_domainlabel(&new_host, host_cstr);
+	fill_domainlabel(&new_nice, nice_cstr);
+
+	if (new_host.c[0] == 0)
+		return;	/* read succeeded but empty label — skip */
+
+	mDNS_Lock(m);
+	if (!SameDomainLabelCS(m->hostlabel.c, new_host.c)) {
+		m->hostlabel = new_host;
+		changed = TRUE;
+	}
+	if (!SameDomainLabelCS(m->nicelabel.c, new_nice.c)) {
+		m->nicelabel = new_nice;
+		changed = TRUE;
+	}
+	if (changed) {
+		(void)fprintf(stderr, "mDNSResponder mDNSConfigStore: "
+		    "hostname change -> hostlabel='%s' nicelabel='%s' — "
+		    "calling mDNS_SetFQDN\n", host_cstr, nice_cstr);
+		(void)fflush(stderr);
+		mDNS_SetFQDN(m);
+	}
+	mDNS_Unlock(m);
+}
+
+/* Schedule (or re-schedule) the debounce-fire timer. Any SCDS
+ * callback within DEBOUNCE_MS coalesces into a single re-announce. */
+static void
+mDNSConfigStoreDebounce(void)
+{
+	if (g_debounce_timer == NULL)
+		return;
+	dispatch_source_set_timer(g_debounce_timer,
+	    dispatch_time(DISPATCH_TIME_NOW,
+	        DEBOUNCE_MS * (uint64_t)NSEC_PER_MSEC),
+	    DISPATCH_TIME_FOREVER, /* one-shot until next schedule */
+	    DEBOUNCE_MS * (uint64_t)NSEC_PER_MSEC / 10);
+}
+
+/* SCDS callback — every registered key + pattern routes here. We log
+ * the change(s) and schedule the debounced recompute. */
 static void
 mDNSConfigStoreCallback(SCDynamicStoreRef store, CFArrayRef changedKeys,
     void *info)
@@ -94,16 +270,8 @@ mDNSConfigStoreCallback(SCDynamicStoreRef store, CFArrayRef changedKeys,
 		(void)fprintf(stderr, "mDNSResponder mDNSConfigStore: "
 		    "key changed -> %s\n", key_kind(key));
 	}
-	/* iter 1: log only. Follow-up iters dispatch:
-	 *   - Pattern State:/Network/Service/.+/IPv4 → walk interface
-	 *     list, open / close mDNS sockets via the same path the
-	 *     routing-socket watcher uses today.
-	 *   - Key State:/Network/HostNames → re-announce Bonjour records
-	 *     under the new LocalHostName.
-	 *   - Key State:/Network/Global/IPv4 → re-pick the default-route
-	 *     interface for unicast DNS-SD fallback.
-	 */
 	(void)fflush(stderr);
+	mDNSConfigStoreDebounce();
 }
 
 /* Build the watch lists per SCDynamicStoreSetNotificationKeys's
@@ -173,6 +341,23 @@ mDNSConfigStoreInit(void)
 		    "dispatch_queue_create failed\n");
 		return (-1);
 	}
+
+	/* One-shot timer used as the 25ms debounce — Apple's
+	 * SetNetworkChanged pattern (mDNSMacOSX.c:6534). Created here
+	 * and re-armed by every SCDS callback; the handler does the
+	 * SCDS read + label compare + mDNS_SetFQDN. */
+	g_debounce_timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,
+	    0, 0, g_queue);
+	if (g_debounce_timer == NULL) {
+		(void)fprintf(stderr, "mDNSResponder mDNSConfigStore: "
+		    "dispatch_source_create(timer) failed\n");
+		return (-1);
+	}
+	dispatch_source_set_event_handler_f(g_debounce_timer,
+	    mDNSConfigStoreRecompute);
+	dispatch_source_set_timer(g_debounce_timer, DISPATCH_TIME_FOREVER,
+	    DISPATCH_TIME_FOREVER, 0);
+	dispatch_activate(g_debounce_timer);
 
 	g_store = SCDynamicStoreCreate(NULL,
 	    CFSTR("com.apple.mDNSResponder.config"),

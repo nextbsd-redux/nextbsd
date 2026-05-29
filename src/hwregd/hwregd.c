@@ -18,19 +18,27 @@
  *
  * Backlog vs. live: at startup the kernel hands hwregd a backlog of
  * `?` events buffered from early boot. kldload'ing those mid-boot
- * wedged the CI boot test — a matched driver's attach() then runs
- * under kernel locks the boot probe still holds (the CI VM's
- * offender was the ICH SMBus controller -> ichsmb). So hwregd waits
- * out a settle window before touching the kernel: for the first
- * HWREGD_SETTLE_SECONDS of uptime, each nomatch is match-and-logged
- * and the claiming module is queued (deduped) in a small in-process
- * list; on the flip to live mode the queue is drained with kldload(2)
- * in one pass, then each subsequent nomatch is kldload'd inline.
- * The window is time-based, not "until devctl goes quiet" — a
- * chronically noisy devctl (e.g. a flaky drive spamming CAM error
- * events) must not pin hwregd in backlog mode forever. By the time
- * the window elapses the kernel's boot-time device probe is done,
- * so the deferred attach()es no longer contend with it.
+ * used to wedge the CI boot test — a matched driver's attach() ran
+ * under kernel locks the boot probe still held (CI offender: ichsmb
+ * for ICH SMBus). The previous workaround was a 60-second wall-clock
+ * settle window after which the queued matches were drained.
+ *
+ * The wall-clock window is gone. FreeBSD has a real signal for this:
+ * the DEV_FREEZE / DEV_THAW ioctls on /dev/devctl (sys/kern/subr_bus.c
+ * 6003-6016), wrapped by libdevctl as devctl_freeze() / devctl_thaw().
+ * /etc/rc.d/devmatch on stock FreeBSD wraps its kldload loop in
+ * `devctl freeze ... devctl thaw` for the same reason: while frozen,
+ * the kernel batches newly-loaded drivers' attach() into a deferred
+ * list (device_do_deferred_actions, subr_bus.c:5699) instead of
+ * running them recursively under the in-flight probe locks. The thaw
+ * then drains them in one pass after the kldload batch is complete —
+ * no more cold-boot probe contention, no wall-clock guess.
+ *
+ * Boot flow now: drain whatever devctl backlog is already queued
+ * (collecting unique module names to load), freeze, kldload each,
+ * thaw — emits HWREG-AUTOLOAD-OK as before. After the initial drain,
+ * hwregd enters live mode and kldload's each hot-plug nomatch inline
+ * (the cold-boot probe is over by then, no freeze/thaw needed).
  *
  * The hints-matching machinery — read_linker_hints / search_hints
  * and the pnpinfo helpers (getint, getstr, pnpval_as_int,
@@ -67,6 +75,7 @@
 #include <sys/sysctl.h>
 
 #include <ctype.h>
+#include <devctl.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -93,12 +102,18 @@
 #define EVENT_LINE_MAX		1024
 
 /*
- * Boot-settle window. hwregd match-and-logs nomatch events for this
- * many seconds after startup, then flips to live mode and kldloads.
- * Long enough to outlast the kernel's boot-time device probe so an
- * autoload never runs a driver attach mid-boot.
+ * Initial-backlog drain quiet window. After reading the devctl
+ * backlog hwregd waits this many milliseconds of no further nomatch
+ * traffic before flipping to live mode + calling devctl_freeze /
+ * kldload / devctl_thaw on the queued modules. 250 ms is empirically
+ * comfortable: long enough that a slow CI VM's per-event read+match
+ * cycle doesn't false-trigger the flip mid-backlog, short enough
+ * that boot delay is bounded. The kernel's freeze/thaw is the real
+ * safety primitive — see file header. This window only times the
+ * "we've drained what the kernel queued" handoff, not how long the
+ * kernel's probe takes.
  */
-#define HWREGD_SETTLE_SECONDS	60
+#define HWREGD_BACKLOG_QUIET_MS	250
 
 /* Mach service name hwregd checks in with launchd for its pub/sub bus. */
 #define HWREGD_SERVICE_NAME	"org.freebsd.hwregd"
@@ -173,11 +188,11 @@ static void *hints;
 static void *hints_end;
 
 /*
- * false for the first HWREGD_SETTLE_SECONDS of uptime (the boot-
- * settle window). hwregd kldloads inline only in live mode; matches
- * during the window are logged + queued in deferred_mods[] and then
- * drained in one pass at the flip — see act_on_match() and
- * drain_deferred_loads().
+ * false until the initial devctl backlog is drained. hwregd kldloads
+ * inline only in live mode; matches during the backlog drain are
+ * logged + queued in deferred_mods[] and then drained in one
+ * devctl_freeze + kldload + devctl_thaw pass at the flip — see
+ * act_on_match() and drain_deferred_loads().
  */
 static bool live_mode = false;
 
@@ -440,19 +455,38 @@ act_on_match(const char *mod)
 
 /*
  * Drain the boot-backlog deferred-match queue: kldload(2) each unique
- * module a settle-window nomatch resolved to. Called exactly once at
- * the flip to live mode; the kernel's boot probe is done by then so
- * the driver attach()es no longer contend with it. The function emits
- * the HWREG-AUTOLOAD-OK marker unconditionally (even when the queue
- * is empty — common in QEMU/SLIRP where every CI device already has
- * a built-in driver) so CI can prove the drain ran.
+ * module a backlog nomatch resolved to. Called exactly once at the
+ * flip to live mode.
+ *
+ * Wrapped in devctl_freeze() / devctl_thaw() so the kernel batches
+ * the new drivers' attach() into device_do_deferred_actions
+ * (sys/kern/subr_bus.c:5699) instead of running them recursively
+ * under the in-flight cold-boot probe locks. /etc/rc.d/devmatch
+ * uses the same pattern on stock FreeBSD. If freeze/thaw fail
+ * (typically ENXIO when /dev/devctl isn't writable, or if the kernel
+ * is too old to support DEV_FREEZE — present since FreeBSD 11), fall
+ * back to bare kldload(2): we lose the cascade-batching protection
+ * but the daemon still functions and the failure is logged for
+ * diagnosis.
+ *
+ * Emits HWREG-AUTOLOAD-OK unconditionally (even when the queue is
+ * empty — common in QEMU/SLIRP where every CI device has a built-in
+ * driver) so CI can prove the drain ran.
  */
 static void
 drain_deferred_loads(void)
 {
 	int i, loaded = 0, existing = 0, failed = 0;
+	bool frozen;
 
-	xlog("draining %d deferred boot-backlog match(es)", n_deferred);
+	frozen = (devctl_freeze() == 0);
+	if (!frozen) {
+		xlog("devctl_freeze failed: %s — proceeding without "
+		    "cascade-batching protection", strerror(errno));
+	}
+
+	xlog("draining %d deferred boot-backlog match(es)%s",
+	    n_deferred, frozen ? " under devctl freeze" : "");
 	for (i = 0; i < n_deferred; i++) {
 		if (kldload(deferred_mods[i]) < 0) {
 			if (errno == EEXIST) {
@@ -470,6 +504,12 @@ drain_deferred_loads(void)
 		}
 	}
 	n_deferred = 0;
+
+	if (frozen && devctl_thaw() != 0) {
+		xlog("devctl_thaw failed: %s — kernel may stay frozen "
+		    "until next freeze/thaw cycle", strerror(errno));
+	}
+
 	xlog("HWREG-AUTOLOAD-OK: drained queue "
 	    "(loaded=%d already=%d failed=%d)",
 	    loaded, existing, failed);
@@ -1603,27 +1643,24 @@ main(int argc, char **argv)
 	}
 
 	static char buf[READ_BUF_SIZE];
-	time_t started = time(NULL);
 
 	while (!got_term) {
-		/*
-		 * Flip to live mode once the boot-settle window has elapsed.
-		 * Checked every loop iteration (events or the 5s select
-		 * timeout), so it fires within 5s of the deadline.
-		 */
-		if (!live_mode &&
-		    time(NULL) - started >= HWREGD_SETTLE_SECONDS) {
-			live_mode = true;
-			xlog("boot-settle window (%ds) elapsed — live mode: "
-			    "hot-plug autoload enabled", HWREGD_SETTLE_SECONDS);
-			drain_deferred_loads();
-		}
-
 		fd_set rfds;
 		FD_ZERO(&rfds);
 		FD_SET(fd, &rfds);
 
-		struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
+		/*
+		 * Pre-live (initial backlog drain): use the short
+		 * HWREGD_BACKLOG_QUIET_MS select timeout. When select(2)
+		 * returns 0 (no more events queued), we've drained what the
+		 * kernel had buffered — flip to live mode + freeze/thaw the
+		 * kldload batch. Live mode uses a 5s timeout (idle ticking,
+		 * no urgency).
+		 */
+		struct timeval tv = live_mode
+		    ? (struct timeval){ .tv_sec = 5, .tv_usec = 0 }
+		    : (struct timeval){ .tv_sec = 0,
+		      .tv_usec = HWREGD_BACKLOG_QUIET_MS * 1000 };
 		int r = select(fd + 1, &rfds, NULL, NULL, &tv);
 		if (r < 0) {
 			if (errno == EINTR)
@@ -1631,8 +1668,24 @@ main(int argc, char **argv)
 			xlog("select failed: %s", strerror(errno));
 			break;
 		}
-		if (r == 0)
-			continue;	/* idle tick — settle check is at loop top */
+		if (r == 0) {
+			/*
+			 * Select timed out with no devctl events ready. In
+			 * pre-live mode that's the signal that the kernel's
+			 * boot-time backlog has fully drained through us —
+			 * flip to live mode + freeze/kldload/thaw the queued
+			 * modules. In live mode this is just an idle tick;
+			 * loop back and wait for the next event.
+			 */
+			if (!live_mode) {
+				live_mode = true;
+				xlog("devctl backlog quiet for %dms — live mode: "
+				    "freeze + drain queued kldloads + thaw",
+				    HWREGD_BACKLOG_QUIET_MS);
+				drain_deferred_loads();
+			}
+			continue;
+		}
 		if (FD_ISSET(fd, &rfds)) {
 			ssize_t n = drain_devctl(fd, buf, sizeof(buf));
 			if (n < 0)

@@ -64,7 +64,12 @@ LDFLAGS+=	-Wl,--allow-shlib-undefined
 # -llaunch: bootstrap_check_in + the bootstrap_port global.
 # -lsystem_kernel: mach_msg and the Mach port syscalls.
 # -lxpc: the nvlist API (nvlist_pack / _unpack / ...) for property bags.
-LDADD+=		-llaunch -lsystem_kernel -lpthread -lxpc
+# -ldevctl: devctl_freeze / devctl_thaw — bracket the boot-backlog
+#   kldload pass so the kernel batches deferred attach() calls instead
+#   of recursing into the cold-boot probe. Replaces the wall-clock 60s
+#   settle window. libdevctl ships via srclist-fbsdglue.txt's
+#   lib/libdevctl entry. See hwregd.c file header for the rationale.
+LDADD+=		-llaunch -lsystem_kernel -lpthread -lxpc -ldevctl
 
 BINDIR=		/usr/sbin
 

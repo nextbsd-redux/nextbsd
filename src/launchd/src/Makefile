@@ -47,7 +47,8 @@ SRCS=		launchd.c \
 		kill2.c \
 		ktrace.c \
 		forward_stubs.c \
-		launchd_plist_scan.c
+		launchd_plist_scan.c \
+		launchd_early.c
 
 # MIG-generated stubs. launchd is both client and server for the
 # job / internal / helper subsystems, server-only for mach_exc and

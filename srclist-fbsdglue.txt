@@ -111,6 +111,15 @@ libexec/save-entropy
 lib/ncurses
 lib/libcasper
 lib/libbsm
+# libdevctl: thin wrapper around the DEV_* ioctls on /dev/devctl
+# (devctl_freeze / devctl_thaw / devctl_attach / ...). hwregd uses
+# devctl_freeze + devctl_thaw to bracket its boot-backlog kldload pass
+# — same pattern /etc/rc.d/devmatch uses on stock FreeBSD — so the
+# kernel batches the deferred-attach cascade instead of racing the
+# cold-boot device probe. Replaces hwregd's wall-clock 60-second
+# settle window with a real kernel-side safety primitive. Listed
+# before usr.sbin/devctl below so the .so is installed first.
+lib/libdevctl
 # libmd / libutil / libnv: foundational shlibs owned by FreeBSD-runtime
 #   today. Many other pkgs shlib-depend on them (geom, mtree, pkg-
 #   bootstrap, xz-lib use libmd; geom, mtree use libutil; libcasper

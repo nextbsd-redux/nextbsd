@@ -78,6 +78,7 @@
 #include "vproc_internal.h"
 #include "launch.h"
 #include "launch_internal.h"
+#include "launchd_early.h"
 
 #include "runtime.h"
 #include "core.h"
@@ -310,6 +311,44 @@ main(int argc, char *const *argv)
 		 * launchctl's do_potential_fsck() ahead of the scan).
 		 */
 		launchd_root_make_writable();
+
+		/*
+		 * freebsd-launchd-mach boot-readiness floor — before any
+		 * LaunchDaemon is dispatched:
+		 *
+		 *   - sethostname(synth) so getty's first banner doesn't
+		 *     cache "Amnesiac" (getty/main.c:202 reads gethostname
+		 *     once at startup). hostnamed refines this later via
+		 *     its full SCPrefs > DHCP > PTR > mDNS chain.
+		 *   - open(/dev/klog) so kernel printf() goes to TOLOG only,
+		 *     not /dev/console — stops nd6_dad_timer-style messages
+		 *     bleeding into the login prompt. fd intentionally
+		 *     leaked; we only need logopen() to flip kern.log_open.
+		 *
+		 * Both are best-effort; failures log + boot continues.
+		 */
+		{
+			char synth_name[64] = "";
+			if (launchd_early_sethostname(synth_name,
+			    sizeof(synth_name)) == 0)
+				launchd_syslog(LOG_NOTICE | LOG_CONSOLE,
+				    "early-init: sethostname('%s')",
+				    synth_name);
+			else
+				launchd_syslog(LOG_WARNING | LOG_CONSOLE,
+				    "early-init: sethostname failed: %s",
+				    strerror(errno));
+			if (launchd_early_open_klog() < 0)
+				launchd_syslog(LOG_WARNING | LOG_CONSOLE,
+				    "early-init: open(/dev/klog) failed "
+				    "(kernel printfs may bleed to console): "
+				    "%s", strerror(errno));
+			else
+				launchd_syslog(LOG_NOTICE | LOG_CONSOLE,
+				    "early-init: opened /dev/klog "
+				    "(kernel.log_open=1; console quiet)");
+		}
+
 		launchd_scan_launchdaemons();
 		launchd_syslog(LOG_NOTICE | LOG_CONSOLE,
 		    "post-scan: entering launchd_runtime() event loop");
