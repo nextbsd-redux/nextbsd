@@ -60,17 +60,21 @@ NO_MAN=		yes
 CFLAGS+=	-O2 -pipe -fblocks
 CFLAGS+=	-I${.CURDIR}		# <SystemConfiguration/...> umbrella path
 
-# <servers/bootstrap.h> (bootstrap_look_up + the bootstrap_port global)
-# comes from liblaunch; its bootstrap.h pulls Apple shim headers from
-# launchd/freebsd-shims.
-CFLAGS+=	-I${.CURDIR}/../launchd/liblaunch
-CFLAGS+=	-I${.CURDIR}/../launchd/freebsd-shims
-
+# SYSROOT include path FIRST so real Apple-source headers (dns_sd.h
+# from libdns_sd, used by SCNetworkReachability.c's PTR shim) shadow
+# the empty launchd/freebsd-shims stubs that exist only to satisfy
+# launchctl's dead includes. See user memory [[launchd-shims-shadowing-trap]].
 SYSROOT?=
 .if !empty(SYSROOT)
 CFLAGS+=	-I${SYSROOT}/usr/include
 LDADD+=		-L${SYSROOT}/usr/lib/system
 .endif
+
+# <servers/bootstrap.h> (bootstrap_look_up + the bootstrap_port global)
+# comes from liblaunch; its bootstrap.h pulls Apple shim headers from
+# launchd/freebsd-shims.
+CFLAGS+=	-I${.CURDIR}/../launchd/liblaunch
+CFLAGS+=	-I${.CURDIR}/../launchd/freebsd-shims
 
 INCS=		SystemConfiguration/SCDynamicStore.h \
 		SystemConfiguration/SCNetworkConfiguration.h \
