@@ -194,6 +194,7 @@ mDNSlocal mStatus MainLoop(mDNS *m) // Loop until we quit.
 // freebsd-launchd-mach iter 2: claim the com.apple.mDNSResponder Mach
 // service before any engine init. See ../mach_bridge.c.
 extern int mDNSResponderMachBridgeInit(void);
+extern int mDNSConfigStoreInit(void);
 
 int main(int argc, char **argv)
 {
@@ -221,6 +222,13 @@ int main(int argc, char **argv)
 
     if (mStatus_NoError == err)
         err = udsserver_init(mDNSNULL, 0);
+
+    // freebsd-launchd-mach: SCDynamicStore subscriber for Apple-shape
+    // network-state notifications (issue #62). Non-fatal — the
+    // routing-socket watcher in mDNSPosix.c stays as the fallback
+    // trigger for interface state until iter 2 wires the SCDS
+    // callback into the actual interface walk.
+    (void)mDNSConfigStoreInit();
 
     Reconfigure(&mDNSStorage);
 

@@ -24,6 +24,8 @@ SRCS=		SCD.c SCDynamicStore.c SCNotify.c SCDMultiple.c SCPreferences.c
 SRCS+=		SCNetworkConfigurationInternal.c SCNetworkInterface.c
 SRCS+=		SCNetworkProtocol.c SCNetworkService.c SCNetworkSet.c
 SRCS+=		SCVLANInterface.c SCBondInterface.c SCBridgeInterface.c
+SRCS+=		SCDynamicStoreKeys.c SCDName.c SCPName.c
+SRCS+=		SCNetworkReachability.c
 
 # configUser.c — MIG-generated config.defs client stubs (same file
 # configd's test clients link). config_wire.c — configd's shared
@@ -58,11 +60,14 @@ NO_MAN=		yes
 CFLAGS+=	-O2 -pipe -fblocks
 CFLAGS+=	-I${.CURDIR}		# <SystemConfiguration/...> umbrella path
 
-# <servers/bootstrap.h> (bootstrap_look_up + the bootstrap_port global)
-# comes from liblaunch; its bootstrap.h pulls Apple shim headers from
-# launchd/freebsd-shims.
-CFLAGS+=	-I${.CURDIR}/../launchd/liblaunch
-CFLAGS+=	-I${.CURDIR}/../launchd/freebsd-shims
+# dns_sd.h source-tree path FIRST so SCNetworkReachability.c can
+# resolve <dns_sd.h> at libSC build time — libdns_sd installs the
+# header to SYSROOT but builds AFTER libSC in build.sh's Phase K
+# order, so SYSROOT alone doesn't carry it. Pointing at the mDNS
+# source tree directly works either way (pre- or post-libdns_sd
+# install) and shadows the launchd-shims/dns_sd.h stub (see user
+# memory [[launchd-shims-shadowing-trap]]).
+CFLAGS+=	-I${.CURDIR}/../mDNSResponder/mDNSShared
 
 SYSROOT?=
 .if !empty(SYSROOT)
@@ -70,9 +75,17 @@ CFLAGS+=	-I${SYSROOT}/usr/include
 LDADD+=		-L${SYSROOT}/usr/lib/system
 .endif
 
+# <servers/bootstrap.h> (bootstrap_look_up + the bootstrap_port global)
+# comes from liblaunch; its bootstrap.h pulls Apple shim headers from
+# launchd/freebsd-shims.
+CFLAGS+=	-I${.CURDIR}/../launchd/liblaunch
+CFLAGS+=	-I${.CURDIR}/../launchd/freebsd-shims
+
 INCS=		SystemConfiguration/SCDynamicStore.h \
 		SystemConfiguration/SCNetworkConfiguration.h \
+		SystemConfiguration/SCNetworkReachability.h \
 		SystemConfiguration/SCPreferences.h \
+		SystemConfiguration/SCSchemaDefinitions.h \
 		SystemConfiguration/SystemConfiguration.h
 INCSDIR=	${PREFIX}/include/SystemConfiguration
 LIBDIR=		${PREFIX}/lib/system
@@ -85,6 +98,13 @@ LIBDIR=		${PREFIX}/lib/system
 # handlers are blocks (-fblocks).
 LDADD+=		-lCoreFoundation -ldispatch -lBlocksRuntime
 LDADD+=		-lsystem_kernel -llaunch -lpthread
+# SCNetworkReachability.c calls into libdns_sd (DNSServiceQueryRecord
+# against mDNSResponder) but libdns_sd builds AFTER libSC in
+# build.sh's Phase K order, so we cannot link -ldns_sd here. Leave
+# the libdns_sd symbols as undefined-at-libSC-link-time; consumers
+# (hostnamed's Makefile already does this) link -ldns_sd in their
+# own LDADD which resolves the references at exec-link time.
+LDADD+=		-Wl,--allow-shlib-undefined
 LDADD+=		-Wl,--allow-shlib-undefined
 LDADD+=		-Wl,-rpath,${PREFIX}/lib/system
 

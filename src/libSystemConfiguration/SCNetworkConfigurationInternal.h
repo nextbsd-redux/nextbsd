@@ -14,6 +14,7 @@
 
 #include <SystemConfiguration/SCNetworkConfiguration.h>
 #include <SystemConfiguration/SCPreferences.h>
+#include <SystemConfiguration/SCSchemaDefinitions.h>
 
 /*
  * Reserved preferences-plist keys. The network configuration lives in
@@ -21,21 +22,19 @@
  * service dict carrying an "Interface" entity, a "UserDefinedName", and
  * one sub-dict per configured protocol. A "__INACTIVE__" key marks a
  * service or protocol disabled.
+ *
+ * Schema-shared constants (kSCCompNetwork, kSCCompService, kSCCompGlobal,
+ * kSCEntNetInterface, kSCEntNetIPv4, kSCPropUserDefinedName,
+ * kSCPropNetInterfaceType, kSCPropNetInterfaceDeviceName) now live in
+ * <SystemConfiguration/SCSchemaDefinitions.h> alongside the rest of the
+ * Apple-canonical SCDynamicStore schema; the include above pulls them
+ * in. Only prefs-plist-specific keys stay below.
  */
 #define kSCResvInactive			CFSTR("__INACTIVE__")
 #define kSCPrefNetworkServices		CFSTR("NetworkServices")
 #define kSCPrefSets			CFSTR("Sets")
 #define kSCPrefCurrentSet		CFSTR("CurrentSet")
-#define kSCCompNetwork			CFSTR("Network")
-#define kSCCompService			CFSTR("Service")
-#define kSCCompGlobal			CFSTR("Global")
-#define kSCEntNetInterface		CFSTR("Interface")
-#define kSCEntNetIPv4			CFSTR("IPv4")
-#define kSCPropUserDefinedName		CFSTR("UserDefinedName")
 #define kSCPropNetServiceOrder		CFSTR("ServiceOrder")
-#define kSCPropNetInterfaceType		CFSTR("Type")
-#define kSCPropNetInterfaceDeviceName	CFSTR("DeviceName")
-#define kSCPropNetInterfaceHardware	CFSTR("Hardware")
 
 /*
  * Virtual-interface (Bond / Bridge / VLAN) storage. The virtual

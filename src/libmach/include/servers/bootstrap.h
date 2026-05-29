@@ -53,6 +53,21 @@ typedef const char *cmd_t;
  */
 extern mach_port_t bootstrap_port;
 
+/*
+ * Apple-canonical bootstrap-server status codes. The bootstrap_*
+ * functions return kern_return_t values; these are the well-known
+ * success / "name not registered" / "name already in use" codes
+ * Apple's libbootstrap exposes. Subset our consumers (libSC, the
+ * launchd-port liblaunch) consume.
+ */
+#define BOOTSTRAP_SUCCESS                       0
+#define BOOTSTRAP_NOT_PRIVILEGED                1100
+#define BOOTSTRAP_NAME_IN_USE                   1101
+#define BOOTSTRAP_UNKNOWN_SERVICE               1102
+#define BOOTSTRAP_SERVICE_ACTIVE                1103
+#define BOOTSTRAP_BAD_COUNT                     1104
+#define BOOTSTRAP_NO_MEMORY                     1105
+
 kern_return_t bootstrap_check_in(mach_port_t bp, const name_t name,
     mach_port_t *port);
 

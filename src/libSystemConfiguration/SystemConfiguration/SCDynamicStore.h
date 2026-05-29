@@ -262,6 +262,86 @@ SCDynamicStoreCreateRunLoopSource (CFAllocatorRef		allocator,
 				   CFIndex			order);
 
 /*!
+	@function SCDynamicStoreKeyCreateComputerName
+	@discussion Returns the canonical SCDynamicStore key for the
+		Setup:/System dict (carries ComputerName + ComputerName
+		Encoding). Caller releases the returned CFStringRef.
+ */
+CFStringRef
+SCDynamicStoreKeyCreateComputerName	(CFAllocatorRef			allocator);
+
+/*!
+	@function SCDynamicStoreKeyCreateHostNames
+	@discussion Returns the canonical SCDynamicStore key for the
+		Setup:/Network/HostNames dict (HostName + LocalHostName).
+		Caller releases the returned CFStringRef.
+ */
+CFStringRef
+SCDynamicStoreKeyCreateHostNames	(CFAllocatorRef			allocator);
+
+/*!
+	@function SCDynamicStoreKeyCreateNetworkGlobalEntity
+	@discussion Returns the SCDynamicStore key for
+		"<domain>/Network/Global/<entity>". e.g. with
+		kSCDynamicStoreDomainState and kSCEntNetIPv4, returns
+		"State:/Network/Global/IPv4" — the dict that carries
+		PrimaryService + PrimaryInterface, published by ipconfigd.
+ */
+CFStringRef
+SCDynamicStoreKeyCreateNetworkGlobalEntity
+					(CFAllocatorRef			allocator,
+					 CFStringRef			domain,
+					 CFStringRef			entity);
+
+/*!
+	@function SCDynamicStoreKeyCreateNetworkServiceEntity
+	@discussion Returns the SCDynamicStore key for
+		"<domain>/Network/Service/<serviceID>/<entity>".
+		If entity is NULL the trailing "/<entity>" is omitted.
+		Pass kSCCompAnyRegex (=> "[^/]+") for serviceID when
+		building a pattern for SCDynamicStoreSetNotificationKeys.
+ */
+CFStringRef
+SCDynamicStoreKeyCreateNetworkServiceEntity
+					(CFAllocatorRef			allocator,
+					 CFStringRef			domain,
+					 CFStringRef			serviceID,
+					 CFStringRef			entity);
+
+/*!
+	@function SCDynamicStoreKeyCreateNetworkInterfaceEntity
+	@discussion Returns the SCDynamicStore key for
+		"<domain>/Network/Interface/<ifname>/<entity>".
+		Less commonly used than the Service-entity form.
+ */
+CFStringRef
+SCDynamicStoreKeyCreateNetworkInterfaceEntity
+					(CFAllocatorRef			allocator,
+					 CFStringRef			domain,
+					 CFStringRef			ifname,
+					 CFStringRef			entity);
+
+/*!
+	@function SCDynamicStoreCopyLocalHostName
+	@discussion Reads Setup:/Network/HostNames and returns the
+		LocalHostName (Bonjour label, no .local suffix), or NULL
+		if absent. Caller releases.
+ */
+CFStringRef
+SCDynamicStoreCopyLocalHostName	(SCDynamicStoreRef		store);
+
+/*!
+	@function SCDynamicStoreCopyComputerName
+	@discussion Reads Setup:/System and returns the user-visible
+		ComputerName, or NULL if absent. If `nameEncoding` is
+		non-NULL, also writes the stored ComputerNameEncoding
+		(defaults to kCFStringEncodingUTF8). Caller releases.
+ */
+CFStringRef
+SCDynamicStoreCopyComputerName	(SCDynamicStoreRef		store,
+				 CFStringEncoding *		nameEncoding);
+
+/*!
 	@function SCError
 	@discussion Returns the most recent status/error code, as a
 		kSCStatus* value, for the calling thread.

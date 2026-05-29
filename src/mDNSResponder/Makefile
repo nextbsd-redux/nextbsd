@@ -32,6 +32,7 @@ MAN=
 # mach_bridge.c is our Mach-service hook. Each vendored .c is
 # referenced by basename and resolved via .PATH below.
 SRCS=		mach_bridge.c
+SRCS+=		mDNSConfigStore.c
 SRCS+=		PosixDaemon.c mDNSPosix.c mDNSUNP.c
 SRCS+=		mDNS.c DNSDigest.c uDNS.c DNSCommon.c
 SRCS+=		uds_daemon.c mDNSDebug.c dnssd_ipc.c GenLinkedList.c
@@ -52,6 +53,7 @@ NO_MAN=		yes
 # Upstream's CFLAGS_COMMON + the FreeBSD ifeq block at mDNSPosix/Makefile
 # lines 65 + 136-150.
 CFLAGS+=	-O2 -pipe -fwrapv
+CFLAGS+=	-fblocks
 CFLAGS+=	-DPOSIX_BUILD
 CFLAGS+=	-DPID_FILE=\"/var/run/mDNSResponder.pid\"
 CFLAGS+=	-DMDNS_UDS_SERVERPATH=\"/var/run/mDNSResponder\"
@@ -84,7 +86,12 @@ LDFLAGS+=	-Wl,--allow-shlib-undefined
 # -lsystem_kernel: mach_msg + the Mach port syscalls.
 # -lpthread: uds_daemon spawns request threads; mDNSPosix uses
 # pthread_mutex for the daemon-state lock.
+# -lSystemConfiguration + -lCoreFoundation + -ldispatch + -lBlocksRuntime:
+# the SCDynamicStore subscriber in mDNSConfigStore.c uses SCDS +
+# dispatch_queue for Apple-shape network-state notifications. Issue #62.
 LDADD+=		-llaunch -lsystem_kernel -lpthread
+LDADD+=		-lSystemConfiguration -lCoreFoundation -ldispatch
+LDADD+=		-lBlocksRuntime
 
 BINDIR=		/usr/sbin
 

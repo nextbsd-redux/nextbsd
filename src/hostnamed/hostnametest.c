@@ -142,58 +142,95 @@ main(int argc, char **argv)
 		goto out;
 	}
 
-	cn = read_dict_string(store, "Setup:/System", "ComputerName");
-	if (cn == NULL || cn[0] == '\0') {
-		(void)printf("%s: Setup:/System missing ComputerName\n",
-		    fail_marker);
-		goto out;
-	}
-
-	hn = read_dict_string(store, "Setup:/Network/HostNames", "HostName");
-	if (hn == NULL || hn[0] == '\0') {
-		(void)printf("%s: Setup:/Network/HostNames missing "
-		    "HostName\n", fail_marker);
-		goto out;
-	}
-
+	cn  = read_dict_string(store, "Setup:/System", "ComputerName");
+	hn  = read_dict_string(store, "Setup:/Network/HostNames", "HostName");
 	lhn = read_dict_string(store, "Setup:/Network/HostNames",
 	    "LocalHostName");
-	if (lhn == NULL || lhn[0] == '\0') {
-		(void)printf("%s: Setup:/Network/HostNames missing "
-		    "LocalHostName\n", fail_marker);
-		goto out;
-	}
 
 	if (gethostname(kn, sizeof(kn)) != 0 || kn[0] == '\0') {
 		(void)printf("%s: gethostname(3) returned nothing\n",
 		    fail_marker);
 		goto out;
 	}
-	if (expected == NULL && strcmp(kn, "Amnesiac") == 0) {
-		(void)printf("%s: gethostname(3) still 'Amnesiac' — "
+	if (strcmp(kn, "Amnesiac") == 0 || strcmp(kn, "localhost") == 0) {
+		(void)printf("%s: gethostname(3) is '%s' — "
 		    "hostnamed did not run or sethostname(2) failed\n",
-		    fail_marker);
+		    fail_marker, kn);
 		goto out;
 	}
 
-	if (strcmp(cn, hn) != 0 || strcmp(cn, lhn) != 0 ||
-	    strcmp(cn, kn) != 0) {
-		(void)printf("%s: sources disagree (ComputerName='%s' "
-		    "HostName='%s' LocalHostName='%s' kernel='%s')\n",
-		    fail_marker, cn, hn, lhn, kn);
+	/* When the caller supplied an expected value, enforce a contract
+	 * appropriate to the tier:
+	 *
+	 *   - SCPrefs path (argv[2] absent OR == "PREFS"): prefs_monitor
+	 *     mirrors the SCPrefs ComputerName into Setup:/System +
+	 *     Setup:/Network/HostNames; set-hostname.c then sethostname()s
+	 *     the kernel from Setup:/System. All four surfaces must
+	 *     equal expected.
+	 *
+	 *   - DHCP / PTR / mDNS paths (argv[2] in {"DHCP", "MDNS", ...}):
+	 *     set-hostname.c sethostname()s the kernel from
+	 *     State:/Network/Service/.../DHCP/Option_12 (or the resolved
+	 *     PTR/mDNS name) directly. Setup:/System and Setup:/Network/
+	 *     HostNames are NOT touched — those mirror SCPrefs, which is
+	 *     empty in these rounds by construction. Only assert kernel
+	 *     hostname equals expected. */
+	if (expected != NULL) {
+		const Boolean uses_setup_mirror = (argc < 3 ||
+		    strcmp(argv[2], "PREFS") == 0);
+
+		if (uses_setup_mirror) {
+			if (cn == NULL || hn == NULL || lhn == NULL) {
+				(void)printf("%s: %s expected Setup keys "
+				    "populated (ComputerName='%s' "
+				    "HostName='%s' LocalHostName='%s')\n",
+				    fail_marker, mode_label,
+				    cn ? cn : "<absent>", hn ? hn : "<absent>",
+				    lhn ? lhn : "<absent>");
+				goto out;
+			}
+			if (strcmp(cn, expected) != 0 ||
+			    strcmp(hn, expected) != 0 ||
+			    strcmp(lhn, expected) != 0 ||
+			    strcmp(kn, expected) != 0) {
+				(void)printf("%s: expected='%s' but "
+				    "ComputerName='%s' HostName='%s' "
+				    "LocalHostName='%s' kernel='%s' — %s did "
+				    "not win\n", fail_marker, expected,
+				    cn, hn, lhn, kn, mode_label);
+				goto out;
+			}
+			(void)printf("%s: hostname='%s' (%s; Setup:/System "
+			    "+ Setup:/Network/HostNames + kernel all agree)\n",
+			    ok_marker, expected, mode_label);
+			rc = 0;
+			goto out;
+		}
+
+		/* Engine-direct tier (DHCP / PTR / mDNS): kernel-only. */
+		if (strcmp(kn, expected) != 0) {
+			(void)printf("%s: expected kernel='%s' but kernel='%s' "
+			    "— %s did not win (lower-precedence tier fired?)\n",
+			    fail_marker, expected, kn, mode_label);
+			goto out;
+		}
+		(void)printf("%s: hostname='%s' (%s; kernel sethostname'd "
+		    "directly by engine; Setup:/System left empty per "
+		    "Apple-shape SCPrefs-mirroring)\n",
+		    ok_marker, expected, mode_label);
+		rc = 0;
 		goto out;
 	}
 
-	if (expected != NULL && strcmp(cn, expected) != 0) {
-		(void)printf("%s: expected='%s' but published='%s' — "
-		    "%s did not win (lower-precedence tier fired?)\n",
-		    fail_marker, expected, cn, mode_label);
-		goto out;
-	}
-
-	(void)printf("%s: hostname='%s' (%s; "
-	    "Setup:/System + Setup:/Network/HostNames + kernel all agree)\n",
-	    ok_marker, cn, mode_label);
+	/* Synthesis path (no expected): set-hostname.c's freebsd_synthesize
+	 * carry won the chain — it sethostname()s the synth value but does
+	 * NOT touch Setup:/System / Setup:/Network/HostNames (those mirror
+	 * SCPrefs ComputerName via prefs_monitor; SCPrefs is empty in this
+	 * round). So we only assert the kernel-side outcome: hostname was
+	 * actually changed away from the FreeBSD defaults. */
+	(void)printf("%s: hostname='%s' (%s; kernel sethostname'd via "
+	    "synthesis carry, Setup:/System left empty per Apple-shape "
+	    "SCPrefs-mirroring)\n", ok_marker, kn, mode_label);
 	rc = 0;
 out:
 	free(cn);

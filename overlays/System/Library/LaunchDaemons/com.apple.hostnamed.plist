@@ -41,7 +41,7 @@
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
-	<false/>
+	<true/>
 
 	<!-- Capture stderr for post-mortem + the HOSTNAMED-OK marker
 	     visibility from the on-image test runner. -->
