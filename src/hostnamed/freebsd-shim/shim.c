@@ -9,13 +9,13 @@
  *      hostnamed_xlog_cf (the my_log macro target).
  *   2. SCPrivate.h SPI subset — _SC_string_to_sockaddr,
  *      _SC_cfstring_to_cstring, _SC_CFStringIsValidDNSName.
- *   3. freebsd_synthesize_hostname — slug+suffix synthesis for the
- *      "localhost" fallback substitution.
+ *   3. freebsd_synthesize_hostname — slug synthesis (SMBIOS model
+ *      slug, e.g. "ThinkPad-T460s") for the "localhost" fallback
+ *      substitution. No serial/MAC suffix is appended.
  *   4. The synthesis helper machinery itself (derive_slug,
- *      derive_suffix, sanitize_slug, etc.), extracted from
- *      hostnamed.c — the new minimal hostnamed.c calls these for its
- *      boot-time prefs_monitor initial value, and the shim's
- *      freebsd_synthesize_hostname wraps them too.
+ *      sanitize_slug), extracted from hostnamed.c — the new minimal
+ *      hostnamed.c calls these for its boot-time prefs_monitor initial
+ *      value, and the shim's freebsd_synthesize_hostname wraps them too.
  *
  * Everything is in one file so the build picks up a small additional
  * SRCS surface; the individual responsibilities are demarcated by
@@ -56,7 +56,6 @@
 
 #define HOSTNAMED_MAX	64
 #define SLUG_MAX	40
-#define SUFFIX_LEN	6
 
 /* hostnamed's plain-C log surface (definition in hostnamed.c). */
 extern void	xlog(const char *fmt, ...);
@@ -87,7 +86,7 @@ hostnamed_xlog_cf(int level, CFStringRef format, ...)
 }
 
 #pragma mark -
-#pragma mark synthesis machinery (slug + suffix from SMBIOS + MAC)
+#pragma mark synthesis machinery (slug from SMBIOS)
 
 static int
 sh_read_kenv(const char *name, char *out, size_t outsz)
@@ -101,19 +100,6 @@ sh_read_kenv(const char *name, char *out, size_t outsz)
 		return (-1);
 	out[outsz - 1] = '\0';
 	return (n);
-}
-
-static int
-sh_read_sysctl_str(const char *name, char *out, size_t outsz)
-{
-	size_t n = outsz;
-
-	if (sysctlbyname(name, out, &n, NULL, 0) != 0 || n == 0)
-		return (-1);
-	out[outsz - 1] = '\0';
-	if (n > outsz)
-		n = outsz;
-	return ((int)n);
 }
 
 static size_t
@@ -140,113 +126,6 @@ sh_sanitize_slug(char *s)
 		j--;
 	s[j] = '\0';
 	return (j);
-}
-
-static int
-sh_serial_is_placeholder(const char *s)
-{
-	static const char *const placeholders[] = {
-		"", "None", "To be filled by O.E.M.",
-		"To Be Filled By O.E.M.", "Default string", "0",
-		"0123456789", "System Serial Number", "Not Specified",
-		NULL,
-	};
-	int i;
-
-	if (s == NULL)
-		return (1);
-	for (i = 0; placeholders[i] != NULL; i++)
-		if (strcmp(s, placeholders[i]) == 0)
-			return (1);
-	return (0);
-}
-
-static int
-sh_last_alnum_suffix(const char *src, char *out)
-{
-	char filtered[128];
-	size_t i, j, n;
-
-	j = 0;
-	for (i = 0; src[i] != '\0' && j < sizeof(filtered) - 1; i++)
-		if (isalnum((unsigned char)src[i]))
-			filtered[j++] = src[i];
-	filtered[j] = '\0';
-	if (j < SUFFIX_LEN)
-		return (-1);
-	n = j - SUFFIX_LEN;
-	(void)memcpy(out, filtered + n, SUFFIX_LEN);
-	out[SUFFIX_LEN] = '\0';
-	return (0);
-}
-
-static int
-sh_first_nic_mac(uint8_t mac[6])
-{
-	struct ifaddrs *ifa, *p;
-	int ok = -1;
-
-	if (getifaddrs(&ifa) != 0)
-		return (-1);
-	for (p = ifa; p != NULL; p = p->ifa_next) {
-		const struct sockaddr_dl *dl;
-		int zero;
-		size_t i;
-
-		if (p->ifa_addr == NULL ||
-		    p->ifa_addr->sa_family != AF_LINK)
-			continue;
-		dl = (const struct sockaddr_dl *)(const void *)p->ifa_addr;
-		if (dl->sdl_type != IFT_ETHER || dl->sdl_alen != 6)
-			continue;
-		zero = 1;
-		for (i = 0; i < 6; i++)
-			if (((const uint8_t *)LLADDR(dl))[i] != 0) {
-				zero = 0;
-				break;
-			}
-		if (zero)
-			continue;
-		(void)memcpy(mac, LLADDR(dl), 6);
-		ok = 0;
-		break;
-	}
-	freeifaddrs(ifa);
-	return (ok);
-}
-
-static int
-sh_derive_suffix(char out[SUFFIX_LEN + 1])
-{
-	char buf[256];
-	uint8_t mac[6];
-
-	if (sh_read_kenv("smbios.system.serial", buf, sizeof(buf)) > 0 &&
-	    !sh_serial_is_placeholder(buf) &&
-	    sh_last_alnum_suffix(buf, out) == 0)
-		return (0);
-	if (sh_first_nic_mac(mac) == 0) {
-		(void)snprintf(out, SUFFIX_LEN + 1, "%02x%02x%02x",
-		    mac[3], mac[4], mac[5]);
-		return (0);
-	}
-	if (sh_read_sysctl_str("kern.hostuuid", buf, sizeof(buf)) > 0) {
-		char filtered[64];
-		size_t i, j;
-		j = 0;
-		for (i = 0; buf[i] != '\0' && j < sizeof(filtered) - 1; i++) {
-			unsigned char c = (unsigned char)buf[i];
-			if (isxdigit(c))
-				filtered[j++] = (char)tolower(c);
-		}
-		filtered[j] = '\0';
-		if (j >= SUFFIX_LEN) {
-			(void)memcpy(out, filtered, SUFFIX_LEN);
-			out[SUFFIX_LEN] = '\0';
-			return (0);
-		}
-	}
-	return (-1);
 }
 
 static void
@@ -279,16 +158,15 @@ CFStringRef
 freebsd_synthesize_hostname(void)
 {
 	char slug[SLUG_MAX + 1];
-	char suffix[SUFFIX_LEN + 1];
 	char name[HOSTNAMED_MAX];
 
+	/* slug only — derived from the SMBIOS system version/product
+	 * (e.g. "ThinkPad-T460s"). No serial/MAC suffix is appended: the
+	 * name is the bare model slug. sh_derive_slug always yields a
+	 * non-empty value ("freebsd" as a last resort). */
 	sh_derive_slug(slug, sizeof(slug));
-	if (sh_derive_suffix(suffix) != 0) {
-		(void)strncpy(name, "freebsd", sizeof(name) - 1);
-		name[sizeof(name) - 1] = '\0';
-	} else {
-		(void)snprintf(name, sizeof(name), "%s-%s", slug, suffix);
-	}
+	(void)strncpy(name, slug, sizeof(name) - 1);
+	name[sizeof(name) - 1] = '\0';
 	if (strlen(name) > 63)
 		name[63] = '\0';
 	xlog("freebsd_synthesize_hostname -> '%s'", name);

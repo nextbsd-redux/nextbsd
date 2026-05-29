@@ -2460,6 +2460,24 @@ test -x "$WORK/rootfs/usr/bin/ssh-keygen" \
     || { echo "FAIL: /usr/bin/ssh-keygen not installed or not executable"; exit 1; }
 echo "==> OpenSSH built + installed (sshd, ssh, ssh-keygen)"
 
+# sshd-mdns-register — tiny libdns_sd co-process that advertises
+# _ssh._tcp so mDNSResponder publishes the host's <name>.local record
+# (mDNSCore only advertises host records when an AutoTarget service is
+# registered; a headless box otherwise advertises nothing). Started by
+# sshd-keygen-wrapper just before `exec sshd -D` and tied to sshd's
+# lifetime via getppid(). Depends on libdns_sd + dns_sd.h built in
+# Phase K (above). Same link shape as dnssdtest.
+echo "==> building sshd-mdns-register (src/ssh-bonjour, _ssh._tcp advertiser)"
+cc -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/libexec/sshd-mdns-register" \
+   "$ROOT/src/ssh-bonjour/sshd-mdns-register.c" \
+   -ldns_sd
+test -x "$WORK/rootfs/usr/libexec/sshd-mdns-register" \
+    || { echo "FAIL: /usr/libexec/sshd-mdns-register not built"; exit 1; }
+echo "==> sshd-mdns-register built + installed"
+
 # /var/empty must exist, be root-owned, and NOT be group/world writable
 # or sshd refuses it for privsep. It already exists in the rootfs
 # (base-provided, root-owned 0755 — exactly what sshd wants) and OpenSSH's

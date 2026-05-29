@@ -323,6 +323,34 @@ build_dhcp_msg(uint8_t *buf, const uint8_t mac[6], uint32_t xid,
 		}
 	}
 
+	/* 12 host name — advertise our hostname so the DHCP server (the
+	 * home router, typically) registers it in LAN DNS. Without this the
+	 * router has no name to map, so neither the bare hostname nor
+	 * <hostname>.<router-domain> (e.g. .home.local) resolves. RFC 2132
+	 * §3.14: the option carries the client's name; we send the short
+	 * (label-only) form, which is what routers register. Sent on
+	 * DISCOVER and REQUEST (incl. renew); skipped on DECLINE/RELEASE.
+	 * gethostname(3) returns the synthesised name launchd PID-1 set at
+	 * early init (see hostnamed / freebsd_synthesize_hostname). */
+	if (msgtype == DHCP_MTYPE_DISCOVER || msgtype == DHCP_MTYPE_REQUEST) {
+		char hn[256];
+
+		if (gethostname(hn, sizeof(hn)) == 0 && hn[0] != '\0') {
+			char *dot = strchr(hn, '.');
+			size_t hlen;
+
+			if (dot != NULL)
+				*dot = '\0';	/* strip domain — label only */
+			hlen = strlen(hn);
+			if (hlen > 0 && hlen <= 255) {
+				*opt++ = DHCP_OPT_HOST_NAME;
+				*opt++ = (uint8_t)hlen;
+				(void)memcpy(opt, hn, hlen);
+				opt += hlen;
+			}
+		}
+	}
+
 	/* 55 parameter request list — what we want in the OFFER/ACK. */
 	*opt++ = DHCP_OPT_PARAM_REQUEST;
 	*opt++ = 5;
