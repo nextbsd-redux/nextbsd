@@ -101,18 +101,32 @@ set_hostname(CFStringRef hostname)
 		new_name[sizeof(new_name)-1] = '\0';
 		if (strcmp(old_name, new_name) != 0) {
 			if (sethostname(new_name, (int)strlen(new_name)) == 0) {
-				uint32_t	status;
-
 				my_log(LOG_NOTICE,
 				       "setting hostname to \"%s\"",
 				       new_name);
 
-				status = notify_post(HOSTNAME_NOTIFY_KEY);
-				if (status != NOTIFY_STATUS_OK) {
-					my_log(LOG_ERR,
-					       "notify_post(" HOSTNAME_NOTIFY_KEY ") failed: error=%u",
-					       status);
-				}
+				/* freebsd-launchd-mach carry: skip
+				 * notify_post — our /usr/lib/system/libnotify
+				 * lazily resolves mig_get_special_reply_port
+				 * (XNU-only, see task39-path-b-state) and
+				 * aborts the daemon on first call. Same
+				 * libnotify SPI hole that gates the
+				 * notify_register_dispatch skip in
+				 * load_hostname. Without this carry, every
+				 * set_hostname() call (which is every
+				 * winning-tier decision: ROUND 2 SCPrefs,
+				 * ROUND 3 DHCP, ROUND 4 PTR, the synth
+				 * fallback) trips the lazy resolution and
+				 * kills the daemon; launchd KeepAlive
+				 * restarts it but the new instance re-runs
+				 * the same decision and crashes the same
+				 * way — a tight crash loop that the test
+				 * rounds race against. Subscribers that
+				 * watch "com.apple.system.hostname"
+				 * (mDNSResponder #62) react via the SCDS
+				 * Setup:/System change anyway. Status field
+				 * suppressed because dead code without the
+				 * call. */
 			} else {
 				my_log(LOG_ERR,
 				       "sethostname(%s, %lu) failed: %s",
