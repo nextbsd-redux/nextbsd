@@ -1,0 +1,37 @@
+# /etc/ssh/sshd_config — freebsd-launchd-mach diagnosis access.
+#
+# Purpose: give a remote root shell for diagnosing boot/network issues
+# that are hard to read off the (slow, framebuffer) console. This is a
+# DIAGNOSIS config, deliberately permissive; tighten it (key-only,
+# PermitRootLogin prohibit-password) once key-based access is set up.
+#
+# Flow: root ships with an empty password (see /etc/master.passwd), and
+# PermitEmptyPasswords is no — so the box is NOT remotely reachable until
+# you log in on the console and run `passwd root`. After that, password
+# login over SSH works.
+#
+# Host keys are generated on first boot by the launchd wrapper
+# /usr/libexec/sshd-keygen-wrapper (no rc.d on this image to do it).
+
+# Host keys (created on first boot if missing).
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+
+# Root login + password auth for diagnosis.
+PermitRootLogin yes
+PasswordAuthentication yes
+KbdInteractiveAuthentication yes
+PermitEmptyPasswords no
+PubkeyAuthentication yes
+
+# Authenticate through the vendored Apple PAM stack. /etc/pam.d/sshd
+# references only modules we ship (pam_unix / pam_nologin / pam_uwtmp);
+# the pam_xdg RunAtLoad race that bit hostnamed/getty does not apply.
+UsePAM yes
+
+# Log to the AUTH facility (captured by syslogd / the console log).
+SyslogFacility AUTH
+LogLevel INFO
+
+Subsystem	sftp	/usr/libexec/sftp-server

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.openssh.sshd.plist
+
+  Boot-time launchd plist for sshd (OpenSSH, built from source on the
+  Apple track). Provides a remote root shell for diagnosing boot/network
+  issues that are hard to read off the slow framebuffer console.
+
+  ProgramArguments runs /usr/libexec/sshd-keygen-wrapper, which creates
+  any missing host keys (no rc.d on this image) and then execs `sshd -D`.
+
+  RunAtLoad + KeepAlive: start at PID-1 launchd boot, respawn on crash.
+  This is SAFE here even though hostnamed/syslogd had RunAtLoad concerns:
+    - the pam_xdg RunAtLoad race is structurally resolved (pam_xdg is
+      gone from every /etc/pam.d/*; /etc/pam.d/sshd uses only vendored
+      modules), and
+    - the syslogd LAUNCH_KEY_CHECKIN Mach-IPC hang doesn't apply — sshd
+      is not a Mach service and does no bootstrap check-in.
+
+  Apple's real com.openssh.sshd is socket-activated (Sockets + sshd -i).
+  We run standalone instead: a rescue daemon shouldn't depend on launchd
+  socket activation also being correct. Revisit once that's proven.
+
+  NOTE: sshd needs the network interface up with an address. On boots
+  where the hwregd/ipconfigd attach race loses, em0 has no inet and sshd
+  is unreachable — bring it up manually on the console, or land the
+  hwregd replay-on-subscribe fix.
+
+  StandardOut/ErrorPath route the log to /var/log/sshd.stderr — same
+  convention hwregd / configd / ipconfigd / mDNSResponder use.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openssh.sshd</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/libexec/sshd-keygen-wrapper</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/var/log/sshd.stderr</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/sshd.stderr</string>
+    <!-- System session — runs as root before any user logs in. Same
+         scope as configd / hwregd / mDNSResponder / hostnamed. -->
+    <key>LimitLoadToSessionType</key>
+    <string>System</string>
+</dict>
+</plist>
