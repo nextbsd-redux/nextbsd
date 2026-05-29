@@ -33,6 +33,10 @@
  * Plan: https://pkgdemon.github.io/freebsd-hostnamed-plan.html
  */
 
+#include "freebsd-shim/ip_plugin.h"
+
+#include <CoreFoundation/CoreFoundation.h>
+
 #include <dispatch/dispatch.h>
 
 #include <signal.h>
@@ -91,6 +95,31 @@ main(int argc, char **argv)
 	(void)argv;
 
 	xlog("starting (iter 3c: vendored Apple set-hostname.c decision engine)");
+
+	/* Boot-time sethostname so the kernel has a usable hostname
+	 * BEFORE getty fires its banner and BEFORE set-hostname.c's
+	 * decision engine starts. set-hostname.c's update_hostname
+	 * may stay async in PTR cancel/restart loops while ipconfigd
+	 * is renewing DHCP; without this boot-time set, the kernel
+	 * stays at FreeBSD's default "localhost" until the engine
+	 * settles. The synthesized value is also what
+	 * freebsd_synthesize_hostname returns as the engine's
+	 * "localhost" carry fallback. */
+	{
+		CFStringRef synth = freebsd_synthesize_hostname();
+		char buf[256];
+
+		if (synth != NULL && CFStringGetCString(synth, buf,
+		    sizeof(buf), kCFStringEncodingUTF8)) {
+			if (sethostname(buf, (int)strlen(buf)) == 0) {
+				xlog("boot-time sethostname('%s') OK", buf);
+			} else {
+				xlog("boot-time sethostname('%s') FAILED",
+				    buf);
+			}
+		}
+		if (synth != NULL) CFRelease(synth);
+	}
 
 	queue = dispatch_queue_create("com.apple.hostnamed.events", NULL);
 	if (queue == NULL) {
