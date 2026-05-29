@@ -2461,11 +2461,13 @@ test -x "$WORK/rootfs/usr/bin/ssh-keygen" \
 echo "==> OpenSSH built + installed (sshd, ssh, ssh-keygen)"
 
 # /var/empty must exist, be root-owned, and NOT be group/world writable
-# or sshd refuses to use it for privilege separation. base mtree usually
-# creates it; ensure it here since this image is heavily curated. (The
-# sshd privsep user is already in overlays/etc/master.passwd.)
-mkdir -p "$WORK/rootfs/var/empty"
-chmod 0755 "$WORK/rootfs/var/empty"
+# or sshd refuses it for privsep. It already exists in the rootfs
+# (base-provided, root-owned 0755 — exactly what sshd wants) and OpenSSH's
+# `make install-nokeys` re-creates it, so we do NOT chmod it: a chmod by
+# the non-root build user fails EPERM and aborts the build. Belt-and-
+# braces ensure it exists; never fatal. (sshd privsep user is in
+# overlays/etc/master.passwd.)
+mkdir -p "$WORK/rootfs/var/empty" 2>/dev/null || true
 
 #
 # 4. apply local overlays (etc/rc.conf, etc/motd.template,
