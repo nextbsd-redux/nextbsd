@@ -90,17 +90,15 @@ jobs:
       - name: artifact summary
         run: |
           ls -lh out/
-          (cd out && sha256sum *.img.zip *.tar.gz) | tee out/SHA256SUMS
+          (cd out && sha256sum *.img.zip) | tee out/SHA256SUMS
 
       # compression-level: 0 — disk.img.zip is already DEFLATE-9; the
       # outer artifact zip just stores it (no recompression overhead).
-      # The mach.ko tarball is gzip'd; the outer zip stores that too.
       - uses: actions/upload-artifact@v4
         with:
           name: diskimg-${{ matrix.variant }}-${{ matrix.arch }}-${{ matrix.compress }}
           path: |
             out/disk.img.zip
-            out/mach.ko-FreeBSD-${{ matrix.freebsd }}-${{ matrix.arch }}.tar.gz
             out/SHA256SUMS
           compression-level: 0
           retention-days: 14
@@ -184,16 +182,11 @@ jobs:
         run: |
           set -eu
           DATE=$(date -u +%Y%m%d)
-          DATED_IMG="FreeBSD-${{ matrix.variant }}-${{ matrix.arch }}-mach-${DATE}.img.zip"
-          DATED_KMOD="mach.ko-FreeBSD-${{ matrix.freebsd }}-${{ matrix.arch }}-${DATE}.tar.gz"
+          DATED_IMG="NextBSD-${{ matrix.arch }}-mach-${DATE}.img.zip"
           cp out/disk.img.zip "out/${DATED_IMG}"
-          cp "out/mach.ko-FreeBSD-${{ matrix.freebsd }}-${{ matrix.arch }}.tar.gz" \
-             "out/${DATED_KMOD}"
           ( cd out && sha256sum "${DATED_IMG}"  > "${DATED_IMG}.sha256" )
-          ( cd out && sha256sum "${DATED_KMOD}" > "${DATED_KMOD}.sha256" )
-          ls -lh "out/${DATED_IMG}" "out/${DATED_KMOD}"
+          ls -lh "out/${DATED_IMG}"
           echo "dated_img=${DATED_IMG}"   >> "$GITHUB_OUTPUT"
-          echo "dated_kmod=${DATED_KMOD}" >> "$GITHUB_OUTPUT"
 
       # `gh release create` wedges silently on big ISO uploads (single PUT,
       # no chunking, no retry). softprops/action-gh-release uses Octokit's
@@ -228,5 +221,3 @@ jobs:
           files: |
             out/${{ steps.prep.outputs.dated_img }}
             out/${{ steps.prep.outputs.dated_img }}.sha256
-            out/${{ steps.prep.outputs.dated_kmod }}
-            out/${{ steps.prep.outputs.dated_kmod }}.sha256

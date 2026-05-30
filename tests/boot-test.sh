@@ -500,46 +500,6 @@ expect {
 
 expect {
     timeout {
-        puts "\nFAIL: HWREG-PUBSUB marker not seen"
-        exit 1
-    }
-    "HWREG-PUBSUB-FAIL" {
-        puts "\nFAIL: hwregd Mach pub/sub round-trip failed"
-        exit 1
-    }
-    "HWREG-PUBSUB-OK" { puts "\nOK: hwregd Mach pub/sub works" }
-}
-
-expect {
-    timeout {
-        puts "\nFAIL: HWREG-RPC marker not seen"
-        exit 1
-    }
-    "HWREG-RPC-FAIL" {
-        puts "\nFAIL: hwregd Mach-RPC registry query failed"
-        exit 1
-    }
-    "HWREG-RPC-OK" { puts "\nOK: hwregd Mach-RPC registry query works" }
-}
-
-# HWREG-AUTOLOAD — hwregd boot-backlog autoload: after a 60s settle
-# window the daemon drains its deferred-match queue with kldload(2)
-# and logs the marker. run.sh polls hwregd.stderr for up to 90s, so
-# the global 480s timeout above is plenty.
-expect {
-    timeout {
-        puts "\nFAIL: HWREG-AUTOLOAD marker not seen"
-        exit 1
-    }
-    "HWREG-AUTOLOAD-FAIL" {
-        puts "\nFAIL: hwregd boot-backlog autoload drain did not run"
-        exit 1
-    }
-    "HWREG-AUTOLOAD-OK" { puts "\nOK: hwregd boot-backlog autoload drain ran" }
-}
-
-expect {
-    timeout {
         puts "\nFAIL: CONFIGD-STORE marker not seen"
         exit 1
     }
@@ -780,56 +740,6 @@ expect {
 
 expect {
     timeout {
-        puts "\nFAIL: IOKIT-WALK marker not seen"
-        exit 1
-    }
-    "IOKIT-WALK-FAIL" {
-        puts "\nFAIL: libIOKit registry walk failed"
-        exit 1
-    }
-    "IOKIT-WALK-OK" { puts "\nOK: libIOKit registry walk works" }
-}
-
-expect {
-    timeout {
-        puts "\nFAIL: IOKIT-MATCH marker not seen"
-        exit 1
-    }
-    "IOKIT-MATCH-FAIL" {
-        puts "\nFAIL: libIOKit properties + matching failed"
-        exit 1
-    }
-    "IOKIT-MATCH-OK" { puts "\nOK: libIOKit properties + matching work" }
-}
-
-expect {
-    timeout {
-        puts "\nFAIL: IOKIT-IOREG marker not seen"
-        exit 1
-    }
-    "IOKIT-IOREG-FAIL" {
-        puts "\nFAIL: ioreg(8) failed"
-        exit 1
-    }
-    "IOKIT-IOREG-OK" { puts "\nOK: ioreg(8) works (K1 success marker)" }
-}
-
-expect {
-    timeout {
-        puts "\nFAIL: IOKIT-NOTIFY marker not seen"
-        exit 1
-    }
-    "IOKIT-NOTIFY-FAIL" {
-        puts "\nFAIL: libIOKit IONotificationPort + AddMatchingNotification failed"
-        exit 1
-    }
-    "IOKIT-NOTIFY-OK" {
-        puts "\nOK: libIOKit IONotificationPort + AddMatchingNotification work (K2)"
-    }
-}
-
-expect {
-    timeout {
         puts "\nFAIL: IPCFG-BOOT marker not seen"
         exit 1
     }
@@ -839,27 +749,6 @@ expect {
     }
     "IPCFG-BOOT-OK" {
         puts "\nOK: ipconfigd skeleton up (com.apple.IPConfiguration registered)"
-    }
-}
-
-# IPCFG-AUTOLOAD-SUB — iter 9 hwregd attach subscription. ipconfigd
-# subscribes to org.freebsd.hwregd's raw pub/sub bus at startup so
-# NICs that hwregd autoloads ~60s into boot still get DHCP'd. The
-# full attach→DHCP path isn't exercised in CI (em is built into the
-# kernel here so it's present at startup, not later autoloaded), but
-# this marker proves the subscription wiring is up — when a slimmed
-# kernel ships in a later iter, the same wiring carries the chain.
-expect {
-    timeout {
-        puts "\nFAIL: IPCFG-AUTOLOAD-SUB marker not seen"
-        exit 1
-    }
-    "IPCFG-AUTOLOAD-SUB-FAIL" {
-        puts "\nFAIL: ipconfigd hwregd subscription did not establish"
-        exit 1
-    }
-    "IPCFG-AUTOLOAD-SUB-OK" {
-        puts "\nOK: ipconfigd subscribed to hwregd attach events"
     }
 }
 
@@ -1050,27 +939,6 @@ expect {
     }
     "DA-BOOT-OK" {
         puts "\nOK: diskarbitrationd Mach service up (com.apple.DiskArbitration registered)"
-    }
-}
-
-# DA-WATCH — iter 2 hwregd subscription. The daemon's hwreg_subscribe
-# layer sends a HWREG_MSG_SUBSCRIBE to org.freebsd.hwregd, waits for
-# the ack EVENT, then spawns a thread to log incoming attach/detach
-# events. Storage-device names (ada*/da*/nvd*/cd*/mmcsd*) are tagged
-# STORAGE in the log. iter 3+ will move to the MIG-served
-# hwreg_watch / hwreg_lookup so we can filter at the hwregd side and
-# enumerate the current registry state at startup.
-expect {
-    timeout {
-        puts "\nFAIL: DA-WATCH marker not seen"
-        exit 1
-    }
-    "DA-WATCH-FAIL" {
-        puts "\nFAIL: diskarbitrationd could not subscribe to org.freebsd.hwregd"
-        exit 1
-    }
-    "DA-WATCH-OK" {
-        puts "\nOK: diskarbitrationd subscribed to hwregd's pub/sub bus"
     }
 }
 

@@ -2588,32 +2588,6 @@ sha256 "$OUT/disk.img.zip" 2>/dev/null || sha256sum "$OUT/disk.img.zip"
 # the post-build copyback.
 rm -f "$WORK/disk.img" "$WORK/rootfs.ufs" "$WORK/esp.img"
 
-#
-# 12. package mach.ko as a standalone release tarball. Users on a stock
-#     FreeBSD install can fetch this, untar to /, kldload mach, without
-#     building anything.
-#
-echo "==> packaging mach.ko standalone tarball"
-MACHKO_PKG_DIR="$WORK/mach-kmod-pkg"
-MACHKO_BASENAME="mach.ko-FreeBSD-${FREEBSD_VERSION}-${ARCH}"
-mkdir -p "$MACHKO_PKG_DIR/boot/kernel"
-cp "$WORK/rootfs/boot/kernel/mach.ko" "$MACHKO_PKG_DIR/boot/kernel/mach.ko"
-cat > "$MACHKO_PKG_DIR/README" <<EOF
-mach.ko — out-of-tree FreeBSD Mach IPC kernel module.
-
-Built against: FreeBSD ${FREEBSD_VERSION} (${ARCH})
-Built on:      $(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-Install:
-  tar -xJf ${MACHKO_BASENAME}.tar.gz -C /
-  echo 'mach_load="YES"' >> /boot/loader.conf
-  # reboot, or kldload mach
-EOF
-( cd "$MACHKO_PKG_DIR" && tar -czf "$OUT/${MACHKO_BASENAME}.tar.gz" boot README )
-ls -lh "$OUT/${MACHKO_BASENAME}.tar.gz"
-sha256 "$OUT/${MACHKO_BASENAME}.tar.gz" 2>/dev/null || sha256sum "$OUT/${MACHKO_BASENAME}.tar.gz"
-
 echo
 echo "==> disk image:    $(ls -lh "$OUT/disk.img.zip" | awk '{print $5}')  (disk.img.zip, DEFLATE-9)"
-echo "==> mach.ko tarball: $(ls -lh "$OUT/${MACHKO_BASENAME}.tar.gz" | awk '{print $5}')"
 echo "==> DONE"
