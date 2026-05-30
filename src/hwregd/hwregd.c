@@ -1661,25 +1661,42 @@ main(int argc, char **argv)
 	 * (SI_SUB_INT_CONFIG_HOOKS config-hook drain -> root mount ->
 	 * init/launchd) completed before this daemon was launched, so whatever
 	 * /dev/devctl has queued right now IS the complete boot backlog. Drain
-	 * it to empty — read until the O_NONBLOCK fd reports the queue empty
-	 * (drain_devctl() returns 0 on EAGAIN) — matching '?' nomatches into
-	 * the deferred-load list (act_on_match() defers while !live_mode), then
-	 * do the single freeze/kldload/thaw batch. This is an event
-	 * precondition, not a timer: the continuous '!notify DEVFS CDEV CREATE'
-	 * stream that used to starve the quiet window (boot stalled ~60s on
-	 * real hardware, #67) is now irrelevant — we read far faster than it
-	 * arrives, so the queue drains and read() returns EAGAIN promptly.
-	 * Late/hot-plug devices (e.g. async USB) arrive after the flip and are
-	 * kldload'd inline in live mode.
+	 * it to empty, matching '?' nomatches into the deferred-load list
+	 * (act_on_match() defers while !live_mode), then do the single
+	 * freeze/kldload/thaw batch. This is an event precondition, not a
+	 * timer: the continuous '!notify DEVFS CDEV CREATE' stream that used to
+	 * starve the old quiet window (boot stalled ~60s on real hardware, #67)
+	 * is irrelevant — we drain far faster than it arrives, so the queue
+	 * empties promptly. Late/hot-plug devices (e.g. async USB) arrive after
+	 * the flip and are kldload'd inline in live mode.
+	 *
+	 * "Queue empty" is detected with a zero-timeout select() poll, NOT a
+	 * non-blocking read()==EAGAIN: /dev/devctl does not honor O_NONBLOCK on
+	 * its read (read() blocks on an empty queue), so select() readability —
+	 * the same signal the live loop uses — is the portable "anything left
+	 * to drain?" test.
 	 */
 	while (!got_term) {
-		ssize_t n = drain_devctl(fd, buf, sizeof(buf));
-		if (n < 0) {
+		fd_set rfds;
+		struct timeval poll = { .tv_sec = 0, .tv_usec = 0 };
+		int r;
+
+		FD_ZERO(&rfds);
+		FD_SET(fd, &rfds);
+		r = select(fd + 1, &rfds, NULL, NULL, &poll);
+		if (r < 0) {
+			if (errno == EINTR)
+				continue;
+			xlog("select failed: %s", strerror(errno));
 			(void)close(fd);
 			return 1;
 		}
-		if (n == 0)		/* queue empty — boot backlog drained */
+		if (r == 0)		/* nothing ready — kernel queue drained */
 			break;
+		if (drain_devctl(fd, buf, sizeof(buf)) < 0) {
+			(void)close(fd);
+			return 1;
+		}
 	}
 	if (!got_term) {
 		live_mode = true;
