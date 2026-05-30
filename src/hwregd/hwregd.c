@@ -247,8 +247,23 @@ send_event_to(mach_port_t dst, char kind, const char *text)
 	m.kind = kind;
 	strlcpy(m.text, text, sizeof(m.text));
 
-	mr = mach_msg(&m.hdr, MACH_SEND_MSG | MACH_SEND_TIMEOUT,
-	    sizeof(m), 0, MACH_PORT_NULL, 200, MACH_PORT_NULL);
+	/* TEMP INSTRUMENTATION (#67 multiplexor-latency probe): time the
+	 * mach_msg send to confirm whether per-send Mach round-trips through
+	 * our userland multiplexor are what throttle devctl processing. On
+	 * real Mach INVALID_DEST is instant; if these read ~tens of ms we've
+	 * found the bottleneck. Revert before merge. */
+	{
+		struct timespec _t0, _t1;
+		long _us;
+		(void)clock_gettime(CLOCK_MONOTONIC, &_t0);
+		mr = mach_msg(&m.hdr, MACH_SEND_MSG | MACH_SEND_TIMEOUT,
+		    sizeof(m), 0, MACH_PORT_NULL, 200, MACH_PORT_NULL);
+		(void)clock_gettime(CLOCK_MONOTONIC, &_t1);
+		_us = (_t1.tv_sec - _t0.tv_sec) * 1000000L +
+		    (_t1.tv_nsec - _t0.tv_nsec) / 1000L;
+		xlog("MACHSEND-TIMING: dst=0x%x rc=0x%x us=%ld",
+		    (unsigned)dst, (unsigned)mr, _us);
+	}
 	if (mr != MACH_MSG_SUCCESS)
 		xlog("Mach: send to subscriber 0x%x failed: 0x%x",
 		    (unsigned)dst, (unsigned)mr);
