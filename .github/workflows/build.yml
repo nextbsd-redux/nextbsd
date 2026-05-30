@@ -56,6 +56,13 @@ jobs:
           path: distfiles
           key: distfiles-${{ matrix.variant }}-${{ matrix.arch }}-${{ hashFiles('pkglist.txt', format('driverpkgs-{0}.txt', matrix.variant)) }}
 
+      # Compute the datestamp once on the host and pass it into the VM, so
+      # the built file (NextBSD-<arch>-<date>.img.zip), the workflow
+      # artifact name, and the published continuous asset all agree.
+      - name: compute build date
+        id: meta
+        run: echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
       - name: build ISO inside FreeBSD VM
         uses: vmactions/freebsd-vm@v1
         with:
@@ -83,23 +90,27 @@ jobs:
             export FREEBSD_VERSION=${{ matrix.freebsd }}
             export FREEBSD_VARIANT=${{ matrix.variant }}
             export ARCH=${{ matrix.arch }}
+            export IMG_DATE=${{ steps.meta.outputs.date }}
             sh build.sh
 
-      - name: artifact summary
+      - name: checksum + summary
         run: |
           ls -lh out/
-          (cd out && sha256sum *.img.zip) | tee out/SHA256SUMS
+          IMG="NextBSD-${{ matrix.arch }}-${{ steps.meta.outputs.date }}.img.zip"
+          ( cd out && sha256sum "$IMG" > "$IMG.sha256" )
+          cat "out/$IMG.sha256"
 
-      # compression-level: 0 — the NextBSD-<arch>.img.zip is already
-      # DEFLATE-9; the outer artifact zip just stores it (no recompression
-      # overhead). GitHub always wraps the artifact in its own <name>.zip
-      # on download, so the content stays a single .img.zip inside.
+      # compression-level: 0 — the .img.zip is already DEFLATE-9; the outer
+      # artifact wrapper just stores it (no recompression). GitHub always
+      # wraps an uploaded artifact in its own <name>.zip on download, so the
+      # content stays a single dated NextBSD-<arch>-<date>.img.zip inside —
+      # the exact file the release job publishes to `continuous`, no rename.
       - uses: actions/upload-artifact@v4
         with:
-          name: NextBSD-${{ matrix.arch }}-diskimg
+          name: NextBSD-${{ matrix.arch }}-${{ steps.meta.outputs.date }}
           path: |
-            out/NextBSD-${{ matrix.arch }}.img.zip
-            out/SHA256SUMS
+            out/NextBSD-${{ matrix.arch }}-${{ steps.meta.outputs.date }}.img.zip
+            out/NextBSD-${{ matrix.arch }}-${{ steps.meta.outputs.date }}.img.zip.sha256
           compression-level: 0
           retention-days: 14
           if-no-files-found: error
@@ -119,10 +130,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Download whatever the build job produced (the dated diskimg
+      # artifact) and locate the image by glob — avoids threading the
+      # datestamp across jobs.
       - uses: actions/download-artifact@v4
         with:
-          name: NextBSD-${{ matrix.arch }}-diskimg
           path: out/
+          merge-multiple: true
 
       - name: install qemu + expect
         run: |
@@ -132,7 +146,8 @@ jobs:
       - name: boot test
         run: |
           chmod +x tests/boot-test.sh
-          ./tests/boot-test.sh out/NextBSD-${{ matrix.arch }}.img.zip
+          IMG=$(ls out/NextBSD-*.img.zip)
+          ./tests/boot-test.sh "$IMG"
 
       - name: dump [T39/T41] trace from boot log
         if: always()
@@ -142,14 +157,6 @@ jobs:
             grep -E '\[T39-|\[T41' tests/boot.log | head -300 || true
             echo "=== end trace ==="
           fi
-
-      - name: upload boot log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: NextBSD-${{ matrix.arch }}-boot-log
-          path: tests/boot.log
-          if-no-files-found: ignore
 
   release:
     name: release (FreeBSD ${{ matrix.variant }} ${{ matrix.arch }})
@@ -170,21 +177,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pull the dated diskimg artifact as-built — its NextBSD-<arch>-<date>.img.zip
+      # is already the final published name, so there is nothing to rename
+      # or recompute here; publish it straight to `continuous`.
       - uses: actions/download-artifact@v4
         with:
-          name: NextBSD-${{ matrix.arch }}-diskimg
           path: out/
+          merge-multiple: true
 
-      - name: prepare release assets (rename to dated public names)
-        id: prep
-        run: |
-          set -eu
-          DATE=$(date -u +%Y%m%d)
-          DATED_IMG="NextBSD-${{ matrix.arch }}-${DATE}.img.zip"
-          cp "out/NextBSD-${{ matrix.arch }}.img.zip" "out/${DATED_IMG}"
-          ( cd out && sha256sum "${DATED_IMG}"  > "${DATED_IMG}.sha256" )
-          ls -lh "out/${DATED_IMG}"
-          echo "dated_img=${DATED_IMG}"   >> "$GITHUB_OUTPUT"
+      - name: list release assets
+        run: ls -lh out/NextBSD-*.img.zip out/NextBSD-*.img.zip.sha256
 
       # `gh release create` wedges silently on big ISO uploads (single PUT,
       # no chunking, no retry). softprops/action-gh-release uses Octokit's
@@ -217,5 +219,5 @@ jobs:
           target_commitish: ${{ github.sha }}
           fail_on_unmatched_files: true
           files: |
-            out/${{ steps.prep.outputs.dated_img }}
-            out/${{ steps.prep.outputs.dated_img }}.sha256
+            out/NextBSD-*.img.zip
+            out/NextBSD-*.img.zip.sha256

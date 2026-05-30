@@ -3,7 +3,7 @@
 # + Mach IPC port. The image has a read-write UFS root (no cd9660, no
 # uzip, no unionfs): the kernel mounts the freebsd-ufs partition
 # directly and execs /sbin/launchd as PID 1. Boots BIOS and UEFI.
-# Runs on FreeBSD (host or vmactions VM). Produces out/NextBSD-<arch>.img.zip.
+# Runs on FreeBSD (host or vmactions VM). Produces out/NextBSD-<arch>-<date>.img.zip.
 #
 # Base comes from pkgbase (pkg.freebsd.org/FreeBSD:<major>:<arch>/
 # base_latest), curated via pkglist-base.txt — no full base.txz /
@@ -15,6 +15,11 @@ set -eu
 : "${FREEBSD_VERSION:=15.0}"
 : "${LABEL:=LIVECD}"
 ARCH=${ARCH:-amd64}
+# Datestamp baked into the image name so the build output IS the final
+# published name (NextBSD-<arch>-<date>.img.zip) — no rename in the
+# release job. CI passes IMG_DATE so the workflow artifact name and the
+# file agree; a local build defaults to today.
+: "${IMG_DATE:=$(date -u +%Y%m%d)}"
 
 # pkgbase ABI: pkg.freebsd.org organizes repos under FreeBSD:<major>:<arch>.
 # Strip any minor version (15.0 -> 15) so the URL resolves.
@@ -2564,11 +2569,13 @@ echo "==> mkimg: GPT disk image (BIOS + UEFI)"
 for f in boot/pmbr boot/gptboot; do
     [ -f "$WORK/rootfs/$f" ] || { echo "ERROR: rootfs/$f missing" >&2; exit 1; }
 done
-# NextBSD-branded image name. The zip member matches the basename so a
-# user who unzips the published NextBSD-${ARCH}-DATE.img.zip gets a
-# clearly-named raw image (NextBSD-${ARCH}.img), not a generic disk.img.
-# boot-test.sh discovers the member by its .img extension.
-IMG_NAME="NextBSD-${ARCH}.img"
+# NextBSD-branded, datestamped image name — identical to the published
+# continuous asset, so the build output is uploaded + published as-is
+# (no rename). The zip member matches the basename so unzipping
+# NextBSD-${ARCH}-${IMG_DATE}.img.zip yields a clearly-named raw image
+# (NextBSD-${ARCH}-${IMG_DATE}.img). boot-test.sh discovers the member
+# by its .img extension.
+IMG_NAME="NextBSD-${ARCH}-${IMG_DATE}.img"
 mkimg -s gpt -f raw \
     -b "$WORK/rootfs/boot/pmbr" \
     -p freebsd-boot/bootfs:="$WORK/rootfs/boot/gptboot" \
