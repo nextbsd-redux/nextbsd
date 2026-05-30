@@ -17,16 +17,19 @@ LOG=tests/boot.log
 EXP=tests/boot.exp
 
 # Accept the published image in any of: raw .img, .zip (current
-# published format — single-entry DEFLATE-9 archive containing
-# disk.img), .gz (legacy). Extract/decompress to a raw .img that
-# qemu can boot as a disk.
+# published format — single-entry DEFLATE-9 archive containing the
+# NextBSD-<arch>.img raw image), .gz (legacy). Extract/decompress to a
+# raw .img that qemu can boot as a disk.
 case "$IMG" in
 *.zip)
     RAW=tests/disk.img
     echo "==> extracting $IMG -> $RAW"
-    # -p: write to stdout; pick the first (and only) entry by name.
-    # -o on unzip is overwrite — avoid the interactive prompt.
-    unzip -p "$IMG" disk.img > "$RAW"
+    # Discover the single .img member by extension (it's named
+    # NextBSD-<arch>.img) rather than hardcoding a fixed entry name.
+    # -p: write the member to stdout.
+    MEMBER=$(unzip -Z1 "$IMG" | grep -E '\.img$' | head -1)
+    [ -n "$MEMBER" ] || { echo "FAIL: no .img member in $IMG" >&2; exit 1; }
+    unzip -p "$IMG" "$MEMBER" > "$RAW"
     IMG=$RAW
     ;;
 *.gz)

@@ -3,7 +3,7 @@
 # + Mach IPC port. The image has a read-write UFS root (no cd9660, no
 # uzip, no unionfs): the kernel mounts the freebsd-ufs partition
 # directly and execs /sbin/launchd as PID 1. Boots BIOS and UEFI.
-# Runs on FreeBSD (host or vmactions VM). Produces out/disk.img.zip.
+# Runs on FreeBSD (host or vmactions VM). Produces out/NextBSD-<arch>.img.zip.
 #
 # Base comes from pkgbase (pkg.freebsd.org/FreeBSD:<major>:<arch>/
 # base_latest), curated via pkglist-base.txt — no full base.txz /
@@ -13,7 +13,6 @@
 set -eu
 
 : "${FREEBSD_VERSION:=15.0}"
-: "${COMPRESS:=zstd}"
 : "${LABEL:=LIVECD}"
 ARCH=${ARCH:-amd64}
 
@@ -39,7 +38,7 @@ mkdir -p "$WORK" "$OUT" "$DIST"
 chflags -R noschg "$WORK" 2>/dev/null || true
 rm -rf "$WORK"/* "$OUT"/*
 
-echo "==> build: FreeBSD $FREEBSD_VERSION ($ARCH), compress=$COMPRESS, variant=${FREEBSD_VARIANT:-${FREEBSD_VERSION}-RELEASE}"
+echo "==> build: FreeBSD $FREEBSD_VERSION ($ARCH), variant=${FREEBSD_VARIANT:-${FREEBSD_VERSION}-RELEASE}"
 
 #
 # 1. fetch src.txz.
@@ -2565,29 +2564,34 @@ echo "==> mkimg: GPT disk image (BIOS + UEFI)"
 for f in boot/pmbr boot/gptboot; do
     [ -f "$WORK/rootfs/$f" ] || { echo "ERROR: rootfs/$f missing" >&2; exit 1; }
 done
+# NextBSD-branded image name. The zip member matches the basename so a
+# user who unzips the published NextBSD-${ARCH}-DATE.img.zip gets a
+# clearly-named raw image (NextBSD-${ARCH}.img), not a generic disk.img.
+# boot-test.sh discovers the member by its .img extension.
+IMG_NAME="NextBSD-${ARCH}.img"
 mkimg -s gpt -f raw \
     -b "$WORK/rootfs/boot/pmbr" \
     -p freebsd-boot/bootfs:="$WORK/rootfs/boot/gptboot" \
     -p efi/efiboot0:="$WORK/esp.img" \
     -p freebsd-ufs/ROOTFS:="$WORK/rootfs.ufs" \
-    -o "$WORK/disk.img"
-ls -lh "$WORK/disk.img"
+    -o "$WORK/$IMG_NAME"
+ls -lh "$WORK/$IMG_NAME"
 
 # 6d. compress for publishing — the sparse rw headroom compresses away.
-#     Ship disk.img.zip: unzip then dd to storage, or boot directly in
+#     Ship the .img.zip: unzip then dd to storage, or boot directly in
 #     qemu / VirtualBox / any hypervisor. Zip (vs. gz) opens natively on
 #     every platform (Windows Explorer, macOS Finder, Linux file
 #     managers) without requiring a separate decompressor; size is
 #     within ~0.1% of gz since both use DEFLATE under the hood.
 echo "==> zip disk image"
-(cd "$WORK" && zip -9 "$OUT/disk.img.zip" disk.img)
-ls -lh "$OUT/disk.img.zip"
-sha256 "$OUT/disk.img.zip" 2>/dev/null || sha256sum "$OUT/disk.img.zip"
+(cd "$WORK" && zip -9 "$OUT/${IMG_NAME}.zip" "$IMG_NAME")
+ls -lh "$OUT/${IMG_NAME}.zip"
+sha256 "$OUT/${IMG_NAME}.zip" 2>/dev/null || sha256sum "$OUT/${IMG_NAME}.zip"
 
 # trim the multi-GB image intermediates — only out/ needs to survive
 # the post-build copyback.
-rm -f "$WORK/disk.img" "$WORK/rootfs.ufs" "$WORK/esp.img"
+rm -f "$WORK/$IMG_NAME" "$WORK/rootfs.ufs" "$WORK/esp.img"
 
 echo
-echo "==> disk image:    $(ls -lh "$OUT/disk.img.zip" | awk '{print $5}')  (disk.img.zip, DEFLATE-9)"
+echo "==> disk image:    $(ls -lh "$OUT/${IMG_NAME}.zip" | awk '{print $5}')  (${IMG_NAME}.zip, DEFLATE-9)"
 echo "==> DONE"
