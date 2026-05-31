@@ -44,6 +44,14 @@
 #include <string.h>
 #include <unistd.h>
 
+/*
+ * The configd session. Held in a file-scope global so a publish that
+ * fails (configd restarted -> the session's server port is dead, e.g.
+ * MACH_SEND_INVALID_DEST) can drop and reopen it, then re-sync the full
+ * link-state snapshot into the fresh (empty) store.
+ */
+static SCDynamicStoreRef g_store;
+
 static void
 xlog(const char *fmt, ...)
 {
@@ -84,12 +92,46 @@ link_active(int link_state, int if_flags)
 }
 
 /*
- * Publish State:/Network/Interface/<ifname>/Link = { Active : bool }.
- * Loopback is skipped — it never carries a DHCP service and only adds
- * churn. Returns 0 on success.
+ * Open the configd session into g_store, retrying until configd is up —
+ * KEM and configd are both RunAtLoad with no ordering guarantee, so the
+ * first SCDynamicStoreCreate can race configd's bootstrap check-in, and
+ * a mid-run reopen can race configd's respawn. Returns 0 on success.
  */
 static int
-publish_link(SCDynamicStoreRef store, const char *ifname, int active)
+store_open(void)
+{
+	CFStringRef name = mkstr("KernelEventMonitor");
+	int tries;
+
+	for (tries = 0; tries < 120; tries++) {
+		g_store = SCDynamicStoreCreate(NULL, name, NULL, NULL);
+		if (g_store != NULL)
+			break;
+		(void)sleep(1);
+	}
+	if (name != NULL)
+		CFRelease(name);
+	return (g_store != NULL ? 0 : -1);
+}
+
+static void
+store_drop(void)
+{
+	if (g_store != NULL) {
+		CFRelease(g_store);
+		g_store = NULL;
+	}
+}
+
+/*
+ * Raw publish of State:/Network/Interface/<ifname>/Link = { Active:bool }
+ * into the current g_store. No reopen logic — that lives in
+ * publish_link. Loopback is skipped (it never carries a DHCP service).
+ * Returns 0 on success (including the skipped-loopback case), -1 if the
+ * SetValue failed (session likely dead) or g_store is closed.
+ */
+static int
+set_link_raw(const char *ifname, int active)
 {
 	CFMutableDictionaryRef dict;
 	CFStringRef key, k_active;
@@ -97,6 +139,8 @@ publish_link(SCDynamicStoreRef store, const char *ifname, int active)
 
 	if (strcmp(ifname, "lo0") == 0)
 		return (0);
+	if (g_store == NULL)
+		return (-1);
 
 	dict = CFDictionaryCreateMutable(NULL, 0,
 	    &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
@@ -115,15 +159,12 @@ publish_link(SCDynamicStoreRef store, const char *ifname, int active)
 		CFRelease(dict);
 		return (-1);
 	}
-	ok = SCDynamicStoreSetValue(store, key, dict);
+	ok = SCDynamicStoreSetValue(g_store, key, dict);
 	CFRelease(key);
 	CFRelease(dict);
 
-	if (!ok) {
-		xlog("SCDynamicStoreSetValue(%s/Link) failed: %s",
-		    ifname, SCErrorString(SCError()));
+	if (!ok)
 		return (-1);
-	}
 	/* KEM-LINK-OK gates in boot-test.sh: proves a link-state change
 	 * reached the store, the signal ipconfigd's watch depends on. */
 	xlog("KEM-LINK-OK: %s Active=%d", ifname, active);
@@ -131,15 +172,15 @@ publish_link(SCDynamicStoreRef store, const char *ifname, int active)
 }
 
 /*
- * Publish the current link state of every interface at startup. The
- * AF_LINK ifaddr's ifa_data is a `struct if_data *` on FreeBSD, which
- * carries ifi_link_state — so getifaddrs gives both flags and link
- * state in one pass. This is the safety net for a transition that
- * happened before we (or a watcher) started: the live state is
- * republished so a consumer that subscribes late still sees it.
+ * Publish the current link state of every interface. The AF_LINK
+ * ifaddr's ifa_data is a `struct if_data *` on FreeBSD, which carries
+ * ifi_link_state — so getifaddrs gives both flags and link state in one
+ * pass. Used at startup (safety net for a transition that happened
+ * before a watcher subscribed) and to re-seed configd's store after a
+ * reopen, since a restarted configd comes back with an empty store.
  */
 static void
-publish_all(SCDynamicStoreRef store)
+publish_all(void)
 {
 	struct ifaddrs *ifa, *p;
 
@@ -157,38 +198,38 @@ publish_all(SCDynamicStoreRef store)
 			continue;
 		ifd = (const struct if_data *)p->ifa_data;
 		active = link_active(ifd->ifi_link_state, (int)p->ifa_flags);
-		(void)publish_link(store, p->ifa_name, active);
+		(void)set_link_raw(p->ifa_name, active);
 	}
 	freeifaddrs(ifa);
 }
 
 /*
- * Open the configd session, retrying until configd is up — KEM and
- * configd are both RunAtLoad with no ordering guarantee, so the first
- * SCDynamicStoreCreate can race configd's bootstrap check-in.
+ * Publish one link-state change, healing a dead session. If the raw
+ * SetValue fails (configd restarted -> MACH_SEND_INVALID_DEST), drop and
+ * reopen the session, re-seed the whole snapshot into the fresh (empty)
+ * store, and retry this event — so link updates keep flowing across a
+ * configd restart instead of going silently stale.
  */
-static SCDynamicStoreRef
-open_store_blocking(void)
+static void
+publish_link(const char *ifname, int active)
 {
-	CFStringRef name = mkstr("KernelEventMonitor");
-	SCDynamicStoreRef store = NULL;
-	int tries;
+	if (set_link_raw(ifname, active) == 0)
+		return;		/* success, or loopback skip */
 
-	for (tries = 0; tries < 120; tries++) {
-		store = SCDynamicStoreCreate(NULL, name, NULL, NULL);
-		if (store != NULL)
-			break;
-		(void)sleep(1);
+	xlog("publish(%s) failed: %s — reopening configd session",
+	    ifname, SCErrorString(SCError()));
+	store_drop();
+	if (store_open() != 0) {
+		xlog("KEM-FAIL: configd session could not be reopened");
+		return;
 	}
-	if (name != NULL)
-		CFRelease(name);
-	return (store);
+	publish_all();			/* re-seed the restarted, empty store */
+	(void)set_link_raw(ifname, active);
 }
 
 int
 main(int argc, char **argv)
 {
-	SCDynamicStoreRef store;
 	int rs;
 
 	(void)argc;
@@ -197,8 +238,7 @@ main(int argc, char **argv)
 	xlog("KernelEventMonitor starting (PF_ROUTE link-state -> "
 	    "State:/Network/Interface/<if>/Link)");
 
-	store = open_store_blocking();
-	if (store == NULL) {
+	if (store_open() != 0) {
 		xlog("KEM-FAIL: no configd session after 120s");
 		return (1);
 	}
@@ -206,13 +246,13 @@ main(int argc, char **argv)
 	rs = socket(PF_ROUTE, SOCK_RAW, 0);
 	if (rs < 0) {
 		xlog("KEM-FAIL: socket(PF_ROUTE): %s", strerror(errno));
-		CFRelease(store);
+		store_drop();
 		return (1);
 	}
 
 	/* Seed the store with current link state before blocking on the
 	 * route socket, so a watcher that is already up sees the snapshot. */
-	publish_all(store);
+	publish_all();
 
 	for (;;) {
 		char buf[2048];
@@ -244,10 +284,10 @@ main(int argc, char **argv)
 
 		active = link_active(ifm->ifm_data.ifi_link_state,
 		    ifm->ifm_flags);
-		(void)publish_link(store, ifname, active);
+		publish_link(ifname, active);
 	}
 
 	(void)close(rs);
-	CFRelease(store);
+	store_drop();
 	return (1);	/* loop only exits on a fatal route-socket error */
 }
