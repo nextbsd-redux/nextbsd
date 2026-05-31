@@ -808,7 +808,7 @@ sleep 2
 # /var/log/<daemon>.stderr file. Dump those into the boot console
 # BEFORE the proc check so [T39-bs] / [T39-ll] traces (and any other
 # diagnostic output) survive the halt that follows a PROC-FAIL exit.
-for slog in /var/log/syslogd.stderr /var/log/notifyd.stderr /var/log/hwregd.stderr /var/log/aslmanager.stderr /var/log/configd.stderr; do
+for slog in /var/log/syslogd.stderr /var/log/notifyd.stderr /var/log/aslmanager.stderr /var/log/configd.stderr /var/log/KernelEventMonitor.stderr; do
     if [ -s "$slog" ]; then
         echo "=== begin $slog ==="
         cat "$slog" || true
@@ -895,54 +895,6 @@ else
     echo "=== end diagnostics ==="
     echo "SYSLOG-RUN-FAIL: marker not found in /var/log/system.log"
     exit 1
-fi
-
-# HWREG-PUBSUB — hwregd Mach pub/sub round-trip: subscribe to the
-# org.freebsd.hwregd service and confirm the subscription ack event.
-hwregtest=/usr/tests/freebsd-launchd-mach/hwregtest
-if [ ! -x "$hwregtest" ]; then
-    echo "HWREG-PUBSUB-FAIL: $hwregtest missing"
-    exit 1
-fi
-"$hwregtest" || true	# marker (HWREG-PUBSUB-OK/FAIL) gates in boot-test.sh
-
-# HWREG-RPC — hwregd Mach-RPC query API: walk the registry tree via
-# the MIG hwreg.defs routines (get_root / get_children / get_node).
-hwregquery=/usr/tests/freebsd-launchd-mach/hwregquery
-if [ ! -x "$hwregquery" ]; then
-    echo "HWREG-RPC-FAIL: $hwregquery missing"
-    exit 1
-fi
-"$hwregquery" || true	# marker (HWREG-RPC-OK/FAIL) gates in boot-test.sh
-
-# HWREG-AUTOLOAD — boot-backlog autoload drain: hwregd waits out a
-# 60s settle window before kldload(2)ing matched modules (avoids the
-# mid-boot lock contention that wedged earlier iters). At the flip to
-# live mode the queue is drained and the daemon logs HWREG-AUTOLOAD-OK
-# (even when the queue is empty — common in QEMU/SLIRP where every CI
-# device already has a built-in driver). Poll hwregd.stderr with a
-# generous timeout so a slow VM can still cross the 60s threshold.
-hwregd_log=/var/log/hwregd.stderr
-autoload_found=0
-i=0
-while [ "$i" -lt 90 ]; do
-    if grep -q "HWREG-AUTOLOAD-OK" "$hwregd_log" 2>/dev/null; then
-        autoload_found=1
-        break
-    fi
-    sleep 1
-    i=$((i + 1))
-done
-if [ "$autoload_found" -eq 1 ]; then
-    grep "HWREG-AUTOLOAD-OK" "$hwregd_log" | tail -1
-else
-    echo "=== HWREG-AUTOLOAD diagnostics ==="
-    echo "--- $hwregd_log (tail) ---"
-    tail -50 "$hwregd_log" 2>/dev/null || echo "(no $hwregd_log)"
-    echo "--- uptime ---"
-    uptime || true
-    echo "=== end diagnostics ==="
-    echo "HWREG-AUTOLOAD-FAIL: marker not seen within 90s"
 fi
 
 # CONFIGD-STORE — configd SCDynamicStore round-trip: open a session
@@ -1147,66 +1099,6 @@ if [ ! -x "$scbridgetest" ]; then
 fi
 "$scbridgetest" || true	# marker (SC-BRIDGE-OK/FAIL) gates in boot-test.sh
 
-# IOKIT-WALK — libIOKit iter 1 read-only registry walk: walk the
-# hwregd registry tree through the IOKit facade (IORegistryGetRoot
-# Entry / GetChildIterator / IOIteratorNext / GetName / GetPath),
-# exercise IOObject Retain+Release.
-iokittest=/usr/tests/freebsd-launchd-mach/iokittest
-if [ ! -x "$iokittest" ]; then
-    echo "IOKIT-WALK-FAIL: $iokittest missing"
-    exit 1
-fi
-"$iokittest" || true	# marker (IOKIT-WALK-OK/FAIL) gates in boot-test.sh
-
-# IOKIT-MATCH — libIOKit iter 2 properties + matching: pull a node's
-# property bag as a CFDictionary, fetch single CFString/CFNumber
-# properties, exercise IOServiceMatching + IOServiceGetMatching
-# Service(s) against PCIDevice (deterministic via PCI enrichment).
-iokitmatchtest=/usr/tests/freebsd-launchd-mach/iokitmatchtest
-if [ ! -x "$iokitmatchtest" ]; then
-    echo "IOKIT-MATCH-FAIL: $iokitmatchtest missing"
-    exit 1
-fi
-"$iokitmatchtest" || true	# marker (IOKIT-MATCH-OK/FAIL) gates in boot-test.sh
-
-# IOKIT-IOREG — libIOKit iter 3 ioreg(8) tool: the K1 success marker
-# in the IOKit-userland port plan ("ioreg -l works"). Runs the
-# installed /usr/sbin/ioreg with -l (tree + property bags) and with
-# -c CPU (class filter) and validates the output is non-trivial and
-# contains the expected class header line. Marker is emitted by this
-# shell, not by a C test binary — ioreg itself is the thing under
-# test.
-ioreg=/usr/sbin/ioreg
-if [ ! -x "$ioreg" ]; then
-    echo "IOKIT-IOREG-FAIL: $ioreg missing"
-    exit 1
-fi
-ioreg_log=/tmp/ioreg.out
-if ! "$ioreg" -l > "$ioreg_log" 2>&1; then
-    echo "IOKIT-IOREG-FAIL: ioreg -l exited non-zero"
-elif ! lines=$(wc -l < "$ioreg_log") || [ "$lines" -lt 20 ]; then
-    echo "IOKIT-IOREG-FAIL: ioreg -l produced too little output (lines=$lines)"
-elif ! "$ioreg" -c CPU 2>&1 | grep -q '<class CPU>'; then
-    echo "IOKIT-IOREG-FAIL: ioreg -c CPU did not surface a CPU node"
-else
-    echo "IOKIT-IOREG-OK: ioreg -l works (lines=$lines), -c CPU finds CPU nodes"
-fi
-
-# IOKIT-NOTIFY — libIOKit iter 4 K2 device notifications: allocate
-# an IONotificationPort, SetDispatchQueue, AddMatchingNotification
-# for PCIDevice (initial-arming iterator should hand back ≥1 entry
-# from the QEMU PCI bus), then a no-match class (initial-arming
-# iterator empty but non-NULL), tear it down. Async device-arrival
-# fire isn't injectable from this CI; the underlying raw-mach_msg
-# receive-thread pattern is structurally identical to HWREG-PUBSUB
-# / SC-NOTIFY, both already CI-proven.
-iokitnotifytest=/usr/tests/freebsd-launchd-mach/iokitnotifytest
-if [ ! -x "$iokitnotifytest" ]; then
-    echo "IOKIT-NOTIFY-FAIL: $iokitnotifytest missing"
-    exit 1
-fi
-"$iokitnotifytest" || true	# marker (IOKIT-NOTIFY-OK/FAIL) gates in boot-test.sh
-
 # IPCFG-BOOT — IPConfiguration daemon iter 1 liveness probe:
 # bootstrap_look_up against com.apple.IPConfiguration. If ipconfigd
 # launched + claimed its service, the lookup returns a non-null
@@ -1218,6 +1110,30 @@ if [ ! -x "$ipconfigtest" ]; then
     exit 1
 fi
 "$ipconfigtest" || true	# marker (IPCFG-BOOT-OK/FAIL) gates in boot-test.sh
+
+# KEM-LINK — KernelEventMonitor publishes State:/Network/Interface/<if>/Link
+# from PF_ROUTE link-state changes. This is the trigger ipconfigd's DHCP
+# now depends on (it replaced the hwregd attach subscription): ipconfigd
+# brings em0 up, KernelEventMonitor sees the link go Active and publishes,
+# ipconfigd's sc_link_watch reacts and runs DHCP. So IPCFG-BOUND below now
+# inherently exercises this path — but gate the monitor's own marker too so
+# a break in the link half is attributed here. Poll its log; cat surfaces
+# the marker to the console for boot-test.sh's expect.
+kem_log=/var/log/KernelEventMonitor.stderr
+i=0
+while [ $i -lt 30 ]; do
+    if grep -q "KEM-LINK-OK" "$kem_log" 2>/dev/null; then
+        break
+    fi
+    sleep 1
+    i=$((i + 1))
+done
+echo "--- $kem_log ---"
+cat "$kem_log" 2>/dev/null || echo "(no $kem_log)"
+echo "--- end $kem_log ---"
+if ! grep -q "KEM-LINK-OK" "$kem_log" 2>/dev/null; then
+    echo "KEM-LINK-FAIL: marker not seen within 30s"
+fi
 
 # IPCFG-BOUND + IPCFG-STORE + IPCFG-RENEW — iter-3 full DHCPv4 INIT →
 # BOUND on em0 (DISCOVER → OFFER → REQUEST → ACK with the standard
@@ -1320,34 +1236,13 @@ else
     "$dnssdtest" || true	# marker gates in boot-test.sh
 fi
 
-# DA-BOOT + DA-WATCH — DiskArbitration iter 2. datest verifies the
-# Mach service (DA-BOOT-OK); the daemon itself subscribes to hwregd
-# at startup and emits DA-WATCH-OK to /var/log/diskarbitrationd.stderr
-# once the ack EVENT arrives. Cat the file so the marker reaches this
-# console for boot-test.sh's expect.
+# DA-BOOT — DiskArbitration iter 1 liveness. datest verifies the
+# Mach service (DA-BOOT-OK) via bootstrap_look_up.
 datest=/usr/tests/freebsd-launchd-mach/datest
 if [ ! -x "$datest" ]; then
     echo "DA-BOOT-FAIL: $datest missing"
 else
     "$datest" || true	# marker gates in boot-test.sh
-fi
-if [ -f /var/log/diskarbitrationd.stderr ]; then
-    # Wait briefly for the hwregd subscription to complete — the daemon
-    # boots in parallel with hwregd; if DA starts first, the initial
-    # bootstrap_look_up may fail and the subscription will retry. iter 2
-    # has no retry; iter 3 will. For now just give it a few seconds.
-    i=0
-    while [ $i -lt 10 ]; do
-        if grep -q 'DA-WATCH-OK\|DA-WATCH-FAIL' \
-            /var/log/diskarbitrationd.stderr 2>/dev/null; then
-            break
-        fi
-        sleep 1
-        i=$((i+1))
-    done
-    echo "--- /var/log/diskarbitrationd.stderr ---"
-    cat /var/log/diskarbitrationd.stderr
-    echo "--- end diskarbitrationd.stderr ---"
 fi
 
 ipconfig_cli=/usr/sbin/ipconfig

@@ -17,16 +17,19 @@ LOG=tests/boot.log
 EXP=tests/boot.exp
 
 # Accept the published image in any of: raw .img, .zip (current
-# published format — single-entry DEFLATE-9 archive containing
-# disk.img), .gz (legacy). Extract/decompress to a raw .img that
-# qemu can boot as a disk.
+# published format — single-entry DEFLATE-9 archive containing the
+# NextBSD-<arch>.img raw image), .gz (legacy). Extract/decompress to a
+# raw .img that qemu can boot as a disk.
 case "$IMG" in
 *.zip)
     RAW=tests/disk.img
     echo "==> extracting $IMG -> $RAW"
-    # -p: write to stdout; pick the first (and only) entry by name.
-    # -o on unzip is overwrite — avoid the interactive prompt.
-    unzip -p "$IMG" disk.img > "$RAW"
+    # Discover the single .img member by extension (it's named
+    # NextBSD-<arch>.img) rather than hardcoding a fixed entry name.
+    # -p: write the member to stdout.
+    MEMBER=$(unzip -Z1 "$IMG" | grep -E '\.img$' | head -1)
+    [ -n "$MEMBER" ] || { echo "FAIL: no .img member in $IMG" >&2; exit 1; }
+    unzip -p "$IMG" "$MEMBER" > "$RAW"
     IMG=$RAW
     ;;
 *.gz)
@@ -500,46 +503,6 @@ expect {
 
 expect {
     timeout {
-        puts "\nFAIL: HWREG-PUBSUB marker not seen"
-        exit 1
-    }
-    "HWREG-PUBSUB-FAIL" {
-        puts "\nFAIL: hwregd Mach pub/sub round-trip failed"
-        exit 1
-    }
-    "HWREG-PUBSUB-OK" { puts "\nOK: hwregd Mach pub/sub works" }
-}
-
-expect {
-    timeout {
-        puts "\nFAIL: HWREG-RPC marker not seen"
-        exit 1
-    }
-    "HWREG-RPC-FAIL" {
-        puts "\nFAIL: hwregd Mach-RPC registry query failed"
-        exit 1
-    }
-    "HWREG-RPC-OK" { puts "\nOK: hwregd Mach-RPC registry query works" }
-}
-
-# HWREG-AUTOLOAD — hwregd boot-backlog autoload: after a 60s settle
-# window the daemon drains its deferred-match queue with kldload(2)
-# and logs the marker. run.sh polls hwregd.stderr for up to 90s, so
-# the global 480s timeout above is plenty.
-expect {
-    timeout {
-        puts "\nFAIL: HWREG-AUTOLOAD marker not seen"
-        exit 1
-    }
-    "HWREG-AUTOLOAD-FAIL" {
-        puts "\nFAIL: hwregd boot-backlog autoload drain did not run"
-        exit 1
-    }
-    "HWREG-AUTOLOAD-OK" { puts "\nOK: hwregd boot-backlog autoload drain ran" }
-}
-
-expect {
-    timeout {
         puts "\nFAIL: CONFIGD-STORE marker not seen"
         exit 1
     }
@@ -780,56 +743,6 @@ expect {
 
 expect {
     timeout {
-        puts "\nFAIL: IOKIT-WALK marker not seen"
-        exit 1
-    }
-    "IOKIT-WALK-FAIL" {
-        puts "\nFAIL: libIOKit registry walk failed"
-        exit 1
-    }
-    "IOKIT-WALK-OK" { puts "\nOK: libIOKit registry walk works" }
-}
-
-expect {
-    timeout {
-        puts "\nFAIL: IOKIT-MATCH marker not seen"
-        exit 1
-    }
-    "IOKIT-MATCH-FAIL" {
-        puts "\nFAIL: libIOKit properties + matching failed"
-        exit 1
-    }
-    "IOKIT-MATCH-OK" { puts "\nOK: libIOKit properties + matching work" }
-}
-
-expect {
-    timeout {
-        puts "\nFAIL: IOKIT-IOREG marker not seen"
-        exit 1
-    }
-    "IOKIT-IOREG-FAIL" {
-        puts "\nFAIL: ioreg(8) failed"
-        exit 1
-    }
-    "IOKIT-IOREG-OK" { puts "\nOK: ioreg(8) works (K1 success marker)" }
-}
-
-expect {
-    timeout {
-        puts "\nFAIL: IOKIT-NOTIFY marker not seen"
-        exit 1
-    }
-    "IOKIT-NOTIFY-FAIL" {
-        puts "\nFAIL: libIOKit IONotificationPort + AddMatchingNotification failed"
-        exit 1
-    }
-    "IOKIT-NOTIFY-OK" {
-        puts "\nOK: libIOKit IONotificationPort + AddMatchingNotification work (K2)"
-    }
-}
-
-expect {
-    timeout {
         puts "\nFAIL: IPCFG-BOOT marker not seen"
         exit 1
     }
@@ -842,24 +755,22 @@ expect {
     }
 }
 
-# IPCFG-AUTOLOAD-SUB — iter 9 hwregd attach subscription. ipconfigd
-# subscribes to org.freebsd.hwregd's raw pub/sub bus at startup so
-# NICs that hwregd autoloads ~60s into boot still get DHCP'd. The
-# full attach→DHCP path isn't exercised in CI (em is built into the
-# kernel here so it's present at startup, not later autoloaded), but
-# this marker proves the subscription wiring is up — when a slimmed
-# kernel ships in a later iter, the same wiring carries the chain.
+# KEM-LINK — KernelEventMonitor published State:/Network/Interface/<if>/Link
+# = {Active:…} from a PF_ROUTE link-state change. This is the Apple-shaped
+# DHCP-on-link-up trigger that replaced the hwregd attach subscription;
+# ipconfigd's DHCP (IPCFG-BOUND below) now depends on it. run.sh surfaces
+# the marker by cat'ing /var/log/KernelEventMonitor.stderr.
 expect {
     timeout {
-        puts "\nFAIL: IPCFG-AUTOLOAD-SUB marker not seen"
+        puts "\nFAIL: KEM-LINK marker not seen"
         exit 1
     }
-    "IPCFG-AUTOLOAD-SUB-FAIL" {
-        puts "\nFAIL: ipconfigd hwregd subscription did not establish"
+    "KEM-LINK-FAIL" {
+        puts "\nFAIL: KernelEventMonitor did not publish a link-state key"
         exit 1
     }
-    "IPCFG-AUTOLOAD-SUB-OK" {
-        puts "\nOK: ipconfigd subscribed to hwregd attach events"
+    "KEM-LINK-OK" {
+        puts "\nOK: KernelEventMonitor published State:/Network/Interface/.../Link"
     }
 }
 
@@ -1050,27 +961,6 @@ expect {
     }
     "DA-BOOT-OK" {
         puts "\nOK: diskarbitrationd Mach service up (com.apple.DiskArbitration registered)"
-    }
-}
-
-# DA-WATCH — iter 2 hwregd subscription. The daemon's hwreg_subscribe
-# layer sends a HWREG_MSG_SUBSCRIBE to org.freebsd.hwregd, waits for
-# the ack EVENT, then spawns a thread to log incoming attach/detach
-# events. Storage-device names (ada*/da*/nvd*/cd*/mmcsd*) are tagged
-# STORAGE in the log. iter 3+ will move to the MIG-served
-# hwreg_watch / hwreg_lookup so we can filter at the hwregd side and
-# enumerate the current registry state at startup.
-expect {
-    timeout {
-        puts "\nFAIL: DA-WATCH marker not seen"
-        exit 1
-    }
-    "DA-WATCH-FAIL" {
-        puts "\nFAIL: diskarbitrationd could not subscribe to org.freebsd.hwregd"
-        exit 1
-    }
-    "DA-WATCH-OK" {
-        puts "\nOK: diskarbitrationd subscribed to hwregd's pub/sub bus"
     }
 }
 

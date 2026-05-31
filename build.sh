@@ -3,7 +3,7 @@
 # + Mach IPC port. The image has a read-write UFS root (no cd9660, no
 # uzip, no unionfs): the kernel mounts the freebsd-ufs partition
 # directly and execs /sbin/launchd as PID 1. Boots BIOS and UEFI.
-# Runs on FreeBSD (host or vmactions VM). Produces out/disk.img.zip.
+# Runs on FreeBSD (host or vmactions VM). Produces out/NextBSD-<arch>-<date>.img.zip.
 #
 # Base comes from pkgbase (pkg.freebsd.org/FreeBSD:<major>:<arch>/
 # base_latest), curated via pkglist-base.txt — no full base.txz /
@@ -13,9 +13,13 @@
 set -eu
 
 : "${FREEBSD_VERSION:=15.0}"
-: "${COMPRESS:=zstd}"
 : "${LABEL:=LIVECD}"
 ARCH=${ARCH:-amd64}
+# Datestamp baked into the image name so the build output IS the final
+# published name (NextBSD-<arch>-<date>.img.zip) — no rename in the
+# release job. CI passes IMG_DATE so the workflow artifact name and the
+# file agree; a local build defaults to today.
+: "${IMG_DATE:=$(date -u +%Y%m%d)}"
 
 # pkgbase ABI: pkg.freebsd.org organizes repos under FreeBSD:<major>:<arch>.
 # Strip any minor version (15.0 -> 15) so the URL resolves.
@@ -39,7 +43,7 @@ mkdir -p "$WORK" "$OUT" "$DIST"
 chflags -R noschg "$WORK" 2>/dev/null || true
 rm -rf "$WORK"/* "$OUT"/*
 
-echo "==> build: FreeBSD $FREEBSD_VERSION ($ARCH), compress=$COMPRESS, variant=${FREEBSD_VARIANT:-${FREEBSD_VERSION}-RELEASE}"
+echo "==> build: FreeBSD $FREEBSD_VERSION ($ARCH), variant=${FREEBSD_VARIANT:-${FREEBSD_VERSION}-RELEASE}"
 
 #
 # 1. fetch src.txz.
@@ -2071,6 +2075,25 @@ test -x "$WORK/rootfs/usr/sbin/ipconfig" \
 echo "==> ipconfigd + ipconfigtest + ipconfigrpctest + ipconfig built"
 
 #
+# 3x2. KernelEventMonitor (src/KernelEventMonitor) — the Apple-shaped
+#      DHCP-on-link-up trigger. Reads the PF_ROUTE socket for
+#      RTM_IFINFO link-state changes and publishes
+#      State:/Network/Interface/<if>/Link into configd's SCDynamicStore;
+#      ipconfigd's sc_link_watch reacts and runs DHCP. Replaces the
+#      removed hwregd attach subscription. No MIG — it's a pure
+#      SCDynamicStore client, so a plain make after libSystemConfiguration
+#      + libCoreFoundation are in the sysroot.
+#
+echo "==> building KernelEventMonitor (src/KernelEventMonitor)"
+make -C "$ROOT/src/KernelEventMonitor" \
+    DESTDIR="$WORK/rootfs" \
+    SYSROOT="$WORK/rootfs" \
+    all install
+ls -lh "$WORK/rootfs/usr/sbin/KernelEventMonitor"
+test -x "$WORK/rootfs/usr/sbin/KernelEventMonitor" \
+    || { echo "FAIL: /usr/sbin/KernelEventMonitor not installed or not executable"; exit 1; }
+
+#
 # 3y. Phase K mDNSResponder iter 1 — daemon skeleton.
 #     Apple's Bonjour / zeroconf responder; iter 1 is the
 #     bootstrap_check_in shell (no vendored mDNS sources yet —
@@ -2565,55 +2588,36 @@ echo "==> mkimg: GPT disk image (BIOS + UEFI)"
 for f in boot/pmbr boot/gptboot; do
     [ -f "$WORK/rootfs/$f" ] || { echo "ERROR: rootfs/$f missing" >&2; exit 1; }
 done
+# NextBSD-branded, datestamped image name — identical to the published
+# continuous asset, so the build output is uploaded + published as-is
+# (no rename). The zip member matches the basename so unzipping
+# NextBSD-${ARCH}-${IMG_DATE}.img.zip yields a clearly-named raw image
+# (NextBSD-${ARCH}-${IMG_DATE}.img). boot-test.sh discovers the member
+# by its .img extension.
+IMG_NAME="NextBSD-${ARCH}-${IMG_DATE}.img"
 mkimg -s gpt -f raw \
     -b "$WORK/rootfs/boot/pmbr" \
     -p freebsd-boot/bootfs:="$WORK/rootfs/boot/gptboot" \
     -p efi/efiboot0:="$WORK/esp.img" \
     -p freebsd-ufs/ROOTFS:="$WORK/rootfs.ufs" \
-    -o "$WORK/disk.img"
-ls -lh "$WORK/disk.img"
+    -o "$WORK/$IMG_NAME"
+ls -lh "$WORK/$IMG_NAME"
 
 # 6d. compress for publishing — the sparse rw headroom compresses away.
-#     Ship disk.img.zip: unzip then dd to storage, or boot directly in
+#     Ship the .img.zip: unzip then dd to storage, or boot directly in
 #     qemu / VirtualBox / any hypervisor. Zip (vs. gz) opens natively on
 #     every platform (Windows Explorer, macOS Finder, Linux file
 #     managers) without requiring a separate decompressor; size is
 #     within ~0.1% of gz since both use DEFLATE under the hood.
 echo "==> zip disk image"
-(cd "$WORK" && zip -9 "$OUT/disk.img.zip" disk.img)
-ls -lh "$OUT/disk.img.zip"
-sha256 "$OUT/disk.img.zip" 2>/dev/null || sha256sum "$OUT/disk.img.zip"
+(cd "$WORK" && zip -9 "$OUT/${IMG_NAME}.zip" "$IMG_NAME")
+ls -lh "$OUT/${IMG_NAME}.zip"
+sha256 "$OUT/${IMG_NAME}.zip" 2>/dev/null || sha256sum "$OUT/${IMG_NAME}.zip"
 
 # trim the multi-GB image intermediates — only out/ needs to survive
 # the post-build copyback.
-rm -f "$WORK/disk.img" "$WORK/rootfs.ufs" "$WORK/esp.img"
-
-#
-# 12. package mach.ko as a standalone release tarball. Users on a stock
-#     FreeBSD install can fetch this, untar to /, kldload mach, without
-#     building anything.
-#
-echo "==> packaging mach.ko standalone tarball"
-MACHKO_PKG_DIR="$WORK/mach-kmod-pkg"
-MACHKO_BASENAME="mach.ko-FreeBSD-${FREEBSD_VERSION}-${ARCH}"
-mkdir -p "$MACHKO_PKG_DIR/boot/kernel"
-cp "$WORK/rootfs/boot/kernel/mach.ko" "$MACHKO_PKG_DIR/boot/kernel/mach.ko"
-cat > "$MACHKO_PKG_DIR/README" <<EOF
-mach.ko — out-of-tree FreeBSD Mach IPC kernel module.
-
-Built against: FreeBSD ${FREEBSD_VERSION} (${ARCH})
-Built on:      $(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-Install:
-  tar -xJf ${MACHKO_BASENAME}.tar.gz -C /
-  echo 'mach_load="YES"' >> /boot/loader.conf
-  # reboot, or kldload mach
-EOF
-( cd "$MACHKO_PKG_DIR" && tar -czf "$OUT/${MACHKO_BASENAME}.tar.gz" boot README )
-ls -lh "$OUT/${MACHKO_BASENAME}.tar.gz"
-sha256 "$OUT/${MACHKO_BASENAME}.tar.gz" 2>/dev/null || sha256sum "$OUT/${MACHKO_BASENAME}.tar.gz"
+rm -f "$WORK/$IMG_NAME" "$WORK/rootfs.ufs" "$WORK/esp.img"
 
 echo
-echo "==> disk image:    $(ls -lh "$OUT/disk.img.zip" | awk '{print $5}')  (disk.img.zip, DEFLATE-9)"
-echo "==> mach.ko tarball: $(ls -lh "$OUT/${MACHKO_BASENAME}.tar.gz" | awk '{print $5}')"
+echo "==> disk image:    $(ls -lh "$OUT/${IMG_NAME}.zip" | awk '{print $5}')  (${IMG_NAME}.zip, DEFLATE-9)"
 echo "==> DONE"
