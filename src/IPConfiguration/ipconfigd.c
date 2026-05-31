@@ -36,21 +36,21 @@
  * on BOUND. iter 5a vendors 2 read-only routines (if_count,
  * if_addr); the full ipconfig.defs surface grows in iter 6+.
  *
- * iter 9 — react to NIC arrival via hwregd subscription.
- * hwreg_subscribe.c bootstrap_look_up's org.freebsd.hwregd and
- * subscribes to its raw pub/sub stream; on a `+` attach event the
- * subscriber thread invokes on_attach_event(), which (if no NIC is
- * yet bound) re-runs dhcp_pick_interface and calls
- * dhcp_run_on_interface on the newly-visible NIC. Closes the "first
- * boot on a NIC whose driver hwregd autoloads ~60s into boot" gap
- * left by the iter "drain the deferred backlog" PR (#60). Marker
- * IPCFG-AUTOLOAD-SUB-OK fires when the subscription is established
- * (the autoload-then-DHCP end-to-end path isn't exercised in CI yet
- * because the CI kernel still has `device em` built in — a separate
- * iter that slims the kernel proves the full chain).
+ * link-state DHCP trigger — react to link-up via SCDynamicStore.
+ * sc_link_watch.c watches State:/Network/Interface/<if>/Link, which
+ * the standalone KernelEventMonitor daemon publishes from PF_ROUTE
+ * link-state changes; when an interface goes Active the watch invokes
+ * on_link_active(), which runs DHCP on it. This is the Apple-shaped
+ * trigger (KernelEventMonitor -> SCDynamicStore -> IPConfiguration);
+ * it replaced the earlier hwregd attach subscription (removed with
+ * hwregd in PR #167). At startup we bring the candidate NIC IFF_UP so
+ * its link negotiates, then let the watch fire DHCP — fixing the
+ * stock-kernel case where a real NIC's link comes up a beat after a
+ * one-shot startup scan would have given up.
  */
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/ioctl.h>
 
 #include <net/if.h>
 #include <net/if_dl.h>
@@ -59,6 +59,7 @@
 
 #include <errno.h>
 #include <ifaddrs.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -71,10 +72,10 @@
 #include "apply_lease_v6.h"
 #include "bound_state.h"
 #include "dhcp_discover.h"
-#include "hwreg_subscribe.h"
 #include "lease_loop.h"
 #include "mach_service.h"
 #include "ra_listen.h"
+#include "sc_link_watch.h"
 #include "sc_publish.h"
 
 /*
@@ -85,10 +86,51 @@
  */
 volatile sig_atomic_t got_term;
 
+/*
+ * Serializes DHCP attempts driven by the link-watch callback. The
+ * watch fires on a libdispatch worker thread and may fire more than
+ * once (initial scan + an event, or several interfaces); g_dhcp_started
+ * ensures only one run is in flight. It stays set while a successful
+ * run blocks in lease_loop_run (we are bound), and is cleared if a run
+ * returns (DHCP failed) so a later link event can retry.
+ */
+static pthread_mutex_t	g_dhcp_lock = PTHREAD_MUTEX_INITIALIZER;
+static int		g_dhcp_started;
+
 static void
 on_signal(int sig)
 {
 	got_term = sig;
+}
+
+/*
+ * Bring an interface administratively up (IFF_UP) so its link
+ * negotiates — without touching addresses. ipconfigd does this at
+ * startup for the candidate NIC; the resulting link-state change is
+ * what KernelEventMonitor reports and our watch turns into a DHCP run.
+ */
+static int
+iface_bring_up(const char *ifname)
+{
+	struct ifreq ifr;
+	int s, rc = -1;
+
+	s = socket(AF_INET, SOCK_DGRAM, 0);
+	if (s < 0)
+		return (-1);
+	(void)memset(&ifr, 0, sizeof(ifr));
+	(void)strlcpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
+	if (ioctl(s, SIOCGIFFLAGS, &ifr) == 0) {
+		if ((ifr.ifr_flags & IFF_UP) != 0) {
+			rc = 0;
+		} else {
+			ifr.ifr_flags |= IFF_UP;
+			if (ioctl(s, SIOCSIFFLAGS, &ifr) == 0)
+				rc = 0;
+		}
+	}
+	(void)close(s);
+	return (rc);
 }
 
 static void
@@ -176,13 +218,12 @@ read_lease_cap_env(void)
 
 /*
  * dhcp_run_on_interface — full DHCPv4 INIT → BOUND → publish → RA →
- * lease loop on `ifname`. Extracted from main() so both the startup
- * path and the hwregd subscriber callback (iter 9) can drive it.
+ * lease loop on `ifname`. Driven by the link-watch callback
+ * (on_link_active) when KernelEventMonitor reports the link Active.
  *
  * Blocks in lease_loop_run until SIGTERM; never returns from a fully
  * successful path. On any failure the function returns cleanly and
- * the caller decides what to do (typically: fall through to the
- * sleep loop and wait for the next hwregd attach).
+ * on_link_active re-arms so a later link-up event can retry.
  */
 static void
 dhcp_run_on_interface(const char *ifname, uint32_t lease_cap_secs)
@@ -293,39 +334,46 @@ dhcp_run_on_interface(const char *ifname, uint32_t lease_cap_secs)
 }
 
 /*
- * iter 9 hwregd-subscriber callback — invoked from the subscriber
- * thread (hwreg_subscribe.c) when hwregd posts a `+` attach event.
- * If we already have a binding (the startup-path picked an interface
- * and is in lease_loop_run, or an earlier attach fired DHCP), skip:
- * the iter is single-NIC-focused, multi-NIC fan-out is a later
- * iter. Otherwise confirm the new device is an Ethernet (via
- * dhcp_pick_interface which already filters AF_LINK + IFT_ETHER +
- * !loopback — its "first match wins" rule means the just-attached
- * NIC will be picked once it's in getifaddrs) and run the full
- * DHCP+publish+lease loop on it.
+ * link-watch callback — invoked on a libdispatch worker thread when
+ * KernelEventMonitor reports an interface's link went Active
+ * (State:/Network/Interface/<if>/Link = {Active:true}). This is the
+ * Apple-shaped trigger that replaced the hwregd attach subscription.
+ *
+ * Run DHCP on the just-linked interface, guarding against concurrent /
+ * duplicate fires: skip if a run is already in flight (g_dhcp_started)
+ * or if we are already bound. The single-NIC focus is unchanged;
+ * multi-NIC fan-out is a later iter. dhcp_run_on_interface blocks in
+ * lease_loop_run on this worker thread once bound — fine, libdispatch
+ * services other work on other threads.
  */
 static void
-on_attach_event(const char *attached_ifname, uint32_t lease_cap_secs)
+on_link_active(const char *ifname, uint32_t lease_cap_secs)
 {
-	char picked[IFNAMSIZ] = "";
 	char already[IFNAMSIZ] = "";
 
-	if (bound_state_any(already, sizeof(already))) {
-		xlog("attach(dev=%s): skipping — already bound on %s",
-		    attached_ifname, already);
+	/* loopback never carries a DHCP service; KEM filters lo0 too. */
+	if (strncmp(ifname, "lo", 2) == 0)
+		return;
+
+	pthread_mutex_lock(&g_dhcp_lock);
+	if (g_dhcp_started || bound_state_any(already, sizeof(already))) {
+		pthread_mutex_unlock(&g_dhcp_lock);
 		return;
 	}
+	g_dhcp_started = 1;
+	pthread_mutex_unlock(&g_dhcp_lock);
 
-	if (dhcp_pick_interface(picked, sizeof(picked)) != 0) {
-		xlog("attach(dev=%s): no Ethernet visible yet via "
-		    "getifaddrs — will retry on next event",
-		    attached_ifname);
-		return;
-	}
+	xlog("link-active(%s) — running DHCP", ifname);
+	dhcp_run_on_interface(ifname, lease_cap_secs);
 
-	xlog("attach(dev=%s) — running DHCP on %s",
-	    attached_ifname, picked);
-	dhcp_run_on_interface(picked, lease_cap_secs);
+	/*
+	 * Only reached if DHCP failed (a fully successful run blocks in
+	 * lease_loop_run and never returns). Re-arm so a later link event
+	 * can retry.
+	 */
+	pthread_mutex_lock(&g_dhcp_lock);
+	g_dhcp_started = 0;
+	pthread_mutex_unlock(&g_dhcp_lock);
 }
 
 int
@@ -338,8 +386,8 @@ main(int argc, char **argv)
 	(void)argc;
 	(void)argv;
 
-	xlog("ipconfigd starting (iter 9 — MIG service + DHCPv4 + "
-	    "RFC 5227 ARP + IPv6 RA/SLAAC + hwregd attach subscriber)");
+	xlog("ipconfigd starting (MIG service + DHCPv4 + RFC 5227 ARP + "
+	    "IPv6 RA/SLAAC + link-state DHCP trigger)");
 
 	lease_cap_secs = read_lease_cap_env();
 
@@ -377,46 +425,44 @@ main(int argc, char **argv)
 		xlog("mach_service_start failed; RPC off");
 
 	/*
-	 * iter 9: start the hwregd attach subscriber BEFORE the initial
-	 * DHCP attempt so a NIC that hwregd autoloads while we're
-	 * starting up still goes through on_attach_event. The
-	 * subscription itself is unconditional (success on em0 → main
-	 * thread enters lease_loop_run and never returns; subscriber
-	 * thread idles but is harmless). Failure to subscribe is
-	 * non-fatal — DHCP on the startup-path NIC still runs.
-	 */
-	(void)hwreg_subscribe_start(on_attach_event, lease_cap_secs);
-
-	/*
-	 * iter 3: full DHCPv4 INIT → BOUND on the first non-loopback
-	 * Ethernet interface (em0 in CI). dhcp_lease_acquire runs the
-	 * SELECTING → REQUESTING → BOUND state machine; apply_lease
-	 * installs the result (SIOCAIFADDR, default route, DNS).
-	 * Marker IPCFG-BOUND-OK / IPCFG-BOUND-FAIL — emitted by the
-	 * helpers on their own log lines so the boot-test console
-	 * captures the diagnostic before the marker fires expect.
+	 * Apple-shaped DHCP trigger. Rather than DHCP unconditionally at
+	 * startup (which races a real NIC whose link negotiates a beat
+	 * after we scan — the failure mode that left a stock-kernel box
+	 * without a lease once hwregd's attach event was removed), we:
 	 *
-	 * iter 4: on BOUND, publish State:/Network/Service/<UUID>/IPv4
-	 * (+ optional /DNS) to configd via libSystemConfiguration —
-	 * marker IPCFG-STORE-OK. Then enter the post-BOUND lease loop:
-	 * sleep until T1, RENEWING, on fail sleep to T2, REBINDING.
+	 *   1. bring the candidate Ethernet administratively up so its
+	 *      link starts negotiating, then
+	 *   2. watch State:/Network/Interface/<if>/Link and run DHCP only
+	 *      when KernelEventMonitor reports the link Active.
 	 *
-	 * Failure does NOT exit ipconfigd — the Mach service stays
-	 * registered (iter-1 IPCFG-BOOT still passes), and iter 9's
-	 * hwregd subscriber will pick up if a NIC arrives later.
+	 * The watch's initial scan + KernelEventMonitor's startup snapshot
+	 * make this fire immediately when the link is already up (CI /
+	 * SLIRP), and exactly once when it comes up later (real hardware).
+	 * DHCP itself (INIT → BOUND, apply_lease, the SCDynamicStore
+	 * publish, and the RENEWING/REBINDING lease loop) is unchanged —
+	 * see dhcp_run_on_interface; markers IPCFG-BOUND-OK / -STORE-OK /
+	 * -DHCP-OK fire from there. A failed run does NOT exit ipconfigd;
+	 * the Mach service stays registered and the watch re-arms.
 	 */
-	if (dhcp_pick_interface(ifname, sizeof(ifname)) != 0) {
-		xlog("no Ethernet interface found for DHCPv4 at startup "
-		    "— waiting for hwregd attach event");
-		xlog("IPCFG-BOUND-FAIL");
+	if (dhcp_pick_interface(ifname, sizeof(ifname)) == 0) {
+		if (iface_bring_up(ifname) == 0)
+			xlog("brought %s up; awaiting link-active to DHCP",
+			    ifname);
+		else
+			xlog("could not bring %s up: %s — relying on link "
+			    "watch", ifname, strerror(errno));
 	} else {
-		dhcp_run_on_interface(ifname, lease_cap_secs);
+		xlog("no Ethernet at startup; will DHCP when one links up");
 	}
 
+	if (sc_link_watch_start(on_link_active, lease_cap_secs) != 0)
+		xlog("IPCFG-BOUND-FAIL: link watch unavailable — DHCP will "
+		    "not be triggered");
+
 	/*
-	 * Hold the daemon alive after a failed startup DHCP (or after
-	 * lease_loop_run unexpectedly returns). The hwregd subscriber
-	 * thread is still listening and will run DHCP if a NIC arrives.
+	 * Hold the daemon alive. DHCP runs on the link-watch's worker
+	 * thread; the main thread just waits for SIGTERM. A bound lease's
+	 * renewal loop also runs on that worker thread.
 	 */
 	while (!got_term) {
 		(void)sleep(60);

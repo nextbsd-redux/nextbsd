@@ -755,6 +755,25 @@ expect {
     }
 }
 
+# KEM-LINK — KernelEventMonitor published State:/Network/Interface/<if>/Link
+# = {Active:…} from a PF_ROUTE link-state change. This is the Apple-shaped
+# DHCP-on-link-up trigger that replaced the hwregd attach subscription;
+# ipconfigd's DHCP (IPCFG-BOUND below) now depends on it. run.sh surfaces
+# the marker by cat'ing /var/log/KernelEventMonitor.stderr.
+expect {
+    timeout {
+        puts "\nFAIL: KEM-LINK marker not seen"
+        exit 1
+    }
+    "KEM-LINK-FAIL" {
+        puts "\nFAIL: KernelEventMonitor did not publish a link-state key"
+        exit 1
+    }
+    "KEM-LINK-OK" {
+        puts "\nOK: KernelEventMonitor published State:/Network/Interface/.../Link"
+    }
+}
+
 # IPCFG-ARP — iter 6 RFC 5227 ARP probe on the DHCPOFFER. Fires
 # after 3 successful (= no-reply) probes of the offered address;
 # precedes IPCFG-BOUND-OK in the timeline (probe runs between

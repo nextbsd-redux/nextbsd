@@ -808,7 +808,7 @@ sleep 2
 # /var/log/<daemon>.stderr file. Dump those into the boot console
 # BEFORE the proc check so [T39-bs] / [T39-ll] traces (and any other
 # diagnostic output) survive the halt that follows a PROC-FAIL exit.
-for slog in /var/log/syslogd.stderr /var/log/notifyd.stderr /var/log/aslmanager.stderr /var/log/configd.stderr; do
+for slog in /var/log/syslogd.stderr /var/log/notifyd.stderr /var/log/aslmanager.stderr /var/log/configd.stderr /var/log/KernelEventMonitor.stderr; do
     if [ -s "$slog" ]; then
         echo "=== begin $slog ==="
         cat "$slog" || true
@@ -1110,6 +1110,30 @@ if [ ! -x "$ipconfigtest" ]; then
     exit 1
 fi
 "$ipconfigtest" || true	# marker (IPCFG-BOOT-OK/FAIL) gates in boot-test.sh
+
+# KEM-LINK — KernelEventMonitor publishes State:/Network/Interface/<if>/Link
+# from PF_ROUTE link-state changes. This is the trigger ipconfigd's DHCP
+# now depends on (it replaced the hwregd attach subscription): ipconfigd
+# brings em0 up, KernelEventMonitor sees the link go Active and publishes,
+# ipconfigd's sc_link_watch reacts and runs DHCP. So IPCFG-BOUND below now
+# inherently exercises this path — but gate the monitor's own marker too so
+# a break in the link half is attributed here. Poll its log; cat surfaces
+# the marker to the console for boot-test.sh's expect.
+kem_log=/var/log/KernelEventMonitor.stderr
+i=0
+while [ $i -lt 30 ]; do
+    if grep -q "KEM-LINK-OK" "$kem_log" 2>/dev/null; then
+        break
+    fi
+    sleep 1
+    i=$((i + 1))
+done
+echo "--- $kem_log ---"
+cat "$kem_log" 2>/dev/null || echo "(no $kem_log)"
+echo "--- end $kem_log ---"
+if ! grep -q "KEM-LINK-OK" "$kem_log" 2>/dev/null; then
+    echo "KEM-LINK-FAIL: marker not seen within 30s"
+fi
 
 # IPCFG-BOUND + IPCFG-STORE + IPCFG-RENEW — iter-3 full DHCPv4 INIT →
 # BOUND on em0 (DISCOVER → OFFER → REQUEST → ACK with the standard
