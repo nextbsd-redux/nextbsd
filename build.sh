@@ -242,7 +242,18 @@ if [ -f "$NEXTBSD_BASE_ARTIFACT" ]; then
              usr/sbin/pw usr/sbin/pkg usr/include/stdint.h usr/include/sys/types.h; do
         if [ -e "$VBASE/$f" ]; then echo "      OK   $f"; else echo "      MISS $f"; fi
     done
-    echo "    stage 1 = verify only; rootfs untouched (replacement is stage 2)"
+    echo "    stage 1 = verify only (unless NEXTBSD_BASE_FROM_SOURCE=1)"
+    # STAGE 2 — when NEXTBSD_BASE_FROM_SOURCE=1, OVERLAY our from-source base
+    # onto the rootfs (replacing pkgbase base files). chflags clears pkgbase's
+    # schg-immutable libc/rtld first. Step 1 tests whether the now-complete
+    # headers let the in-chroot Apple builds work. (pkgbase base still present;
+    # peeling base packages out comes next, incrementally.)
+    if [ "${NEXTBSD_BASE_FROM_SOURCE:-0}" = "1" ]; then
+        echo "==> STAGE 2: overlaying from-source base onto rootfs"
+        chflags -R noschg "$WORK/rootfs" 2>/dev/null || true
+        tar -xzf "$NEXTBSD_BASE_ARTIFACT" -C "$WORK/rootfs"
+        echo "    from-source base overlaid onto rootfs"
+    fi
 else
     echo "==> NOTE: no nextbsd base artifact at $NEXTBSD_BASE_ARTIFACT — skipping"
 fi

@@ -112,6 +112,7 @@ jobs:
             export FREEBSD_VARIANT=${{ matrix.variant }}
             export ARCH=${{ matrix.arch }}
             export IMG_DATE=${{ steps.meta.outputs.date }}
+            export NEXTBSD_BASE_FROM_SOURCE=1   # STAGE 2: overlay from-source base
             sh build.sh
 
       - name: checksum + summary
