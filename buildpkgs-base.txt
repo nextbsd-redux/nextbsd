@@ -1,63 +1,18 @@
-# One pkg per line; lines starting with # are ignored.
-# Build-only FreeBSD-* pkgbase packages — needed inside the chroot to
-# compile the gershwin system-domain libraries (libdispatch + GNUstep
-# stack), then purged before the slim/mkuzip pass so they don't ship
-# in the ISO. Mirrors the buildpkgs.txt purge pattern but for pkgbase
-# pkgs that base.txz used to drag in unconditionally.
+# INTENTIONALLY EMPTY — NO pkgbase base packages, build-time or otherwise.
 #
-# Installed alongside pkglist-base.txt in the same host-side
-#   pkg -R $WORK/pkg-config -r $WORK/rootfs install -y ...
-# call.
-
-# clang/lld/toolchain/clang-dev REMOVED 2026-06-01 — the build compiler now
-# comes from PORTS (llvm19, in buildpkgs.txt), not pkgbase base. build.sh
-# symlinks the unprefixed tool names (cc/c++/cpp/ld/ar/nm/objcopy/strip/...)
-# from /usr/local/llvm19/bin into /usr/local/bin, so make/cmake/kmod builds
-# use ports clang once these base packages are gone. This drops base clang
-# (the largest base build dep) per the "clang from ports, not base" goal.
-#   FreeBSD-clang       -> ports llvm19 (clang/clang++/cpp + llvm-* binutils)
-#   FreeBSD-lld         -> ports llvm19 (ld.lld)
-#   FreeBSD-toolchain   -> ports llvm19 (llvm-ar/nm/ranlib/size)
-#   FreeBSD-clang-dev   -> ports llvm19 brings its own clang resource headers
-#FreeBSD-clang
-#FreeBSD-lld
-#FreeBSD-toolchain
-#FreeBSD-clang-dev
-
-# Headers: the C-library -dev pkgs (static libs + crt objects + headers).
-# Kept for now — separate from the clang switch; revisit once the overlay's
-# staged /usr/include + our libc.a/crt objects are confirmed sufficient.
-FreeBSD-runtime-dev
-FreeBSD-clibs-dev
-FreeBSD-libcompiler_rt-dev
-FreeBSD-libcompat-dev
-FreeBSD-libexecinfo-dev
-# FreeBSD-pam-dev — dropped at PAM port iter 3 (issue #97).
-# Project principle: never install pkgbase packages we replace
-# with Apple-source code in the build chroot. Installing them
-# pulls in their runtime siblings (FreeBSD-pam-dev → FreeBSD-pam
-# → FreeBSD-pam-lib) which then race our overlay/build at end
-# of build via pkg autoremove.
+# Per the project rule (no base packages, build everything from source):
+# anything the chroot needs to COMPILE the Apple stack must come from either
+#   - nextbsd-freebsd-compat (the from-source base: libc/libthr/clibs members
+#     + full /usr/include + static libs + crt objects, overlaid onto rootfs), or
+#   - the kernel toolchain image / ports (cmake/ninja/pkgconf/llvm19 in
+#     buildpkgs.txt — ports, not base).
 #
-# Nothing in our tree consumes <security/pam_*.h> between pkg
-# install and our PAM iter 1: src/OpenPAM uses its own bundled
-# openpam/include/security/ via -I; src/pam_modules uses
-# -I ../OpenPAM/openpam/include; pamframeworktest +
-# pammodulestest build AFTER our OpenPAM `make install` writes
-# our headers into the sysroot.
-#FreeBSD-pam-dev
-FreeBSD-openssl-dev
-
-# Required for libdispatch's compile path: FreeBSD's own
-# /usr/include/sys/ucred.h #includes <bsm/audit.h>, so anything that
-# transitively pulls <sys/mount.h> needs the audit headers. We curated
-# FreeBSD-audit out of the runtime set; the -dev variant lives here so
-# headers are present at build time, then purged before mkuzip.
-FreeBSD-audit-dev
-
-# Note: byacc + flex for migcom (parser.y + lexxer.l grammars) are NOT
-# in separate pkgbase pkgs — they ship inside FreeBSD-toolchain (which
-# is already in this list above as the build toolchain). Verified via
-# `tar -tf FreeBSD-toolchain-*.pkg | grep -E 'yacc|lex|flex|byacc'`
-# returning /usr/bin/{yacc,byacc,lex,flex,flex++,lex++}. So no extra
-# pkg adds needed for the migcom build.
+# History: this file used to list FreeBSD-clang/-lld/-toolchain/-clang-dev
+# (now ports llvm19) and the -dev header/static-lib packages
+# (FreeBSD-runtime-dev, -clibs-dev, -libcompiler_rt-dev, -libcompat-dev,
+# -libexecinfo-dev, -openssl-dev, -audit-dev). All removed. If a build breaks
+# for a missing header/lib, the fix is to add the corresponding lib/secure
+# dir to the compat srclist (build it from source) — NOT to re-add a base pkg.
+#
+# Kept as an empty (comment-only) file so build.sh's grep yields no entries
+# and BASE_BUILD_PKGS stays empty; slated for deletion once the peel settles.
