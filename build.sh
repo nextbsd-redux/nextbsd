@@ -222,6 +222,32 @@ if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
 fi
 
 #
+# 3a0. STAGE 1 — download + VERIFY the nextbsd-freebsd-compat from-source base
+#      artifact, NON-DESTRUCTIVELY. Confirms the cross-repo download + extract
+#      works and the artifact is valid/complete, WITHOUT touching the rootfs.
+#      (A full overlay onto pkgbase breaks the in-chroot clang build — our
+#      /usr/include conflicts with pkgbase's compiler setup, e.g. stdint.h. The
+#      real rootfs replacement is stage 2, when pkgbase base is removed and the
+#      compiler comes from ports.) The artifact is downloaded on the CI host
+#      into $ROOT/base-artifact/ and rsync'd into the VM by vmactions.
+#
+NEXTBSD_BASE_ARTIFACT="${NEXTBSD_BASE_ARTIFACT:-$ROOT/base-artifact/nextbsd-base-amd64.tar.gz}"
+if [ -f "$NEXTBSD_BASE_ARTIFACT" ]; then
+    echo "==> verifying nextbsd-freebsd-compat base artifact: $NEXTBSD_BASE_ARTIFACT"
+    VBASE="$WORK/nextbsd-base-verify"
+    rm -rf "$VBASE"; mkdir -p "$VBASE"
+    tar -xzf "$NEXTBSD_BASE_ARTIFACT" -C "$VBASE"
+    echo "    extracted OK ($(du -sh "$VBASE" | cut -f1)); key paths:"
+    for f in lib/libc.so.7 libexec/ld-elf.so.1 sbin/kldload sbin/mount \
+             usr/sbin/pw usr/sbin/pkg usr/include/stdint.h usr/include/sys/types.h; do
+        if [ -e "$VBASE/$f" ]; then echo "      OK   $f"; else echo "      MISS $f"; fi
+    done
+    echo "    stage 1 = verify only; rootfs untouched (replacement is stage 2)"
+else
+    echo "==> NOTE: no nextbsd base artifact at $NEXTBSD_BASE_ARTIFACT — skipping"
+fi
+
+#
 # 3a. extract src.txz to $WORK/freebsd-src. Used for two things in
 #     subsequent steps:
 #       - kernel sources for the mach.ko out-of-tree build (3b)
