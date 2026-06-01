@@ -222,26 +222,29 @@ if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
 fi
 
 #
-# 3a0. STAGE 1 — ingest the nextbsd-freebsd-compat from-source base
-#      artifact as an OVERLAY on top of the pkgbase base. Removes nothing
-#      from pkgbase yet: this just verifies the artifact extracts cleanly and
-#      the ISO build still completes. Once proven, base packages get peeled
-#      out of pklist-base.txt / buildpkgs-base.txt incrementally (stage 2),
-#      until the base comes entirely from this artifact + Apple components.
-#      The artifact (nextbsd-base-amd64.tar.gz) is downloaded on the CI host
+# 3a0. STAGE 1 — download + VERIFY the nextbsd-freebsd-compat from-source base
+#      artifact, NON-DESTRUCTIVELY. Confirms the cross-repo download + extract
+#      works and the artifact is valid/complete, WITHOUT touching the rootfs.
+#      (A full overlay onto pkgbase breaks the in-chroot clang build — our
+#      /usr/include conflicts with pkgbase's compiler setup, e.g. stdint.h. The
+#      real rootfs replacement is stage 2, when pkgbase base is removed and the
+#      compiler comes from ports.) The artifact is downloaded on the CI host
 #      into $ROOT/base-artifact/ and rsync'd into the VM by vmactions.
 #
 NEXTBSD_BASE_ARTIFACT="${NEXTBSD_BASE_ARTIFACT:-$ROOT/base-artifact/nextbsd-base-amd64.tar.gz}"
 if [ -f "$NEXTBSD_BASE_ARTIFACT" ]; then
-    echo "==> ingesting nextbsd-freebsd-compat base artifact (overlay): $NEXTBSD_BASE_ARTIFACT"
-    # pkgbase marks libc.so.7 / ld-elf.so.1 / login / etc. schg (immutable),
-    # so tar can't overwrite them on overlay. Clear the flags first. (Harmless
-    # in stage 2 once pkgbase is gone — there's nothing immutable to clear.)
-    chflags -R noschg "$WORK/rootfs" 2>/dev/null || true
-    tar -xzf "$NEXTBSD_BASE_ARTIFACT" -C "$WORK/rootfs"
-    echo "    overlaid from-source base; pkgbase still present (stage 1)"
+    echo "==> verifying nextbsd-freebsd-compat base artifact: $NEXTBSD_BASE_ARTIFACT"
+    VBASE="$WORK/nextbsd-base-verify"
+    rm -rf "$VBASE"; mkdir -p "$VBASE"
+    tar -xzf "$NEXTBSD_BASE_ARTIFACT" -C "$VBASE"
+    echo "    extracted OK ($(du -sh "$VBASE" | cut -f1)); key paths:"
+    for f in lib/libc.so.7 libexec/ld-elf.so.1 sbin/kldload sbin/mount \
+             usr/sbin/pw usr/sbin/pkg usr/include/stdint.h usr/include/sys/types.h; do
+        if [ -e "$VBASE/$f" ]; then echo "      OK   $f"; else echo "      MISS $f"; fi
+    done
+    echo "    stage 1 = verify only; rootfs untouched (replacement is stage 2)"
 else
-    echo "==> NOTE: no nextbsd base artifact at $NEXTBSD_BASE_ARTIFACT — skipping ingest"
+    echo "==> NOTE: no nextbsd base artifact at $NEXTBSD_BASE_ARTIFACT — skipping"
 fi
 
 #
