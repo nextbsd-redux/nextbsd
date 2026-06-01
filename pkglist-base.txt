@@ -27,7 +27,13 @@
 
 # ---- bootloader + kernel ----
 FreeBSD-bootloader
-FreeBSD-kernel-generic
+# FreeBSD-kernel-generic REMOVED 2026-06-01 — the kernel now comes from the
+# nextbsd-kernel repo (ident NEXTBSD, = GENERIC), ingested by build.sh step
+# 3a4 from the nextbsd-kernel-amd64 artifact and installed to
+# /boot/kernel/kernel, with mach.ko built against its matching obj. (The
+# module tree from nextbsd-kernel-modules is layered in as a follow-up.)
+# FreeBSD-bootloader stays for now — stand/ from-source is the last peel.
+#FreeBSD-kernel-generic
 
 # ---- /sbin/init + boot ----
 # rescue: DROPPED 2026-05-26 (#108 / #105a iter 1). Apple has no

@@ -515,14 +515,46 @@ ls -lh "$WORK/rootfs/bin/sync" "$WORK/rootfs/bin/wait4path" \
 # master.passwd named /bin/csh and we dropped FreeBSD-csh.)
 
 #
-# 3b. build mach.ko against the freshly-extracted kernel sources and
-#     install it into $WORK/rootfs/boot/kernel/mach.ko so it ships
-#     inside rootfs.uzip. Step 8 below also copies it onto the cd9660
-#     so the loader can preload it before init runs.
+# 3a4. ingest the NEXTBSD kernel (ident NEXTBSD, = GENERIC) from the
+#      nextbsd-kernel artifact, replacing pkgbase FreeBSD-kernel-generic
+#      (dropped from pkglist-base.txt). The artifact is the cross-build obj
+#      subtree down to sys/NEXTBSD/, containing both the loadable `kernel`
+#      and the opt_*.h build dir mach.ko must compile against for KBI match.
+#      Locate them by find (the internal obj path varies). Install the kernel
+#      to /boot/kernel/kernel; the GENERIC-equivalent config has the disk +
+#      UFS drivers built in, so it boots ufs:/dev/ufs/ROOTFS directly
+#      (loader.conf's ahci/virtio/* preloads are harmless-if-builtin). The
+#      separate module tree (nextbsd-kernel-modules) is layered in afterward.
 #
-echo "==> building mach.ko"
+NEXTBSD_KERNEL_ARTIFACT="${NEXTBSD_KERNEL_ARTIFACT:-$ROOT/kernel-artifact}"
+KBUILDDIR=""
+if [ -d "$NEXTBSD_KERNEL_ARTIFACT" ]; then
+    echo "==> ingesting NEXTBSD kernel from $NEXTBSD_KERNEL_ARTIFACT"
+    KOBJ=$(find "$NEXTBSD_KERNEL_ARTIFACT" -type f -name kernel -path '*NEXTBSD*' 2>/dev/null | head -1)
+    [ -n "$KOBJ" ] || { echo "ERROR: no NEXTBSD kernel binary in artifact" >&2; exit 1; }
+    KBUILDDIR=$(dirname "$KOBJ")   # sys/NEXTBSD build dir (has opt_*.h)
+    echo "    kernel:       $KOBJ ($(du -h "$KOBJ" | cut -f1))"
+    echo "    kernbuilddir: $KBUILDDIR"
+    mkdir -p "$WORK/rootfs/boot/kernel"
+    install -o root -g wheel -m 555 "$KOBJ" "$WORK/rootfs/boot/kernel/kernel"
+    ls -lh "$WORK/rootfs/boot/kernel/kernel"
+    strings "$KOBJ" 2>/dev/null | grep -m1 'releng/15.0' || true
+else
+    echo "ERROR: NEXTBSD kernel artifact missing at $NEXTBSD_KERNEL_ARTIFACT" >&2
+    echo "       FreeBSD-kernel-generic was dropped from pkglist-base; a kernel is required." >&2
+    exit 1
+fi
+
+#
+# 3b. build mach.ko against the kernel sources + the NEXTBSD kernel's build
+#     dir (--kernbuilddir => matching opt_*.h, so mach.ko's KBI matches the
+#     ingested kernel). Install into $WORK/rootfs/boot/kernel/mach.ko so it
+#     ships inside the rootfs; the loader preloads it (mach_load=YES).
+#
+echo "==> building mach.ko (against NEXTBSD kernbuilddir)"
 "$ROOT/make-mach-kmod.sh" \
     --sysdir="$WORK/freebsd-src/usr/src/sys" \
+    --kernbuilddir="$KBUILDDIR" \
     --prefix="$WORK/rootfs"
 ls -lh "$WORK/rootfs/boot/kernel/mach.ko"
 

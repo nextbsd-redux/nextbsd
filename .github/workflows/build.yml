@@ -84,6 +84,31 @@ jobs:
             echo "no successful compat main run yet; build.sh will skip the overlay"
           fi
 
+      # Pull the NEXTBSD kernel (ident NEXTBSD, = GENERIC) from nextbsd-kernel,
+      # replacing the pkgbase FreeBSD-kernel-generic. The nextbsd-kernel-<arch>
+      # artifact is the obj subtree down to sys/NEXTBSD/ — it contains both the
+      # built `kernel` and the opt_*.h build dir that mach.ko must compile
+      # against (KBI match). build.sh installs it to /boot/kernel/kernel and
+      # points the mach.ko build at it. amd64 only for now.
+      - name: download NEXTBSD kernel artifact
+        if: matrix.arch == 'amd64'
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+        run: |
+          KRUN=$(gh run list -R nextbsd-redux/nextbsd-kernel \
+            -w "Build NextBSD Kernel" --branch main --status success \
+            --limit 1 --json databaseId -q '.[0].databaseId')
+          echo "nextbsd-kernel run: ${KRUN:-<none>}"
+          if [ -n "$KRUN" ]; then
+            gh run download "$KRUN" -R nextbsd-redux/nextbsd-kernel \
+              -n nextbsd-kernel-amd64 -D kernel-artifact
+            echo "kernel artifact tree (sys/NEXTBSD):"
+            find kernel-artifact -maxdepth 6 -name kernel -path '*sys/NEXTBSD*' -o -name 'opt_global.h' 2>/dev/null | head
+          else
+            echo "ERROR: no successful nextbsd-kernel main run — cannot ingest kernel" >&2
+            exit 1
+          fi
+
       - name: build ISO inside FreeBSD VM
         uses: vmactions/freebsd-vm@v1
         with:
