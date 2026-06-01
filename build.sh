@@ -306,19 +306,32 @@ if [ -f "$NEXTBSD_BASE_ARTIFACT" ]; then
                     echo "  [$1] delete $2: PASS"
                 fi
             }
-            echo "T0 all-ours (baseline):"
-            run_del "all-ours" cmake
-            echo "TA our libc+libsys, pkgbase rtld:"
-            cp -p "$WORK/orig-base/ld-elf.so.1" "$OURS_RTLD"
-            run_del "pkgbase-rtld" ninja
-            echo "TB pkgbase libc+libsys, our rtld:"
-            cp -p "$WORK/orig-base/libc.so.7"   "$OURS_LIBC"
-            cp -p "$WORK/orig-base/libsys.so.7" "$OURS_LSYS"
-            cp -p "$WORK/orig-base/our-ld-elf.so.1" "$OURS_RTLD"
-            run_del "pkgbase-libc" pkgconf
-            echo "TC all-pkgbase (control, should PASS):"
-            cp -p "$WORK/orig-base/ld-elf.so.1" "$OURS_RTLD"
-            run_del "all-pkgbase" FreeBSD-lld
+            # v5 result: rtld innocent; culprit is our libc and/or libsys.
+            # Narrow libc-vs-libsys, and ktrace the all-ours baseline to see
+            # the exact syscall that closes the DB fd (fd 8 -> EBADF).
+            echo "T-narrow1: our libc + pkgbase libsys:"
+            cp -p "$WORK/orig-base/libsys.so.7" "$OURS_LSYS"   # pkgbase libsys, our libc stays
+            run_del "our-libc-only" cmake
+            echo "T-narrow2: pkgbase libc + our libsys:"
+            cp -p "$WORK/orig-base/libc.so.7"      "$OURS_LIBC"   # pkgbase libc
+            cp -p "$WORK/orig-base/our-libsys.so.7" "$OURS_LSYS"  # our libsys
+            run_del "our-libsys-only" ninja
+            echo "--- ktrace all-ours baseline: find what closes the DB fd ---"
+            cp -p "$WORK/orig-base/our-libc.so.7"   "$OURS_LIBC"  # restore all-ours
+            cp -p "$WORK/orig-base/our-libsys.so.7" "$OURS_LSYS"
+            rm -f "$WORK/rootfs/var/db/pkg/"local.sqlite-wal \
+                  "$WORK/rootfs/var/db/pkg/"local.sqlite-shm
+            ktrace -i -f /tmp/kt.out chroot "$WORK/rootfs" \
+                env ASSUME_ALWAYS_YES=yes pkg delete -y pkgconf >/dev/null 2>&1
+            kdump -f /tmp/kt.out > /tmp/kt.txt 2>&1
+            FIRST=$(grep -n 'errno 9 Bad file' /tmp/kt.txt | head -1 | cut -d: -f1)
+            echo "    first EBADF at kt line: ${FIRST:-<none>}"
+            if [ -n "$FIRST" ]; then
+                echo "--- RAW window: 60 lines before first EBADF (all syscalls) ---"
+                sed -n "$((FIRST-60)),$((FIRST+2))p" /tmp/kt.txt
+            fi
+            echo "--- every close/closefrom/close_range/dup in trace ---"
+            grep -nE '\b(close|closefrom|close_range|dup|dup2|fdclose)\b' /tmp/kt.txt | head -90
             echo "================= END LOCK DIAG ================="
             echo "==> NEXTBSD_LOCK_DIAG: exiting early (diagnostic-only run)"
             exit 42
