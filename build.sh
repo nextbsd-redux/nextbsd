@@ -251,6 +251,14 @@ if [ -f "$NEXTBSD_BASE_ARTIFACT" ]; then
     if [ "${NEXTBSD_BASE_FROM_SOURCE:-0}" = "1" ]; then
         echo "==> STAGE 2: overlaying from-source base onto rootfs"
         chflags -R noschg "$WORK/rootfs" 2>/dev/null || true
+        # Back up the three pkgbase files our overlay replaces, so the lock
+        # diag can A/B-bisect which one breaks pkg's sqlite WAL fd handling.
+        if [ "${NEXTBSD_LOCK_DIAG:-0}" = "1" ]; then
+            mkdir -p "$WORK/orig-base"
+            cp -p "$WORK/rootfs/lib/libc.so.7"        "$WORK/orig-base/libc.so.7"
+            cp -p "$WORK/rootfs/lib/libsys.so.7"      "$WORK/orig-base/libsys.so.7"
+            cp -p "$WORK/rootfs/libexec/ld-elf.so.1"  "$WORK/orig-base/ld-elf.so.1"
+        fi
         # Exclude our pkg BOOTSTRAP stub — it would clobber the chroot's live
         # pkg + DB (end-of-build purge fails with sqlite locking). The chroot
         # keeps its real pkg; ours is for the final image, handled in stage 2+.
@@ -274,30 +282,43 @@ if [ -f "$NEXTBSD_BASE_ARTIFACT" ]; then
             chroot "$WORK/rootfs" pkg query '%n %v' 2>/dev/null | grep -iE 'FreeBSD-(pkg|libsqlite3|runtime|clibs)' 2>&1
             echo "--- pkg DB state BEFORE batch purge (wal/shm present?) ---"
             ls -l "$WORK/rootfs/var/db/pkg/"local.sqlite* 2>&1
-            echo "--- ROOT CAUSE: ktrace a single delete; sqlite enters WAL ---"
-            # Single cmake delete reproduces. sqlite switches the DB to WAL
-            # (creates -wal/-shm via mmap MAP_SHARED + fcntl WAL-index locks),
-            # then errors 'locking protocol'. ktrace/kdump work without procfs
-            # (truss couldn't attach across chroot). Capture the exact syscall
-            # + errno on the -shm file that sqlite turns into SQLITE_PROTOCOL.
-            rm -f "$WORK/rootfs/var/db/pkg/"local.sqlite-wal \
-                  "$WORK/rootfs/var/db/pkg/"local.sqlite-shm
-            # ktrace/kdump from the HOST (full p9, has the tools) on the
-            # chrooted pkg. ktrace logs at the kernel level so it sees the
-            # chrooted process's syscalls on OUR libc regardless of chroot.
-            ktrace -i -f /tmp/kt.out chroot "$WORK/rootfs" \
-                env ASSUME_ALWAYS_YES=yes pkg delete -y cmake 2>&1 | tail -8
-            kdump -f /tmp/kt.out > /tmp/kt.txt 2>&1; wc -l /tmp/kt.txt
-            echo "--- syscalls touching local.sqlite (name + nearby) ---"
-            grep -nE 'local\.sqlite' /tmp/kt.txt 2>&1 | head -40
-            echo "--- all mmap/munmap calls + returns ---"
-            grep -nE '\b(mmap|__mmap|munmap|shm_open)\b' /tmp/kt.txt 2>&1 | head -40
-            echo "--- all fcntl/flock calls + returns ---"
-            grep -nE '\b(fcntl|flock)\b' /tmp/kt.txt 2>&1 | head -80
-            echo "--- error returns (errno) ---"
-            grep -nE 'RET .* -1 errno' /tmp/kt.txt 2>&1 | tail -50
-            echo "--- last 60 lines of trace (the failure tail) ---"
-            tail -60 /tmp/kt.txt 2>&1
+            echo "--- BISECT: which overlaid file breaks pkg sqlite WAL? ---"
+            # fd 8 (the DB) goes EBADF mid-WAL under our base → sqlite retries
+            # the lock and gives up with SQLITE_PROTOCOL. The overlay replaced
+            # exactly libc.so.7 + libsys.so.7 + ld-elf.so.1. A/B-swap pkgbase
+            # originals back, one variant per fresh disposable pkg, to pin the
+            # culprit component. PASS = no 'locking protocol'.
+            OURS_LIBC="$WORK/rootfs/lib/libc.so.7"
+            OURS_LSYS="$WORK/rootfs/lib/libsys.so.7"
+            OURS_RTLD="$WORK/rootfs/libexec/ld-elf.so.1"
+            # keep a copy of OUR three so we can put them back between variants
+            cp -p "$OURS_LIBC" "$WORK/orig-base/our-libc.so.7"
+            cp -p "$OURS_LSYS" "$WORK/orig-base/our-libsys.so.7"
+            cp -p "$OURS_RTLD" "$WORK/orig-base/our-ld-elf.so.1"
+            run_del() {  # $1=label  $2=pkg-to-delete
+                rm -f "$WORK/rootfs/var/db/pkg/"local.sqlite-wal \
+                      "$WORK/rootfs/var/db/pkg/"local.sqlite-shm
+                OUT=$(chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
+                        pkg delete -y "$2" 2>&1)
+                if echo "$OUT" | grep -q 'locking protocol'; then
+                    echo "  [$1] delete $2: FAIL (locking protocol)"
+                else
+                    echo "  [$1] delete $2: PASS"
+                fi
+            }
+            echo "T0 all-ours (baseline):"
+            run_del "all-ours" cmake
+            echo "TA our libc+libsys, pkgbase rtld:"
+            cp -p "$WORK/orig-base/ld-elf.so.1" "$OURS_RTLD"
+            run_del "pkgbase-rtld" ninja
+            echo "TB pkgbase libc+libsys, our rtld:"
+            cp -p "$WORK/orig-base/libc.so.7"   "$OURS_LIBC"
+            cp -p "$WORK/orig-base/libsys.so.7" "$OURS_LSYS"
+            cp -p "$WORK/orig-base/our-ld-elf.so.1" "$OURS_RTLD"
+            run_del "pkgbase-libc" pkgconf
+            echo "TC all-pkgbase (control, should PASS):"
+            cp -p "$WORK/orig-base/ld-elf.so.1" "$OURS_RTLD"
+            run_del "all-pkgbase" FreeBSD-lld
             echo "================= END LOCK DIAG ================="
             echo "==> NEXTBSD_LOCK_DIAG: exiting early (diagnostic-only run)"
             exit 42
