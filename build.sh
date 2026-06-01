@@ -282,56 +282,30 @@ if [ -f "$NEXTBSD_BASE_ARTIFACT" ]; then
             chroot "$WORK/rootfs" pkg query '%n %v' 2>/dev/null | grep -iE 'FreeBSD-(pkg|libsqlite3|runtime|clibs)' 2>&1
             echo "--- pkg DB state BEFORE batch purge (wal/shm present?) ---"
             ls -l "$WORK/rootfs/var/db/pkg/"local.sqlite* 2>&1
-            echo "--- BISECT: which overlaid file breaks pkg sqlite WAL? ---"
-            # fd 8 (the DB) goes EBADF mid-WAL under our base → sqlite retries
-            # the lock and gives up with SQLITE_PROTOCOL. The overlay replaced
-            # exactly libc.so.7 + libsys.so.7 + ld-elf.so.1. A/B-swap pkgbase
-            # originals back, one variant per fresh disposable pkg, to pin the
-            # culprit component. PASS = no 'locking protocol'.
-            OURS_LIBC="$WORK/rootfs/lib/libc.so.7"
-            OURS_LSYS="$WORK/rootfs/lib/libsys.so.7"
-            OURS_RTLD="$WORK/rootfs/libexec/ld-elf.so.1"
-            # keep a copy of OUR three so we can put them back between variants
-            cp -p "$OURS_LIBC" "$WORK/orig-base/our-libc.so.7"
-            cp -p "$OURS_LSYS" "$WORK/orig-base/our-libsys.so.7"
-            cp -p "$OURS_RTLD" "$WORK/orig-base/our-ld-elf.so.1"
-            run_del() {  # $1=label  $2=pkg-to-delete
+            echo "--- CONFIRM libthr fix: our base must now ship libthr.so.3 ---"
+            # Root cause was libc<->libthr __libc_interposing ABI skew (our p9
+            # libc INTERPOS_MAX=45 vs leftover snapshot libthr MAX=46 -> OOB
+            # interpose write -> DB fd EBADF -> sqlite 'locking protocol').
+            # The add-libthr compat artifact now overlays a matched p9 libthr.
+            ls -l "$WORK/rootfs/lib/libthr.so.3" 2>&1
+            echo "    libthr in our artifact: $(tar -tzf "$NEXTBSD_BASE_ARTIFACT" 2>/dev/null | grep -c 'lib/libthr.so')"
+            echo "--- run the REAL batch purge on our libc+libthr (should PASS) ---"
+            run_del() {  # $1=label  $2..=pkgs
+                L="$1"; shift
                 rm -f "$WORK/rootfs/var/db/pkg/"local.sqlite-wal \
                       "$WORK/rootfs/var/db/pkg/"local.sqlite-shm
                 OUT=$(chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
-                        pkg delete -y "$2" 2>&1)
+                        pkg delete -y "$@" 2>&1)
                 if echo "$OUT" | grep -q 'locking protocol'; then
-                    echo "  [$1] delete $2: FAIL (locking protocol)"
+                    echo "  [$L] FAIL (locking protocol)"; echo "$OUT" | tail -4
                 else
-                    echo "  [$1] delete $2: PASS"
+                    echo "  [$L] PASS"
                 fi
             }
-            # v5 result: rtld innocent; culprit is our libc and/or libsys.
-            # Narrow libc-vs-libsys, and ktrace the all-ours baseline to see
-            # the exact syscall that closes the DB fd (fd 8 -> EBADF).
-            echo "T-narrow1: our libc + pkgbase libsys:"
-            cp -p "$WORK/orig-base/libsys.so.7" "$OURS_LSYS"   # pkgbase libsys, our libc stays
-            run_del "our-libc-only" cmake
-            echo "T-narrow2: pkgbase libc + our libsys:"
-            cp -p "$WORK/orig-base/libc.so.7"      "$OURS_LIBC"   # pkgbase libc
-            cp -p "$WORK/orig-base/our-libsys.so.7" "$OURS_LSYS"  # our libsys
-            run_del "our-libsys-only" ninja
-            echo "--- ktrace all-ours baseline: find what closes the DB fd ---"
-            cp -p "$WORK/orig-base/our-libc.so.7"   "$OURS_LIBC"  # restore all-ours
-            cp -p "$WORK/orig-base/our-libsys.so.7" "$OURS_LSYS"
-            rm -f "$WORK/rootfs/var/db/pkg/"local.sqlite-wal \
-                  "$WORK/rootfs/var/db/pkg/"local.sqlite-shm
-            ktrace -i -f /tmp/kt.out chroot "$WORK/rootfs" \
-                env ASSUME_ALWAYS_YES=yes pkg delete -y pkgconf >/dev/null 2>&1
-            kdump -f /tmp/kt.out > /tmp/kt.txt 2>&1
-            FIRST=$(grep -n 'errno 9 Bad file' /tmp/kt.txt | head -1 | cut -d: -f1)
-            echo "    first EBADF at kt line: ${FIRST:-<none>}"
-            if [ -n "$FIRST" ]; then
-                echo "--- RAW window: 60 lines before first EBADF (all syscalls) ---"
-                sed -n "$((FIRST-60)),$((FIRST+2))p" /tmp/kt.txt
-            fi
-            echo "--- every close/closefrom/close_range/dup in trace ---"
-            grep -nE '\b(close|closefrom|close_range|dup|dup2|fdclose)\b' /tmp/kt.txt | head -90
+            # shellcheck disable=SC2086
+            run_del "BUILD_PKGS" $BUILD_PKGS
+            # shellcheck disable=SC2086
+            run_del "BASE_BUILD_PKGS" $BASE_BUILD_PKGS
             echo "================= END LOCK DIAG ================="
             echo "==> NEXTBSD_LOCK_DIAG: exiting early (diagnostic-only run)"
             exit 42
