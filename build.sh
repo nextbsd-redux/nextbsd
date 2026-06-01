@@ -222,6 +222,25 @@ if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
 fi
 
 #
+# 3a0. STAGE 1 — ingest the nextbsd-freebsd-compat from-source base
+#      artifact as an OVERLAY on top of the pkgbase base. Removes nothing
+#      from pkgbase yet: this just verifies the artifact extracts cleanly and
+#      the ISO build still completes. Once proven, base packages get peeled
+#      out of pklist-base.txt / buildpkgs-base.txt incrementally (stage 2),
+#      until the base comes entirely from this artifact + Apple components.
+#      The artifact (nextbsd-base-amd64.tar.gz) is downloaded on the CI host
+#      into $ROOT/base-artifact/ and rsync'd into the VM by vmactions.
+#
+NEXTBSD_BASE_ARTIFACT="${NEXTBSD_BASE_ARTIFACT:-$ROOT/base-artifact/nextbsd-base-amd64.tar.gz}"
+if [ -f "$NEXTBSD_BASE_ARTIFACT" ]; then
+    echo "==> ingesting nextbsd-freebsd-compat base artifact (overlay): $NEXTBSD_BASE_ARTIFACT"
+    tar -xzf "$NEXTBSD_BASE_ARTIFACT" -C "$WORK/rootfs"
+    echo "    overlaid from-source base; pkgbase still present (stage 1)"
+else
+    echo "==> NOTE: no nextbsd base artifact at $NEXTBSD_BASE_ARTIFACT — skipping ingest"
+fi
+
+#
 # 3a. extract src.txz to $WORK/freebsd-src. Used for two things in
 #     subsequent steps:
 #       - kernel sources for the mach.ko out-of-tree build (3b)
