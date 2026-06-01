@@ -73,7 +73,7 @@ jobs:
           GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
         run: |
           RUN_ID=$(gh run list -R nextbsd-redux/nextbsd-freebsd-compat \
-            -w "Build NextBSD Base (curated)" --branch main --status success \
+            -w "Build NextBSD Base (curated)" --branch clibs-cxx --status success \
             --limit 1 --json databaseId -q '.[0].databaseId')
           echo "nextbsd-freebsd-compat run: ${RUN_ID:-<none>}"
           if [ -n "$RUN_ID" ]; then
