@@ -251,8 +251,12 @@ if [ -f "$NEXTBSD_BASE_ARTIFACT" ]; then
     if [ "${NEXTBSD_BASE_FROM_SOURCE:-0}" = "1" ]; then
         echo "==> STAGE 2: overlaying from-source base onto rootfs"
         chflags -R noschg "$WORK/rootfs" 2>/dev/null || true
-        tar -xzf "$NEXTBSD_BASE_ARTIFACT" -C "$WORK/rootfs"
-        echo "    from-source base overlaid onto rootfs"
+        # Exclude our pkg BOOTSTRAP stub — it would clobber the chroot's live
+        # pkg + DB (end-of-build purge fails with sqlite locking). The chroot
+        # keeps its real pkg; ours is for the final image, handled in stage 2+.
+        tar -xzf "$NEXTBSD_BASE_ARTIFACT" -C "$WORK/rootfs" \
+            --exclude 'usr/sbin/pkg' --exclude './usr/sbin/pkg'
+        echo "    from-source base overlaid onto rootfs (pkg stub excluded)"
     fi
 else
     echo "==> NOTE: no nextbsd base artifact at $NEXTBSD_BASE_ARTIFACT — skipping"
