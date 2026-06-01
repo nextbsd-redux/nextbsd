@@ -213,6 +213,34 @@ if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
             pkg install -y $BUILD_PKGS
     fi
 
+    # PORTS TOOLCHAIN SHIM. The build compiler now comes from the ports
+    # llvm19 package (devel/llvm19, clang 19.1.7) instead of the pkgbase
+    # FreeBSD-clang/lld/toolchain (dropped from buildpkgs-base.txt). Ports
+    # llvm installs PREFIXED tools under /usr/local/llvm19/bin
+    # (clang, clang++, ld.lld, llvm-ar, llvm-nm, ...), but the FreeBSD
+    # make-based builds (mach.ko via bsd.kmod.mk, MIG, the Apple suites)
+    # and cmake call the UNPREFIXED names (cc/c++/cpp/ld/ar/nm/objcopy/...).
+    # Symlink the unprefixed names into /usr/local/bin so every invocation
+    # resolves to ports clang once /usr/bin/cc (base) is gone. /usr/local/bin
+    # follows /usr/bin in PATH, so with base clang removed our shim wins.
+    if [ -x "$WORK/rootfs/usr/local/llvm19/bin/clang" ]; then
+        echo "==> wiring ports llvm19 toolchain shim into /usr/local/bin"
+        LLVMBIN=/usr/local/llvm19/bin
+        # name-in-/usr/local/bin  ->  target-in-$LLVMBIN
+        for map in cc:clang c++:clang++ cpp:clang-cpp clang:clang \
+                   clang++:clang++ clang-cpp:clang-cpp ld:ld.lld ld.lld:ld.lld \
+                   ar:llvm-ar nm:llvm-nm ranlib:llvm-ranlib objcopy:llvm-objcopy \
+                   strip:llvm-strip size:llvm-size readelf:llvm-readelf \
+                   strings:llvm-strings addr2line:llvm-addr2line objdump:llvm-objdump; do
+            name=${map%%:*}; tgt=${map##*:}
+            ln -sf "$LLVMBIN/$tgt" "$WORK/rootfs/usr/local/bin/$name"
+        done
+        chroot "$WORK/rootfs" /bin/sh -c 'command -v cc; cc --version | head -1' || true
+    else
+        echo "==> NOTE: ports llvm19 not present (/usr/local/llvm19/bin/clang missing)"
+        echo "    falling back to whatever cc is on PATH (pkgbase clang if still installed)"
+    fi
+
     # Build pkgs (cmake/ninja/clang/etc.) stay installed through the
     # subsequent build steps (mach.ko, libsystem_kernel, libdispatch).
     # Purge + chroot cleanup move to the very end of the build phase,
@@ -945,7 +973,7 @@ for d in job job_forward job_reply internal helper mach_exc notify; do
     # -sheader emits ${d}Server.h — libvproc.c #includes helperServer.h
     # to drive a helper-downcall server via mach_msg_server_once().
     ( cd "$MIG_OUT" && \
-      MIGCC=/usr/bin/cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
+      MIGCC=cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
       /bin/sh "$ROOT/src/bootstrap_cmds/migcom.tproj/mig.sh" \
         $MIG_INCS \
         -header "${d}.h" -user "${d}User.c" \
@@ -1222,7 +1250,7 @@ mkdir -p "$WORK/rootfs/usr/sbin"
 HWREG_MIG="$WORK/hwreg-mig"
 mkdir -p "$HWREG_MIG"
 ( cd "$HWREG_MIG" && \
-  MIGCC=/usr/bin/cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
+  MIGCC=cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
   /bin/sh "$ROOT/src/bootstrap_cmds/migcom.tproj/mig.sh" \
     -I"$ROOT/src/libmach/include" \
     -header hwreg.h -user hwregUser.c \
@@ -1284,7 +1312,7 @@ echo "==> building configd (src/configd)"
 CONFIGD_MIG="$WORK/configd-mig"
 mkdir -p "$CONFIGD_MIG"
 ( cd "$CONFIGD_MIG" && \
-  MIGCC=/usr/bin/cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
+  MIGCC=cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
   /bin/sh "$ROOT/src/bootstrap_cmds/migcom.tproj/mig.sh" \
     -I"$ROOT/src/libmach/include" \
     -header config.h -user configUser.c \
@@ -1799,7 +1827,7 @@ for d in notify_ipc notify_old_ipc; do
     defs="$ROOT/src/Libnotify/${d}.defs"
     echo "  mig: ${d}.defs"
     ( cd "$LIBNOTIFY_MIG_OUT" && \
-      MIGCC=/usr/bin/cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
+      MIGCC=cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
       /bin/sh "$ROOT/src/bootstrap_cmds/migcom.tproj/mig.sh" \
         $LIBNOTIFY_MIG_INCS \
         -header "${d}.h" -user "${d}User.c" \
@@ -1849,7 +1877,7 @@ ASL_MIG_OUT="$WORK/asl-mig"
 mkdir -p "$ASL_MIG_OUT"
 ASL_MIG_INCS="-I$ROOT/src/libmach/include -I$ROOT/src/syslog/aslcommon -I$ROOT/src/syslog/libsystem_asl.tproj/include"
 ( cd "$ASL_MIG_OUT" && \
-  MIGCC=/usr/bin/cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
+  MIGCC=cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
   /bin/sh "$ROOT/src/bootstrap_cmds/migcom.tproj/mig.sh" \
     $ASL_MIG_INCS \
     -header "asl_ipc.h" -user "asl_ipcUser.c" \
@@ -1976,7 +2004,7 @@ echo "==> building ipconfigd (src/IPConfiguration)"
 IPCFG_MIG="$WORK/ipcfg-mig"
 mkdir -p "$IPCFG_MIG"
 ( cd "$IPCFG_MIG" && \
-  MIGCC=/usr/bin/cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
+  MIGCC=cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
   /bin/sh "$ROOT/src/bootstrap_cmds/migcom.tproj/mig.sh" \
     -I"$ROOT/src/libmach/include" \
     -I"$ROOT/src/IPConfiguration" \

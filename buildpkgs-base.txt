@@ -9,17 +9,24 @@
 #   pkg -R $WORK/pkg-config -r $WORK/rootfs install -y ...
 # call.
 
-# clang/lld for cmake -DCMAKE_C_COMPILER=clang in the GNUstep chroot build.
-FreeBSD-clang
-FreeBSD-lld
+# clang/lld/toolchain/clang-dev REMOVED 2026-06-01 — the build compiler now
+# comes from PORTS (llvm19, in buildpkgs.txt), not pkgbase base. build.sh
+# symlinks the unprefixed tool names (cc/c++/cpp/ld/ar/nm/objcopy/strip/...)
+# from /usr/local/llvm19/bin into /usr/local/bin, so make/cmake/kmod builds
+# use ports clang once these base packages are gone. This drops base clang
+# (the largest base build dep) per the "clang from ports, not base" goal.
+#   FreeBSD-clang       -> ports llvm19 (clang/clang++/cpp + llvm-* binutils)
+#   FreeBSD-lld         -> ports llvm19 (ld.lld)
+#   FreeBSD-toolchain   -> ports llvm19 (llvm-ar/nm/ranlib/size)
+#   FreeBSD-clang-dev   -> ports llvm19 brings its own clang resource headers
+#FreeBSD-clang
+#FreeBSD-lld
+#FreeBSD-toolchain
+#FreeBSD-clang-dev
 
-# Base toolchain — make(1), ar, ranlib, etc.
-FreeBSD-toolchain
-
-# Headers. cmake/configure inside the chroot need /usr/include/* to
-# compile libobjc2, libs-base, libs-corebase. clang itself needs its
-# own headers (clang-dev).
-FreeBSD-clang-dev
+# Headers: the C-library -dev pkgs (static libs + crt objects + headers).
+# Kept for now — separate from the clang switch; revisit once the overlay's
+# staged /usr/include + our libc.a/crt objects are confirmed sufficient.
 FreeBSD-runtime-dev
 FreeBSD-clibs-dev
 FreeBSD-libcompiler_rt-dev
