@@ -268,43 +268,29 @@ if [ -f "$NEXTBSD_BASE_ARTIFACT" ]; then
         # turns into SQLITE_PROTOCOL. Plus a minimal in-chroot fcntl self-test.
         if [ "${NEXTBSD_LOCK_DIAG:-0}" = "1" ]; then
             echo "================= LOCK DIAG ================="
-            echo "--- host base level ---"; freebsd-version -ku 2>&1; uname -a 2>&1
-            echo "--- overlaid libs in rootfs ---"
-            ls -l "$WORK/rootfs/lib/libc.so.7" "$WORK/rootfs/lib/libsys.so.7" \
-                  "$WORK/rootfs/libexec/ld-elf.so.1" 2>&1
-            echo "--- pkg binary + its libc resolution (in chroot) ---"
-            chroot "$WORK/rootfs" /bin/sh -c 'command -v pkg; ldd "$(command -v pkg)" 2>&1 | grep -iE "libc|libsys|ld-elf"' 2>&1 | head
-            echo "--- in-chroot fcntl(F_SETLK) self-test on OUR libc ---"
-            cat > "$WORK/rootfs/tmp/lt.c" <<'LTEOF'
-#include <fcntl.h>
-#include <stdio.h>
-#include <string.h>
-#include <errno.h>
-#include <unistd.h>
-static int lk(int fd,int t){struct flock f;memset(&f,0,sizeof f);f.l_type=t;f.l_whence=SEEK_SET;f.l_start=1073741824;f.l_len=1;return fcntl(fd,F_SETLK,&f);} /* sqlite PENDING_BYTE region */
-int main(void){
-  int fd=open("/tmp/lt.bin",O_RDWR|O_CREAT,0644); if(fd<0){perror("open");return 2;}
-  if(lk(fd,F_WRLCK)){fprintf(stderr,"WRLCK errno=%d %s\n",errno,strerror(errno));return 3;}
-  if(lk(fd,F_UNLCK)){fprintf(stderr,"UNLCK errno=%d %s\n",errno,strerror(errno));return 4;}
-  /* drop-on-any-close: POSIX requires closing a SECOND fd to drop the lock */
-  if(lk(fd,F_WRLCK)){fprintf(stderr,"WRLCK2 errno=%d %s\n",errno,strerror(errno));return 5;}
-  int fd2=open("/tmp/lt.bin",O_RDONLY); if(fd2>=0)close(fd2);
-  int fd3=open("/tmp/lt.bin",O_RDWR); /* should now be able to re-lock iff drop-on-close happened */
-  int r=lk(fd3,F_WRLCK);
-  printf("drop-on-close relock=%s (POSIX: should SUCCEED after sibling close)\n", r==0?"OK":"BLOCKED");
-  printf("LTOK\n");return 0;
-}
-LTEOF
-            chroot "$WORK/rootfs" /bin/sh -c 'cc -O0 -o /tmp/lt /tmp/lt.c 2>&1 && /tmp/lt' 2>&1 || echo "LT self-test nonzero exit"
-            echo "--- truss pkg DELETE on OUR libc (host truss, chrooted pkg) ---"
-            # Delete a disposable build pkg to exercise pkgdb.c DELETE path.
-            DISPOSABLE=$(chroot "$WORK/rootfs" pkg query '%n' 2>/dev/null | grep -viE '^pkg$|clang|llvm|lld' | head -1)
-            echo "    disposable target: ${DISPOSABLE:-<none>}"
-            if [ -n "$DISPOSABLE" ]; then
-                truss -f -t fcntl,flock,openat,open chroot "$WORK/rootfs" \
-                    env ASSUME_ALWAYS_YES=yes pkg delete -y -f "$DISPOSABLE" 2>&1 \
-                    | grep -iE 'fcntl|flock|sqlite|locking|ERR|local\.sqlite|pkg\.conf' | head -60 || true
-            fi
+            echo "--- versions: our libc is p9, chroot pkgs are snapNNN ---"
+            freebsd-version -ku 2>&1; uname -a 2>&1
+            chroot "$WORK/rootfs" pkg query '%n %v' 2>/dev/null | grep -iE 'FreeBSD-(pkg|libsqlite3|runtime|clibs)$' 2>&1
+            echo "--- pkg DB state BEFORE batch purge (wal/shm present?) ---"
+            ls -l "$WORK/rootfs/var/db/pkg/"local.sqlite* 2>&1
+            echo "--- DECISIVE: run the REAL batch purge early, on OUR libc ---"
+            # Self-test already proved single-fd fcntl locking works on our
+            # libc. The end-of-build failure is a BATCH delete (id=56 mid-txn).
+            # Reproduce the exact purge command here, before any Apple build,
+            # so we know if it's libc/version (reproduces now) or build-state
+            # WAL (only after the build). Capture pkg's own sqlite error.
+            set +e
+            echo ">>> pkg delete BUILD_PKGS"
+            chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
+                pkg delete -y $BUILD_PKGS 2>&1 | tail -25
+            echo ">>> pkg delete BASE_BUILD_PKGS"
+            chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
+                pkg delete -y $BASE_BUILD_PKGS 2>&1 | tail -25
+            PURGE_RC=$?
+            set -e
+            echo "--- batch purge exit: $PURGE_RC (0=clean, nonzero=reproduced) ---"
+            echo "--- pkg DB state AFTER ---"
+            ls -l "$WORK/rootfs/var/db/pkg/"local.sqlite* 2>&1
             echo "================= END LOCK DIAG ================="
             echo "==> NEXTBSD_LOCK_DIAG: exiting early (diagnostic-only run)"
             exit 42
