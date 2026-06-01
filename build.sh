@@ -559,6 +559,40 @@ echo "==> building mach.ko (against NEXTBSD kernbuilddir)"
 ls -lh "$WORK/rootfs/boot/kernel/mach.ko"
 
 #
+# 3b2. install the NEXTBSD module tree (nextbsd-kernel-modules artifact) into
+#      /boot/kernel — the GENERIC modules (cd9660, zfs, drm, sound, NICs, ...)
+#      that FreeBSD-kernel-generic used to ship but aren't compiled into the
+#      kernel. The artifact is the cross-build obj modules subtree; the final
+#      loadable files are the *.ko (the *.ko.full / *.ko.debug are build
+#      byproducts). After copying, regenerate /boot/kernel/linker.hints with
+#      kldxref so the loader can resolve modules by name (the loader.conf
+#      ahci/virtio/* preloads then stop being "can't find module" warnings).
+#      Optional: if the artifact is absent the kernel still boots on built-ins.
+#
+NEXTBSD_MODULES_ARTIFACT="${NEXTBSD_MODULES_ARTIFACT:-$ROOT/modules-artifact}"
+if [ -d "$NEXTBSD_MODULES_ARTIFACT" ] && \
+   [ -n "$(find "$NEXTBSD_MODULES_ARTIFACT" -name '*.ko' 2>/dev/null | head -1)" ]; then
+    echo "==> installing NEXTBSD module tree into /boot/kernel"
+    find "$NEXTBSD_MODULES_ARTIFACT" -type f -name '*.ko' | while IFS= read -r ko; do
+        install -o root -g wheel -m 555 "$ko" \
+            "$WORK/rootfs/boot/kernel/$(basename "$ko")"
+    done
+    NMODS=$(find "$WORK/rootfs/boot/kernel" -name '*.ko' | wc -l | tr -d ' ')
+    echo "    installed module count (incl. mach.ko): $NMODS"
+    # linker.hints: name->module index the loader/kldload use. mach.ko is
+    # already in place, so this indexes it too.
+    chroot "$WORK/rootfs" kldxref /boot/kernel || \
+        kldxref "$WORK/rootfs/boot/kernel" || true
+    ls -lh "$WORK/rootfs/boot/kernel/linker.hints" 2>&1 || \
+        echo "    NOTE: linker.hints not generated (kldxref unavailable)"
+else
+    echo "==> NOTE: no NEXTBSD module tree artifact — shipping kernel built-ins only"
+    echo "    (boots fine; cd9660/zfs/drm/sound/etc. modules just won't be present)"
+    # still index mach.ko so the loader can resolve it by name
+    chroot "$WORK/rootfs" kldxref /boot/kernel 2>/dev/null || true
+fi
+
+#
 # 3c. build libsystem_kernel (formerly libmach) on the host and install
 #     it into the chroot under the spike's chosen Apple-Libsystem layout:
 #       /usr/lib/system/libsystem_kernel.so + .so.0 sonname symlink

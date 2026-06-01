@@ -109,6 +109,29 @@ jobs:
             exit 1
           fi
 
+      # Pull the NEXTBSD module tree (cd9660, zfs, drm, sound, NICs, ...) from
+      # nextbsd-kernel-modules — these are the GENERIC modules that were shipped
+      # by FreeBSD-kernel-generic but aren't built into the kernel. build.sh
+      # installs the *.ko into /boot/kernel and regenerates linker.hints.
+      # Non-fatal if absent: the kernel boots on built-in drivers regardless.
+      - name: download NEXTBSD modules artifact
+        if: matrix.arch == 'amd64'
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+        run: |
+          MRUN=$(gh run list -R nextbsd-redux/nextbsd-kernel-modules \
+            -w "Build NextBSD Modules" --branch main --status success \
+            --limit 1 --json databaseId -q '.[0].databaseId')
+          echo "nextbsd-kernel-modules run: ${MRUN:-<none>}"
+          if [ -n "$MRUN" ]; then
+            gh run download "$MRUN" -R nextbsd-redux/nextbsd-kernel-modules \
+              -n nextbsd-modules-amd64 -D modules-artifact || \
+              echo "WARN: module artifact download failed; kernel boots on built-ins"
+            echo "module .ko count: $(find modules-artifact -name '*.ko' 2>/dev/null | wc -l)"
+          else
+            echo "WARN: no successful nextbsd-kernel-modules main run; shipping kernel built-ins only"
+          fi
+
       - name: build ISO inside FreeBSD VM
         uses: vmactions/freebsd-vm@v1
         with:
