@@ -251,66 +251,18 @@ if [ -f "$NEXTBSD_BASE_ARTIFACT" ]; then
     if [ "${NEXTBSD_BASE_FROM_SOURCE:-0}" = "1" ]; then
         echo "==> STAGE 2: overlaying from-source base onto rootfs"
         chflags -R noschg "$WORK/rootfs" 2>/dev/null || true
-        # Back up the three pkgbase files our overlay replaces, so the lock
-        # diag can A/B-bisect which one breaks pkg's sqlite WAL fd handling.
-        if [ "${NEXTBSD_LOCK_DIAG:-0}" = "1" ]; then
-            mkdir -p "$WORK/orig-base"
-            cp -p "$WORK/rootfs/lib/libc.so.7"        "$WORK/orig-base/libc.so.7"
-            cp -p "$WORK/rootfs/lib/libsys.so.7"      "$WORK/orig-base/libsys.so.7"
-            cp -p "$WORK/rootfs/libexec/ld-elf.so.1"  "$WORK/orig-base/ld-elf.so.1"
-        fi
-        # Exclude our pkg BOOTSTRAP stub — it would clobber the chroot's live
-        # pkg + DB (end-of-build purge fails with sqlite locking). The chroot
-        # keeps its real pkg; ours is for the final image, handled in stage 2+.
+        # Exclude our pkg BOOTSTRAP stub — the chroot keeps its real pkg + DB
+        # for the build (ours is for the final image, handled in stage 2+).
+        # NOTE: the from-source base now ships lib/libthr (compat srclist) so
+        # the overlay replaces the chroot's snapshot libthr with a libthr that
+        # matches our p9 libc. Without that, the libc<->libthr
+        # __libc_interposing ABI skew (p9 libc INTERPOS_MAX=45 vs snapshot
+        # libthr MAX=46) was an out-of-bounds interpose write that corrupted
+        # libc globals — pkg's sqlite DELETE failed with "locking protocol"
+        # (DB fd went EBADF). See nextbsd-freebsd-compat PR #4.
         tar -xzf "$NEXTBSD_BASE_ARTIFACT" -C "$WORK/rootfs" \
             --exclude 'usr/sbin/pkg' --exclude './usr/sbin/pkg'
-        echo "    from-source base overlaid onto rootfs (pkg stub excluded)"
-
-        # ---- LOCK DIAG (opt-in: NEXTBSD_LOCK_DIAG=1) ---------------------
-        # Root-cause the end-of-build `pkg ... DELETE ... sqlite locking
-        # protocol` failure. Our from-source libc/libsys/rtld is bit-identical
-        # to release/15.0.0-p9 source, so the bug is in the curated build, not
-        # the source. truss the chrooted pkg (running on OUR overlaid libc)
-        # from the host (host / is NOT overlaid → host truss stays on pkgbase
-        # libc) to capture the exact fcntl/flock syscall + errno that sqlite
-        # turns into SQLITE_PROTOCOL. Plus a minimal in-chroot fcntl self-test.
-        if [ "${NEXTBSD_LOCK_DIAG:-0}" = "1" ]; then
-            set +e   # diagnostics must never trip set -e (grep no-match etc.)
-            echo "================= LOCK DIAG ================="
-            echo "--- versions: our libc is p9, chroot pkgs are snapNNN ---"
-            freebsd-version -ku 2>&1; uname -a 2>&1
-            chroot "$WORK/rootfs" pkg query '%n %v' 2>/dev/null | grep -iE 'FreeBSD-(pkg|libsqlite3|runtime|clibs)' 2>&1
-            echo "--- pkg DB state BEFORE batch purge (wal/shm present?) ---"
-            ls -l "$WORK/rootfs/var/db/pkg/"local.sqlite* 2>&1
-            echo "--- CONFIRM libthr fix: our base must now ship libthr.so.3 ---"
-            # Root cause was libc<->libthr __libc_interposing ABI skew (our p9
-            # libc INTERPOS_MAX=45 vs leftover snapshot libthr MAX=46 -> OOB
-            # interpose write -> DB fd EBADF -> sqlite 'locking protocol').
-            # The add-libthr compat artifact now overlays a matched p9 libthr.
-            ls -l "$WORK/rootfs/lib/libthr.so.3" 2>&1
-            echo "    libthr in our artifact: $(tar -tzf "$NEXTBSD_BASE_ARTIFACT" 2>/dev/null | grep -c 'lib/libthr.so')"
-            echo "--- run the REAL batch purge on our libc+libthr (should PASS) ---"
-            run_del() {  # $1=label  $2..=pkgs
-                L="$1"; shift
-                rm -f "$WORK/rootfs/var/db/pkg/"local.sqlite-wal \
-                      "$WORK/rootfs/var/db/pkg/"local.sqlite-shm
-                OUT=$(chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
-                        pkg delete -y "$@" 2>&1)
-                if echo "$OUT" | grep -q 'locking protocol'; then
-                    echo "  [$L] FAIL (locking protocol)"; echo "$OUT" | tail -4
-                else
-                    echo "  [$L] PASS"
-                fi
-            }
-            # shellcheck disable=SC2086
-            run_del "BUILD_PKGS" $BUILD_PKGS
-            # shellcheck disable=SC2086
-            run_del "BASE_BUILD_PKGS" $BASE_BUILD_PKGS
-            echo "================= END LOCK DIAG ================="
-            echo "==> NEXTBSD_LOCK_DIAG: exiting early (diagnostic-only run)"
-            exit 42
-        fi
-        # ------------------------------------------------------------------
+        echo "    from-source base overlaid onto rootfs (libthr matched, pkg stub excluded)"
     fi
 else
     echo "==> NOTE: no nextbsd base artifact at $NEXTBSD_BASE_ARTIFACT — skipping"
