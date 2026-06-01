@@ -234,6 +234,10 @@ fi
 NEXTBSD_BASE_ARTIFACT="${NEXTBSD_BASE_ARTIFACT:-$ROOT/base-artifact/nextbsd-base-amd64.tar.gz}"
 if [ -f "$NEXTBSD_BASE_ARTIFACT" ]; then
     echo "==> ingesting nextbsd-freebsd-compat base artifact (overlay): $NEXTBSD_BASE_ARTIFACT"
+    # pkgbase marks libc.so.7 / ld-elf.so.1 / login / etc. schg (immutable),
+    # so tar can't overwrite them on overlay. Clear the flags first. (Harmless
+    # in stage 2 once pkgbase is gone — there's nothing immutable to clear.)
+    chflags -R noschg "$WORK/rootfs" 2>/dev/null || true
     tar -xzf "$NEXTBSD_BASE_ARTIFACT" -C "$WORK/rootfs"
     echo "    overlaid from-source base; pkgbase still present (stage 1)"
 else
