@@ -12,6 +12,12 @@ on:
       - '**/*.md'
       - 'LICENSE'
       - 'NOTICE'
+  # Rebuild the ISO when the from-source base it ingests changes. Sent by
+  # nextbsd-freebsd-compat at the end of a successful main base build, which
+  # is itself triggered by the toolchain on a releng/15.0 update. Full chain:
+  # releng/15.0 -> toolchain -> compat -> (base-updated) -> nextbsd.
+  repository_dispatch:
+    types: [base-updated]
   workflow_dispatch:
 
 permissions:
