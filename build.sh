@@ -280,98 +280,28 @@ mkdir -p "$WORK/freebsd-src"
 tar -xJf "$DIST/src.txz" -C "$WORK/freebsd-src"
 
 #
-# 3a2. build the irreducibly-FreeBSD-only userland from /usr/src per
-#      srclist-fbsdglue.txt. The 43 leaf binaries + 1 prereq lib
-#      (lib/libsysdecode for kdump/truss) have no Apple equivalent at
-#      all — kernel-bound platform glue (kld*, UFS, devfs, ldconfig,
-#      etc.) plus BSD-specific debug tooling (fstat/sockstat/procstat/
-#      ktrace/truss/ldd/etc.). Overlay-overwrite their pkgbase paths
-#      with /usr/src builds so downstream Apple-repo PRs (#105b-#105g)
-#      can iterate the remaining ~155 Apple-replaceable paths, and
-#      #105h can finally drop FreeBSD-runtime entirely once
-#      srclist-fbsdglue.txt owns every non-Apple path the ISO needs.
+# 3a2. The irreducibly-FreeBSD-only userland (kld*, UFS, devfs, ldconfig,
+#      mount, newfs, pw, login, su, ldd, geom, ... plus their prereq libs)
+#      now comes from the nextbsd-freebsd-compat from-source artifact,
+#      overlaid at 3a0 (NEXTBSD_BASE_FROM_SOURCE=1). The old in-VM
+#      `srclist-fbsdglue.txt` build of these very same /usr/src paths was
+#      redundant with that overlay and has been REMOVED: the compat
+#      srclist is a strict superset of srclist-fbsdglue.txt — it builds
+#      every fbsdglue entry except bin/sh, which Apple's shell_cmds owns
+#      (and pkgbase /bin/sh remains until FreeBSD-runtime is peeled).
+#      Dropping the layer also removes a multi-minute in-VM build.
 #
-#      Manifest is iterated in file order so prereq libs can be listed
-#      above consumers. lib/libsysdecode comes first so its mktables-
-#      generated headers (tables.h / tables_linux.h / ioctl.c) exist
-#      in $MAKEOBJDIRPREFIX when kdump+truss link against it. Same
-#      shape as the lib/libifconfig codegen-prereq that defeated
-#      PR #107 — this iter explicitly exercises that path.
+#      Verify the overlay actually laid the load-bearing tools down
+#      before the Apple build depends on them — this catches both an
+#      accidentally-disabled overlay and an incomplete compat artifact.
 #
-#      Iter 1 (commit 62dd735) validated the mechanism on ~11
-#      Category A/B leaf tools with no codegen prereqs. Iter 2 (this
-#      change / #109 / #105a iter 2) extends to the full 43 entries
-#      and the codegen-prereq case.
-#
-#      MAKEOBJDIRPREFIX isolates obj dirs under $WORK (keeps /usr/obj
-#      on the builder clean). SRCCONF/__MAKE_CONF=/dev/null isolates
-#      from host /etc/src.conf flags.
-#
-#      Plan: https://pkgdemon.github.io/freebsd-srclist-build-plan.html
-#
-echo "==> building irreducibly-FreeBSD-only userland from /usr/src per srclist-fbsdglue.txt"
-SRCLIST_FBSDGLUE="$ROOT/srclist-fbsdglue.txt"
-if [ ! -f "$SRCLIST_FBSDGLUE" ]; then
-    echo "ERROR: srclist-fbsdglue.txt missing at $SRCLIST_FBSDGLUE" >&2
-    exit 1
-fi
-
-FBSDGLUE_LIST=$(grep -v '^[[:space:]]*#' "$SRCLIST_FBSDGLUE" 2>/dev/null \
-                | grep -v '^[[:space:]]*$' || true)
-if [ -z "$FBSDGLUE_LIST" ]; then
-    echo "ERROR: srclist-fbsdglue.txt is empty; refusing to skip the fbsdglue layer" >&2
-    exit 1
-fi
-
-SRCBUILD_OBJ="$WORK/srcbuild-obj"
-mkdir -p "$SRCBUILD_OBJ"
-SRCBUILD_MAKE_FLAGS="__MAKE_CONF=/dev/null SRCCONF=/dev/null \
-                     MK_MAN=no MK_TESTS=no"
-
-# Pre-create /usr/include/ subdirs that FreeBSD-lib installs assume
-# exist (FreeBSD normally pre-populates these via `mtree -d` from
-# /etc/mtree/BSD.include.dist before make install). Without these
-# the `install` command exits 71 (EX_OSERR / no such directory).
-#
-#   casper/         ← lib/libcasper installs cap_*.h here
-#   bsm/            ← lib/libbsm installs <bsm/*.h> here
-#   editline/       ← lib/libedit installs <editline/readline/readline.h>
-#   lzma/           ← lib/liblzma installs <lzma/*.h>
-#   libdata/pkgconfig/ ← lib/liblzma installs liblzma.pc here
-mkdir -p "$WORK/rootfs/usr/include/casper" \
-         "$WORK/rootfs/usr/include/bsm" \
-         "$WORK/rootfs/usr/include/editline" \
-         "$WORK/rootfs/usr/include/editline/readline" \
-         "$WORK/rootfs/usr/include/lzma" \
-         "$WORK/rootfs/usr/libdata/pkgconfig"
-
-for DIR in $FBSDGLUE_LIST; do
-    SRC="$WORK/freebsd-src/usr/src/$DIR"
-    if [ ! -d "$SRC" ]; then
-        echo "ERROR: srclist-fbsdglue entry '$DIR' not under usr/src ($SRC)" >&2
-        exit 1
-    fi
-    echo "    fbsdglue: $DIR"
-    # shellcheck disable=SC2086
-    env MAKEOBJDIRPREFIX="$SRCBUILD_OBJ" \
-        make -C "$SRC" $SRCBUILD_MAKE_FLAGS obj
-    # shellcheck disable=SC2086
-    env MAKEOBJDIRPREFIX="$SRCBUILD_OBJ" \
-        make -C "$SRC" $SRCBUILD_MAKE_FLAGS
-    # shellcheck disable=SC2086
-    env MAKEOBJDIRPREFIX="$SRCBUILD_OBJ" \
-        make -C "$SRC" $SRCBUILD_MAKE_FLAGS \
-        install DESTDIR="$WORK/rootfs"
-done
-
-# Confirm a few load-bearing binaries from each category are actually
-# present + executable in the rootfs after the manifest run. Catches
-# silent "make install" no-ops (e.g., if a Makefile's PROG variable
-# was renamed upstream).
+echo "==> verifying from-source base overlay provided the FreeBSD-only userland"
 for KEY_BIN in /sbin/kldload /sbin/mount /bin/kenv \
                /usr/bin/ldd /usr/sbin/pciconf; do
     if [ ! -x "$WORK/rootfs$KEY_BIN" ]; then
-        echo "ERROR: fbsdglue manifest didn't install $KEY_BIN" >&2
+        echo "ERROR: from-source base overlay did not provide $KEY_BIN" >&2
+        echo "       (NEXTBSD_BASE_FROM_SOURCE must be 1 and the compat" >&2
+        echo "        artifact's srclist must include it)" >&2
         exit 1
     fi
 done
