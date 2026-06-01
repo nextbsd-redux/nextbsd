@@ -274,23 +274,25 @@ if [ -f "$NEXTBSD_BASE_ARTIFACT" ]; then
             chroot "$WORK/rootfs" pkg query '%n %v' 2>/dev/null | grep -iE 'FreeBSD-(pkg|libsqlite3|runtime|clibs)' 2>&1
             echo "--- pkg DB state BEFORE batch purge (wal/shm present?) ---"
             ls -l "$WORK/rootfs/var/db/pkg/"local.sqlite* 2>&1
-            echo "--- DECISIVE: run the REAL batch purge early, on OUR libc ---"
-            # Self-test already proved single-fd fcntl locking works on our
-            # libc. The end-of-build failure is a BATCH delete (id=56 mid-txn).
-            # Reproduce the exact purge command here, before any Apple build,
-            # so we know if it's libc/version (reproduces now) or build-state
-            # WAL (only after the build). Capture pkg's own sqlite error.
-            echo ">>> pkg delete BUILD_PKGS"
-            chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
-                pkg delete -y $BUILD_PKGS 2>&1 | tail -25
-            echo ">>> pkg delete BASE_BUILD_PKGS"
-            chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
-                pkg delete -y $BASE_BUILD_PKGS 2>&1 | tail -25
-            PURGE_RC=$?
-            set -e
-            echo "--- batch purge exit: $PURGE_RC (0=clean, nonzero=reproduced) ---"
-            echo "--- pkg DB state AFTER ---"
-            ls -l "$WORK/rootfs/var/db/pkg/"local.sqlite* 2>&1
+            echo "--- ROOT CAUSE: ktrace a single delete; sqlite enters WAL ---"
+            # Single cmake delete reproduces. sqlite switches the DB to WAL
+            # (creates -wal/-shm via mmap MAP_SHARED + fcntl WAL-index locks),
+            # then errors 'locking protocol'. ktrace/kdump work without procfs
+            # (truss couldn't attach across chroot). Capture the exact syscall
+            # + errno on the -shm file that sqlite turns into SQLITE_PROTOCOL.
+            rm -f "$WORK/rootfs/var/db/pkg/"local.sqlite-wal \
+                  "$WORK/rootfs/var/db/pkg/"local.sqlite-shm
+            chroot "$WORK/rootfs" /bin/sh -c \
+                'ktrace -i -f /tmp/kt.out env ASSUME_ALWAYS_YES=yes pkg delete -y cmake 2>&1' | tail -8
+            chroot "$WORK/rootfs" /bin/sh -c 'kdump -f /tmp/kt.out > /tmp/kt.txt 2>&1; wc -l /tmp/kt.txt'
+            echo "--- syscalls touching local.sqlite (open/mmap/fcntl/flock) ---"
+            grep -nE 'local\.sqlite' "$WORK/rootfs/tmp/kt.txt" 2>&1 | head -40
+            echo "--- all mmap calls + returns ---"
+            grep -nE '\b(mmap|__mmap)\b' "$WORK/rootfs/tmp/kt.txt" 2>&1 | head -40
+            echo "--- all fcntl/flock calls + returns ---"
+            grep -nE '\b(fcntl|flock)\b' "$WORK/rootfs/tmp/kt.txt" 2>&1 | head -60
+            echo "--- any error returns (errno) near the end ---"
+            grep -nE 'RET .* -1 errno' "$WORK/rootfs/tmp/kt.txt" 2>&1 | tail -40
             echo "================= END LOCK DIAG ================="
             echo "==> NEXTBSD_LOCK_DIAG: exiting early (diagnostic-only run)"
             exit 42
