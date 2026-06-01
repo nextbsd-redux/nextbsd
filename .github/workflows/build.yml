@@ -113,6 +113,7 @@ jobs:
             export ARCH=${{ matrix.arch }}
             export IMG_DATE=${{ steps.meta.outputs.date }}
             export NEXTBSD_BASE_FROM_SOURCE=1   # STAGE 2: overlay from-source base
+            export NEXTBSD_LOCK_DIAG=1          # DIAG: truss pkg fcntl locking after overlay (temporary)
             sh build.sh
 
       - name: checksum + summary
