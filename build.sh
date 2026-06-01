@@ -282,17 +282,22 @@ if [ -f "$NEXTBSD_BASE_ARTIFACT" ]; then
             # + errno on the -shm file that sqlite turns into SQLITE_PROTOCOL.
             rm -f "$WORK/rootfs/var/db/pkg/"local.sqlite-wal \
                   "$WORK/rootfs/var/db/pkg/"local.sqlite-shm
-            chroot "$WORK/rootfs" /bin/sh -c \
-                'ktrace -i -f /tmp/kt.out env ASSUME_ALWAYS_YES=yes pkg delete -y cmake 2>&1' | tail -8
-            chroot "$WORK/rootfs" /bin/sh -c 'kdump -f /tmp/kt.out > /tmp/kt.txt 2>&1; wc -l /tmp/kt.txt'
-            echo "--- syscalls touching local.sqlite (open/mmap/fcntl/flock) ---"
-            grep -nE 'local\.sqlite' "$WORK/rootfs/tmp/kt.txt" 2>&1 | head -40
-            echo "--- all mmap calls + returns ---"
-            grep -nE '\b(mmap|__mmap)\b' "$WORK/rootfs/tmp/kt.txt" 2>&1 | head -40
+            # ktrace/kdump from the HOST (full p9, has the tools) on the
+            # chrooted pkg. ktrace logs at the kernel level so it sees the
+            # chrooted process's syscalls on OUR libc regardless of chroot.
+            ktrace -i -f /tmp/kt.out chroot "$WORK/rootfs" \
+                env ASSUME_ALWAYS_YES=yes pkg delete -y cmake 2>&1 | tail -8
+            kdump -f /tmp/kt.out > /tmp/kt.txt 2>&1; wc -l /tmp/kt.txt
+            echo "--- syscalls touching local.sqlite (name + nearby) ---"
+            grep -nE 'local\.sqlite' /tmp/kt.txt 2>&1 | head -40
+            echo "--- all mmap/munmap calls + returns ---"
+            grep -nE '\b(mmap|__mmap|munmap|shm_open)\b' /tmp/kt.txt 2>&1 | head -40
             echo "--- all fcntl/flock calls + returns ---"
-            grep -nE '\b(fcntl|flock)\b' "$WORK/rootfs/tmp/kt.txt" 2>&1 | head -60
-            echo "--- any error returns (errno) near the end ---"
-            grep -nE 'RET .* -1 errno' "$WORK/rootfs/tmp/kt.txt" 2>&1 | tail -40
+            grep -nE '\b(fcntl|flock)\b' /tmp/kt.txt 2>&1 | head -80
+            echo "--- error returns (errno) ---"
+            grep -nE 'RET .* -1 errno' /tmp/kt.txt 2>&1 | tail -50
+            echo "--- last 60 lines of trace (the failure tail) ---"
+            tail -60 /tmp/kt.txt 2>&1
             echo "================= END LOCK DIAG ================="
             echo "==> NEXTBSD_LOCK_DIAG: exiting early (diagnostic-only run)"
             exit 42
