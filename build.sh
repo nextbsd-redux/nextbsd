@@ -267,10 +267,11 @@ if [ -f "$NEXTBSD_BASE_ARTIFACT" ]; then
         # libc) to capture the exact fcntl/flock syscall + errno that sqlite
         # turns into SQLITE_PROTOCOL. Plus a minimal in-chroot fcntl self-test.
         if [ "${NEXTBSD_LOCK_DIAG:-0}" = "1" ]; then
+            set +e   # diagnostics must never trip set -e (grep no-match etc.)
             echo "================= LOCK DIAG ================="
             echo "--- versions: our libc is p9, chroot pkgs are snapNNN ---"
             freebsd-version -ku 2>&1; uname -a 2>&1
-            chroot "$WORK/rootfs" pkg query '%n %v' 2>/dev/null | grep -iE 'FreeBSD-(pkg|libsqlite3|runtime|clibs)$' 2>&1
+            chroot "$WORK/rootfs" pkg query '%n %v' 2>/dev/null | grep -iE 'FreeBSD-(pkg|libsqlite3|runtime|clibs)' 2>&1
             echo "--- pkg DB state BEFORE batch purge (wal/shm present?) ---"
             ls -l "$WORK/rootfs/var/db/pkg/"local.sqlite* 2>&1
             echo "--- DECISIVE: run the REAL batch purge early, on OUR libc ---"
@@ -279,7 +280,6 @@ if [ -f "$NEXTBSD_BASE_ARTIFACT" ]; then
             # Reproduce the exact purge command here, before any Apple build,
             # so we know if it's libc/version (reproduces now) or build-state
             # WAL (only after the build). Capture pkg's own sqlite error.
-            set +e
             echo ">>> pkg delete BUILD_PKGS"
             chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
                 pkg delete -y $BUILD_PKGS 2>&1 | tail -25
