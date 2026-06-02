@@ -96,7 +96,7 @@ jobs:
           GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
         run: |
           KRUN=$(gh run list -R nextbsd-redux/nextbsd-kernel \
-            -w "Build NextBSD Kernel" --branch peel-runtime-libs --status success \
+            -w "Build NextBSD Kernel" --branch main --status success \
             --limit 1 --json databaseId -q '.[0].databaseId')
           echo "nextbsd-kernel run: ${KRUN:-<none>}"
           if [ -n "$KRUN" ]; then
@@ -120,7 +120,7 @@ jobs:
           GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
         run: |
           MRUN=$(gh run list -R nextbsd-redux/nextbsd-kernel-modules \
-            -w "Build NextBSD Modules" --branch peel-runtime-libs --status success \
+            -w "Build NextBSD Modules" --branch main --status success \
             --limit 1 --json databaseId -q '.[0].databaseId')
           echo "nextbsd-kernel-modules run: ${MRUN:-<none>}"
           if [ -n "$MRUN" ]; then
