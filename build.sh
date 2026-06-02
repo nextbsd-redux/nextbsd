@@ -96,12 +96,23 @@ tar -xzf "$NEXTBSD_BASE_ARTIFACT" -C "$WORK/rootfs"
 # Minimal /etc + /var the in-chroot pkg needs (our artifact ships no /etc,/var).
 mkdir -p "$WORK/rootfs/etc/ssl" "$WORK/rootfs/etc/pkg" \
          "$WORK/rootfs/var/db/pkg" "$WORK/rootfs/var/cache/pkg" \
-         "$WORK/rootfs/var/run" "$WORK/rootfs/usr/local/sbin" \
+         "$WORK/rootfs/var/run" "$WORK/rootfs/var/log" "$WORK/rootfs/var/empty" \
+         "$WORK/rootfs/var/tmp" "$WORK/rootfs/usr/local/sbin" \
          "$WORK/rootfs/usr/local/bin" "$WORK/rootfs/tmp" "$WORK/rootfs/dev" \
          "$WORK/rootfs/usr/share/man/man1" "$WORK/rootfs/usr/share/man/man3" \
          "$WORK/rootfs/usr/share/man/man5" "$WORK/rootfs/usr/share/man/man7" \
          "$WORK/rootfs/usr/share/man/man8" "$WORK/rootfs/usr/share/openssl"
-chmod 1777 "$WORK/rootfs/tmp"
+chmod 1777 "$WORK/rootfs/tmp" "$WORK/rootfs/var/tmp"
+# utmpx session files so login/PAM can record logins. pkgbase's /var skeleton
+# used to ship these; overlay-first hand-builds /var. Without them PAM's
+# pam_open_session fails "Unable to write the utmp record" -> "system error"
+# -> login aborts before execing root's shell -> "no response after sending
+# root". Empty files are fine (login/init populate them).
+: > "$WORK/rootfs/var/run/utx.active"
+: > "$WORK/rootfs/var/log/utx.lastlogin"
+: > "$WORK/rootfs/var/log/utx.log"
+chmod 644 "$WORK/rootfs/var/run/utx.active" \
+          "$WORK/rootfs/var/log/utx.lastlogin" "$WORK/rootfs/var/log/utx.log"
 # user/group db so pkg's install chown(root:wheel) resolves names.
 cp "$ROOT/overlays/etc/master.passwd" "$WORK/rootfs/etc/master.passwd"
 cp "$ROOT/overlays/etc/group"         "$WORK/rootfs/etc/group"
