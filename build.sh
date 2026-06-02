@@ -126,6 +126,10 @@ FreeBSD: {
   enabled: yes
 }
 EOF
+# pkg loads BOTH trusted/ and revoked/ fingerprint dirs; our share/keys ships
+# trusted/ but the empty revoked/ dir isn't installed -> "Error loading revoked
+# certificates". Create it (empty = nothing revoked).
+mkdir -p "$WORK/rootfs/usr/share/keys/pkg/revoked"
 echo "    base files: $(find "$WORK/rootfs" -type f | wc -l | tr -d ' ') | pkg: $(ls "$WORK/rootfs/usr/sbin/pkg" 2>/dev/null && echo present) | keys: $(ls "$WORK/rootfs/usr/share/keys/pkg/trusted/" 2>/dev/null | head -1)"
 
 # TRANSIENT build shell + coreutils. The early in-chroot pkg phase (pkg
