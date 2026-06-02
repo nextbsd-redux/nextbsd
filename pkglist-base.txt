@@ -26,7 +26,10 @@
 # libthread_db (gdb-only), libmagic (file(1)-only).
 
 # ---- bootloader + kernel ----
-FreeBSD-bootloader
+# FreeBSD-bootloader REMOVED 2026-06-02 — the loader now comes from compat
+# (stand/ from source): /boot/loader_lua.efi + lua scripts + boot blocks,
+# overlaid onto rootfs. The LAST pkgbase content package in the ISO.
+#FreeBSD-bootloader
 # FreeBSD-kernel-generic REMOVED 2026-06-01 — the kernel now comes from the
 # nextbsd-kernel repo (ident NEXTBSD, = GENERIC), ingested by build.sh step
 # 3a4 from the nextbsd-kernel-amd64 artifact and installed to
