@@ -159,7 +159,7 @@ fi
 # from the VM base, NO-CLOBBER (-n) so our from-source base (libc, fbsdglue,
 # loader, ...) and the /bin/sh symlink are preserved. These are BUILD tools;
 # the pkg DB stays free of base packages (copied files, not pkg-managed).
-for d in bin usr/bin usr/sbin; do
+for d in bin sbin usr/bin usr/sbin; do
     mkdir -p "$WORK/rootfs/$d"
     cp -RpPn "/$d/." "$WORK/rootfs/$d/" 2>/dev/null || true
 done
@@ -329,6 +329,11 @@ fi
 #      the in-chroot pkg bootstrapped ports ON it. Nothing to overlay here.
 #
 echo "==> from-source base is the rootfs (overlay-first); zero pkgbase base pkgs"
+# Overlay-first installs NO pkgbase base packages, so these lists are empty.
+# Keep them DEFINED (set -u) — the end-of-build purge still references
+# BASE_BUILD_PKGS. (pklist-base.txt/buildpkgs-base.txt are now historical.)
+BASE_PKGS=""
+BASE_BUILD_PKGS=""
 
 #
 # 3a. extract src.txz to $WORK/freebsd-src. Used for two things in
