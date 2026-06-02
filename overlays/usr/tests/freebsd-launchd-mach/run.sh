@@ -825,8 +825,21 @@ done
 if pgrep -x notifyd >/dev/null 2>&1; then
     echo "NOTIFYD-PROC-OK: notifyd running as pid $(pgrep -x notifyd)"
 else
+    # DIAG: dump launchd's view BEFORE the FAIL token (the expect harness
+    # kills the VM on NOTIFYD-PROC-FAIL). launchctl list's Status column =
+    # the job's last wait status: a small +N is exit(N); a value encoding a
+    # signal (or 0x8N / negative) means killed by signal N (e.g. 9=SIGKILL).
+    echo "=== NOTIFYD-PROC diagnostics (pre-FAIL) ==="
+    echo "--- pgrep -fl notifyd (any process, any name) ---"
+    pgrep -fl notifyd || echo "(no process matches 'notifyd')"
+    echo "--- ps auxww | grep notifyd ---"
+    ps auxww | grep -E 'notifyd' | grep -v grep || echo "(none in ps)"
+    echo "--- launchctl list | grep notifyd (PID Status Label) ---"
+    launchctl list 2>/dev/null | grep -iE 'notifyd' || echo "(notifyd not in launchctl list)"
+    echo "--- launchctl list com.apple.notifyd (LastExitStatus) ---"
+    launchctl list com.apple.notifyd 2>&1 | grep -iE 'PID|Status|LastExit|Label' || true
+    echo "=== end NOTIFYD-PROC diagnostics ==="
     echo "NOTIFYD-PROC-FAIL: notifyd not running"
-    ps auxww | grep -E 'syslogd|notifyd' || true
     exit 1
 fi
 
