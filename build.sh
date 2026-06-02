@@ -445,7 +445,8 @@ make -C "$ROOT/src/shell_cmds" install DESTDIR="$WORK/rootfs"
 # the early pkg phase. Verify it runs (links our base libs) before relying on
 # it as root's login shell.
 echo "==> building /bin/sh from source (src/shell_cmds/sh)"
-make -C "$ROOT/src/shell_cmds/sh" DESTDIR="$WORK/rootfs" BINDIR=/bin MK_MAN=no all install
+make -C "$ROOT/src/shell_cmds/sh" DESTDIR="$WORK/rootfs" BINDIR=/bin \
+    MK_MAN=no MK_TESTS=no all install
 [ -x "$WORK/rootfs/bin/sh" ] || { echo "ERROR: /bin/sh not installed from source" >&2; exit 1; }
 chroot "$WORK/rootfs" /bin/sh -c 'echo SH-FROM-SOURCE-OK' \
     || { echo "ERROR: from-source /bin/sh failed to run in chroot" >&2; exit 1; }
