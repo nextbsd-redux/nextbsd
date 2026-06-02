@@ -118,6 +118,11 @@ echo "    cert.pem: $(grep -c 'BEGIN CERT' "$WORK/rootfs/etc/ssl/cert.pem" 2>/de
 for f in nsswitch.conf hosts services protocols; do
     [ -e "$WORK/rootfs/etc/$f" ] || cp -p "/etc/$f" "$WORK/rootfs/etc/$f" 2>/dev/null || true
 done
+# rc.subr + defaults/rc.conf so pkg post-install/post-deinstall scripts that
+# source /etc/rc.subr don't fail (transient build config).
+[ -e "$WORK/rootfs/etc/rc.subr" ] || cp -p /etc/rc.subr "$WORK/rootfs/etc/rc.subr" 2>/dev/null || true
+mkdir -p "$WORK/rootfs/etc/defaults"
+[ -e "$WORK/rootfs/etc/defaults/rc.conf" ] || cp -p /etc/defaults/rc.conf "$WORK/rootfs/etc/defaults/rc.conf" 2>/dev/null || true
 # PORTS repo (NOT base): pkg bootstrap fetches the real pkg(8) + cmake/ninja/
 # llvm19 from here, verified against our /usr/share/keys/pkg fingerprints.
 cat > "$WORK/rootfs/etc/pkg/FreeBSD.conf" <<'EOF'
@@ -2482,15 +2487,19 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/pammodulestest" \
 #
 if [ -n "$BUILD_PKGS" ] || [ -n "$BASE_BUILD_PKGS" ]; then
     echo "==> purging build packages (ports + pkgbase build-only)"
+    # `|| true`: build-pkg POST-DEINSTALL scripts (service restarts, etc.) can
+    # fail in our minimal transient /etc and make pkg exit non-zero — but the
+    # packages ARE removed (the purge goal). The build tools are being deleted
+    # anyway, so their script outcomes don't matter.
     if [ -n "$BUILD_PKGS" ]; then
         # shellcheck disable=SC2086
         chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
-            pkg delete -y $BUILD_PKGS
+            pkg delete -y $BUILD_PKGS || true
     fi
     if [ -n "$BASE_BUILD_PKGS" ]; then
         # shellcheck disable=SC2086
         chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
-            pkg delete -y $BASE_BUILD_PKGS
+            pkg delete -y $BASE_BUILD_PKGS || true
     fi
     # pkg autoremove DISABLED 2026-05-27 — when no installed pkg
     # requires FreeBSD-runtime (consumers libarchive/libexecinfo/mtree/
