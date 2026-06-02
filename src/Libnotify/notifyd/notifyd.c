@@ -1475,6 +1475,7 @@ main(int argc, const char *argv[])
 	});
 	xpc_event_publisher_set_throttling(publisher, INFLIGHT_XPC_EVENT_HARD_LIMIT);
 	xpc_event_publisher_activate(publisher);
+	fprintf(stderr, "notifyd[%d]: CP11 after xpc_event_publisher_activate\n", getpid()); fflush(stderr);
 
 	/* Set up SIGUSR1 */
 	global.sig_usr1_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL,
@@ -1501,6 +1502,7 @@ main(int argc, const char *argv[])
 		else global.log_cutoff = ASL_LEVEL_DEBUG;
 	});
 	dispatch_activate(global.sig_winch_src);
+	fprintf(stderr, "notifyd[%d]: CP12 after signal sources\n", getpid()); fflush(stderr);
 
 	global.stat_reset_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, global.workloop);
 	{
@@ -1527,5 +1529,6 @@ main(int argc, const char *argv[])
 		notify_reset_stats();
 	});
 
+	fprintf(stderr, "notifyd[%d]: CP13 reaching dispatch_main\n", getpid()); fflush(stderr);
 	dispatch_main();
 }
