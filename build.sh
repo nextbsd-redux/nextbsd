@@ -798,6 +798,7 @@ echo "==> building migcom (early, for libdispatch HAVE_MACH path)"
 make -C "$ROOT/src/bootstrap_cmds/migcom.tproj" \
     DESTDIR="$WORK/rootfs" \
     BINDIR=/usr/libexec \
+    MK_MAN=no \
     all install
 install -m 0755 "$ROOT/src/bootstrap_cmds/migcom.tproj/mig.sh" \
                 "$WORK/rootfs/usr/bin/mig"
