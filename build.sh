@@ -78,36 +78,67 @@ fi
 # / FreeBSD-runtime pkg post-install scripts rebuild login.conf.db and
 # pwd.db / spwd.db automatically.
 #
-echo "==> writing pkgbase repo config (${PKG_ABI}, base_latest)"
-mkdir -p "$PKG_CONFIG" "$WORK/rootfs"
-cat > "$PKG_CONFIG/FreeBSD-base.conf" <<EOF
-FreeBSD-base: {
-  url: "https://pkg.freebsd.org/${PKG_ABI}/base_latest",
+# OVERLAY-FIRST (pkgbase-free): lay our COMPLETE from-source base into the
+# rootfs FIRST (libc + all libs + pkg + loader + headers + certs + pkg keys),
+# bootstrap a minimal /etc + TLS by hand, then pkg-bootstrap ON our base and
+# install ONLY ports build tools. NO pkgbase base package is EVER installed —
+# the shipped pkg DB contains zero base packages. (pkglist-base.txt and
+# buildpkgs-base.txt are now both effectively empty / historical.)
+NEXTBSD_BASE_ARTIFACT="${NEXTBSD_BASE_ARTIFACT:-$ROOT/base-artifact/nextbsd-base-amd64.tar.gz}"
+if [ ! -f "$NEXTBSD_BASE_ARTIFACT" ]; then
+    echo "ERROR: from-source base artifact missing: $NEXTBSD_BASE_ARTIFACT" >&2
+    echo "       (overlay-first assembly requires it — no pkgbase fallback)" >&2
+    exit 1
+fi
+echo "==> overlay-first: laying from-source base into $WORK/rootfs"
+mkdir -p "$WORK/rootfs"
+tar -xzf "$NEXTBSD_BASE_ARTIFACT" -C "$WORK/rootfs"
+# Minimal /etc + /var the in-chroot pkg needs (our artifact ships no /etc,/var).
+mkdir -p "$WORK/rootfs/etc/ssl" "$WORK/rootfs/etc/pkg" \
+         "$WORK/rootfs/var/db/pkg" "$WORK/rootfs/var/cache/pkg" \
+         "$WORK/rootfs/var/run" "$WORK/rootfs/usr/local/sbin" \
+         "$WORK/rootfs/usr/local/bin" "$WORK/rootfs/tmp" "$WORK/rootfs/dev"
+chmod 1777 "$WORK/rootfs/tmp"
+# user/group db so pkg's install chown(root:wheel) resolves names.
+cp "$ROOT/overlays/etc/master.passwd" "$WORK/rootfs/etc/master.passwd"
+cp "$ROOT/overlays/etc/group"         "$WORK/rootfs/etc/group"
+pwd_mkdb -p -d "$WORK/rootfs/etc" "$WORK/rootfs/etc/master.passwd"
+# CA bundle for pkg's https fetch — concatenate our caroot trusted certs.
+cat "$WORK/rootfs/usr/share/certs/trusted/"*.pem \
+    > "$WORK/rootfs/etc/ssl/cert.pem" 2>/dev/null
+echo "    cert.pem: $(grep -c 'BEGIN CERT' "$WORK/rootfs/etc/ssl/cert.pem" 2>/dev/null) CA certs"
+# PORTS repo (NOT base): pkg bootstrap fetches the real pkg(8) + cmake/ninja/
+# llvm19 from here, verified against our /usr/share/keys/pkg fingerprints.
+cat > "$WORK/rootfs/etc/pkg/FreeBSD.conf" <<'EOF'
+FreeBSD: {
+  url: "pkg+https://pkg.freebsd.org/${ABI}/latest",
+  mirror_type: "srv",
+  signature_type: "fingerprints",
+  fingerprints: "/usr/share/keys/pkg",
   enabled: yes
 }
 EOF
+echo "    base files: $(find "$WORK/rootfs" -type f | wc -l | tr -d ' ') | pkg: $(ls "$WORK/rootfs/usr/sbin/pkg" 2>/dev/null && echo present) | keys: $(ls "$WORK/rootfs/usr/share/keys/pkg/trusted/" 2>/dev/null | head -1)"
 
-BASE_PKGS=$(     grep -v '^[[:space:]]*#' "$ROOT/pkglist-base.txt"   2>/dev/null | grep -v '^[[:space:]]*$' || true)
-BASE_BUILD_PKGS=$(grep -v '^[[:space:]]*#' "$ROOT/buildpkgs-base.txt" 2>/dev/null | grep -v '^[[:space:]]*$' || true)
-
-if [ -z "$BASE_PKGS" ]; then
-    echo "ERROR: pkglist-base.txt is empty; refusing to build empty rootfs" >&2
-    exit 1
+# TRANSIENT build shell + coreutils. The early in-chroot pkg phase (pkg
+# bootstrap + ports install) and pkg post-install scripts need /bin/sh +
+# coreutils (awk/sed/grep/cp/mkdir/...), but our from-source base deliberately
+# excludes them — Apple's shell_cmds/file_cmds/text_cmds build the SHIPPED
+# /bin/sh + coreutils LATER (overwriting these). Bootstrap with the VM's
+# STATIC /rescue toolset (one binary, no libc dependency, so it runs
+# regardless of our libc), symlinked to the standard names. BUILD-ONLY: the
+# Apple suites replace each name with the real shipped binary before mkuzip.
+if [ -d /rescue ]; then
+    echo "==> transient build shell from static /rescue (overwritten by Apple suites)"
+    cp -a /rescue "$WORK/rootfs/rescue"
+    for t in $(ls /rescue); do
+        for d in bin usr/bin sbin usr/sbin; do
+            [ -e "$WORK/rootfs/$d/$t" ] || ln -sf "/rescue/$t" "$WORK/rootfs/$d/$t"
+        done
+    done
+    [ -e "$WORK/rootfs/bin/sh" ] || ln -sf /rescue/sh "$WORK/rootfs/bin/sh"
+    echo "    /bin/sh -> $(readlink "$WORK/rootfs/bin/sh" 2>/dev/null || echo '(real)'); rescue tools: $(ls /rescue | wc -l | tr -d ' ')"
 fi
-
-# Single combined install — runtime + build-only — so the dep solver
-# resolves once. buildpkgs-base.txt entries get pkg deleted at the end of
-# step 3 alongside buildpkgs.txt.
-echo "==> installing pkgbase runtime + build pkgs into $WORK/rootfs"
-echo "$BASE_PKGS" | sed 's/^/    runtime  /'
-echo "$BASE_BUILD_PKGS" | sed 's/^/    build    /'
-# shellcheck disable=SC2086
-env ABI="${PKG_ABI}" \
-    OSVERSION="${PKG_MAJOR}00000" \
-    IGNORE_OSVERSION=yes \
-    ASSUME_ALWAYS_YES=yes \
-    pkg -R "$PKG_CONFIG" -r "$WORK/rootfs" install -y -r FreeBSD-base \
-        $BASE_PKGS $BASE_BUILD_PKGS
 
 #
 # 3. chroot: install runtime pkgs (pkglist.txt) + build pkgs (buildpkgs.txt)
@@ -157,7 +188,12 @@ if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
     }
     trap cleanup_chroot EXIT INT TERM
 
-    chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes IGNORE_OSVERSION=yes pkg bootstrap -f
+    # Bootstrap the real pkg(8) ON our from-source base: our /usr/sbin/pkg
+    # (the base pkg(7) bootstrap) reads /etc/pkg/FreeBSD.conf (PORTS repo) and
+    # fetches+verifies pkg(8) against our /usr/share/keys/pkg fingerprints.
+    # No pkgbase involved. ABI pinned so it targets FreeBSD:15:amd64 ports.
+    chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes IGNORE_OSVERSION=yes \
+        ABI="${PKG_ABI}" pkg bootstrap -f
 
     # Single combined install for runtime + drivers so the dep solver
     # runs once. Drivers are logged as their own category for clarity,
@@ -250,51 +286,11 @@ if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
 fi
 
 #
-# 3a0. STAGE 1 — download + VERIFY the nextbsd-freebsd-compat from-source base
-#      artifact, NON-DESTRUCTIVELY. Confirms the cross-repo download + extract
-#      works and the artifact is valid/complete, WITHOUT touching the rootfs.
-#      (A full overlay onto pkgbase breaks the in-chroot clang build — our
-#      /usr/include conflicts with pkgbase's compiler setup, e.g. stdint.h. The
-#      real rootfs replacement is stage 2, when pkgbase base is removed and the
-#      compiler comes from ports.) The artifact is downloaded on the CI host
-#      into $ROOT/base-artifact/ and rsync'd into the VM by vmactions.
+# 3a0. (was the verify/overlay step) — the from-source base is now laid into
+#      the rootfs at the TOP of this script (overlay-first, pkgbase-free), and
+#      the in-chroot pkg bootstrapped ports ON it. Nothing to overlay here.
 #
-NEXTBSD_BASE_ARTIFACT="${NEXTBSD_BASE_ARTIFACT:-$ROOT/base-artifact/nextbsd-base-amd64.tar.gz}"
-if [ -f "$NEXTBSD_BASE_ARTIFACT" ]; then
-    echo "==> verifying nextbsd-freebsd-compat base artifact: $NEXTBSD_BASE_ARTIFACT"
-    VBASE="$WORK/nextbsd-base-verify"
-    rm -rf "$VBASE"; mkdir -p "$VBASE"
-    tar -xzf "$NEXTBSD_BASE_ARTIFACT" -C "$VBASE"
-    echo "    extracted OK ($(du -sh "$VBASE" | cut -f1)); key paths:"
-    for f in lib/libc.so.7 libexec/ld-elf.so.1 sbin/kldload sbin/mount \
-             usr/sbin/pw usr/sbin/pkg usr/include/stdint.h usr/include/sys/types.h; do
-        if [ -e "$VBASE/$f" ]; then echo "      OK   $f"; else echo "      MISS $f"; fi
-    done
-    echo "    stage 1 = verify only (unless NEXTBSD_BASE_FROM_SOURCE=1)"
-    # STAGE 2 — when NEXTBSD_BASE_FROM_SOURCE=1, OVERLAY our from-source base
-    # onto the rootfs (replacing pkgbase base files). chflags clears pkgbase's
-    # schg-immutable libc/rtld first. Step 1 tests whether the now-complete
-    # headers let the in-chroot Apple builds work. (pkgbase base still present;
-    # peeling base packages out comes next, incrementally.)
-    if [ "${NEXTBSD_BASE_FROM_SOURCE:-0}" = "1" ]; then
-        echo "==> STAGE 2: overlaying from-source base onto rootfs"
-        chflags -R noschg "$WORK/rootfs" 2>/dev/null || true
-        # Exclude our pkg BOOTSTRAP stub — the chroot keeps its real pkg + DB
-        # for the build (ours is for the final image, handled in stage 2+).
-        # NOTE: the from-source base now ships lib/libthr (compat srclist) so
-        # the overlay replaces the chroot's snapshot libthr with a libthr that
-        # matches our p9 libc. Without that, the libc<->libthr
-        # __libc_interposing ABI skew (p9 libc INTERPOS_MAX=45 vs snapshot
-        # libthr MAX=46) was an out-of-bounds interpose write that corrupted
-        # libc globals — pkg's sqlite DELETE failed with "locking protocol"
-        # (DB fd went EBADF). See nextbsd-freebsd-compat PR #4.
-        tar -xzf "$NEXTBSD_BASE_ARTIFACT" -C "$WORK/rootfs" \
-            --exclude 'usr/sbin/pkg' --exclude './usr/sbin/pkg'
-        echo "    from-source base overlaid onto rootfs (libthr matched, pkg stub excluded)"
-    fi
-else
-    echo "==> NOTE: no nextbsd base artifact at $NEXTBSD_BASE_ARTIFACT — skipping"
-fi
+echo "==> from-source base is the rootfs (overlay-first); zero pkgbase base pkgs"
 
 #
 # 3a. extract src.txz to $WORK/freebsd-src. Used for two things in
