@@ -2696,6 +2696,38 @@ makefs -t ffs -B little \
     "$WORK/rootfs.ufs" "$WORK/rootfs"
 ls -lh "$WORK/rootfs.ufs"
 
+# 6a-DIAG: reproduce launchd's ro->rw remount on the freshly-built image.
+# The build VM is FreeBSD/root, so we can mdconfig the bare UFS, mount it
+# read-only exactly as the kernel does at boot, then run the SAME
+# `fsck -p` + `mount -uw` launchd runs as PID 1 — capturing the real error
+# (which at boot is lost to the quiet console). Fully guarded; never fatal.
+echo "==> [mount-uw DIAG] reproducing launchd rw-remount on rootfs.ufs"
+( set +e
+  _md=$(mdconfig -a -t vnode -f "$WORK/rootfs.ufs" 2>/dev/null)
+  echo "    md device: ${_md:-<none>}"
+  if [ -n "$_md" ]; then
+    sync; sleep 1
+    echo "    geom-labelled as: $(ls -l /dev/ufs/ROOTFS 2>&1)"
+    mkdir -p /tmp/uwtest
+    echo "    --- mount -r /dev/$_md /tmp/uwtest ---"
+    mount -r "/dev/$_md" /tmp/uwtest 2>&1; echo "    mount -r exit=$?"
+    echo "    --- fsck -p /tmp/uwtest (launchd step 1) ---"
+    fsck -p "/dev/$_md" 2>&1; echo "    fsck -p exit=$?"
+    echo "    --- mount -uw /tmp/uwtest (launchd step 2, THE failing call) ---"
+    mount -uw /tmp/uwtest 2>&1; echo "    mount -uw exit=$?"
+    echo "    --- post-state ---"
+    mount | grep -E 'uwtest|/dev/'"$_md" 2>&1
+    touch /tmp/uwtest/.uw_probe 2>&1 && echo "    write probe: OK" || echo "    write probe: FAILED"
+    rm -f /tmp/uwtest/.uw_probe 2>/dev/null
+    umount /tmp/uwtest 2>/dev/null
+    mdconfig -d -u "${_md#md}" 2>/dev/null
+  else
+    echo "    mdconfig failed; skipping DIAG"
+  fi
+  true
+)
+echo "==> [mount-uw DIAG] end"
+
 # 6b. EFI System Partition — FAT, FreeBSD's loader.efi at the UEFI
 #     fallback path /EFI/BOOT/BOOTX64.EFI. 33 MB / FAT32, matching
 #     FreeBSD's own release images (a smaller ESP drops makefs to
