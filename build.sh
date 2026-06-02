@@ -97,7 +97,10 @@ tar -xzf "$NEXTBSD_BASE_ARTIFACT" -C "$WORK/rootfs"
 mkdir -p "$WORK/rootfs/etc/ssl" "$WORK/rootfs/etc/pkg" \
          "$WORK/rootfs/var/db/pkg" "$WORK/rootfs/var/cache/pkg" \
          "$WORK/rootfs/var/run" "$WORK/rootfs/usr/local/sbin" \
-         "$WORK/rootfs/usr/local/bin" "$WORK/rootfs/tmp" "$WORK/rootfs/dev"
+         "$WORK/rootfs/usr/local/bin" "$WORK/rootfs/tmp" "$WORK/rootfs/dev" \
+         "$WORK/rootfs/usr/share/man/man1" "$WORK/rootfs/usr/share/man/man3" \
+         "$WORK/rootfs/usr/share/man/man5" "$WORK/rootfs/usr/share/man/man7" \
+         "$WORK/rootfs/usr/share/man/man8" "$WORK/rootfs/usr/share/openssl"
 chmod 1777 "$WORK/rootfs/tmp"
 # user/group db so pkg's install chown(root:wheel) resolves names.
 cp "$ROOT/overlays/etc/master.passwd" "$WORK/rootfs/etc/master.passwd"
@@ -155,6 +158,19 @@ for d in bin usr/bin usr/sbin; do
     mkdir -p "$WORK/rootfs/$d"
     cp -RpPn "/$d/." "$WORK/rootfs/$d/" 2>/dev/null || true
 done
+# The transient VM tools link FreeBSD "private" libs (libprivate*.so) our base
+# doesn't ship — copy them transiently so those tools run (e.g. kldxref ->
+# libprivatekldelf). No-clobber preserves our libprivatezstd etc.
+cp -RpPn /lib/libprivate*.so* "$WORK/rootfs/lib/" 2>/dev/null || true
+cp -RpPn /usr/lib/libprivate*.so* "$WORK/rootfs/usr/lib/" 2>/dev/null || true
+# Drop the VM base toolchain binaries (cc/clang/ld/...) so the ONLY compiler
+# is the ports-llvm19 shim (/usr/local/bin/cc). Otherwise the VM cc (which
+# needs libprivateclang) would shadow the shim via PATH order.
+rm -f "$WORK/rootfs"/usr/bin/cc "$WORK/rootfs"/usr/bin/c++ \
+      "$WORK/rootfs"/usr/bin/cpp "$WORK/rootfs"/usr/bin/clang \
+      "$WORK/rootfs"/usr/bin/clang++ "$WORK/rootfs"/usr/bin/clang-cpp \
+      "$WORK/rootfs"/usr/bin/CC "$WORK/rootfs"/usr/bin/ld \
+      "$WORK/rootfs"/usr/bin/ld.lld 2>/dev/null || true
 echo "    /bin/sh -> $(readlink "$WORK/rootfs/bin/sh" 2>/dev/null || echo real) | /usr/bin tools: $(ls "$WORK/rootfs/usr/bin" 2>/dev/null | wc -l | tr -d ' ') | env: $(ls "$WORK/rootfs/usr/bin/env" 2>/dev/null && echo ok)"
 
 #
