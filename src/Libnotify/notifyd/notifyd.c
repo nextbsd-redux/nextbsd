@@ -1529,6 +1529,7 @@ main(int argc, const char *argv[])
 		notify_reset_stats();
 	});
 
-	fprintf(stderr, "notifyd[%d]: CP13 reaching dispatch_main\n", getpid()); fflush(stderr);
+	fprintf(stderr, "notifyd[%d]: CP13 reaching dispatch_main (progname=%s)\n", getpid(), getprogname()); fflush(stderr);
 	dispatch_main();
+	fprintf(stderr, "notifyd[%d]: CP14 dispatch_main RETURNED (libdispatch did not block!)\n", getpid()); fflush(stderr);
 }
