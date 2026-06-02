@@ -2686,6 +2686,34 @@ chroot "$WORK/rootfs" /usr/bin/cap_mkdb /etc/login.conf
 CONTENT_BYTES=$(du -sk "$WORK/rootfs" | awk '{print $1*1024}')
 echo "==> rootfs content = $CONTENT_BYTES bytes ($((CONTENT_BYTES / 1024 / 1024)) MiB)"
 
+# 5z. ELF shared-library closure check. overlay-first builds the base from
+#     a curated srclist; any tool whose NEEDED soname isn't provided in the
+#     rootfs fails at ld-elf.so.1 load time (e.g. /sbin/mount needing the
+#     silently-pkgbase-provided libxo.so.0 -> launchd's rw remount exited 1
+#     -> read-only root). Scan every ELF's NEEDED entries against the .so
+#     files actually present in the rootfs and report any with no provider.
+#     Diagnostic only (never fatal): surfaces the COMPLETE missing-lib set
+#     in one build instead of one boot-failure round-trip per missing lib.
+echo "==> [libscan] ELF shared-library closure over rootfs"
+( set +e
+  RF="$WORK/rootfs"
+  find "$RF" \( -name '*.so' -o -name '*.so.*' \) \( -type f -o -type l \) \
+      -exec basename {} \; 2>/dev/null | sort -u > /tmp/provided.txt
+  : > /tmp/needed.txt
+  find "$RF/bin" "$RF/sbin" "$RF/usr/bin" "$RF/usr/sbin" "$RF/libexec" \
+       "$RF/lib" "$RF/usr/lib" "$RF/usr/libexec" -type f 2>/dev/null | while IFS= read -r f; do
+    readelf -d "$f" 2>/dev/null | sed -n 's/.*(NEEDED).*\[\(.*\)\].*/\1/p'
+  done | sort -u > /tmp/needed.txt
+  echo "    provided .so files: $(wc -l < /tmp/provided.txt), distinct NEEDED sonames: $(wc -l < /tmp/needed.txt)"
+  miss=0
+  while IFS= read -r so; do
+    [ -z "$so" ] && continue
+    grep -qx "$so" /tmp/provided.txt || { echo "    MISSING: $so"; miss=$((miss+1)); }
+  done < /tmp/needed.txt
+  echo "    total NEEDED sonames with no provider in rootfs: $miss"
+)
+echo "==> [libscan] end"
+
 # 6a. root UFS — content plus ~1.5 GB read-write headroom. UFS label
 #     "ROOTFS" matches loader.conf.d's vfs.root.mountfrom and the
 #     overlays/etc/fstab entry. softupdates for crash resilience.
@@ -2695,38 +2723,6 @@ makefs -t ffs -B little \
     -b 1500m \
     "$WORK/rootfs.ufs" "$WORK/rootfs"
 ls -lh "$WORK/rootfs.ufs"
-
-# 6a-DIAG: reproduce launchd's ro->rw remount on the freshly-built image.
-# The build VM is FreeBSD/root, so we can mdconfig the bare UFS, mount it
-# read-only exactly as the kernel does at boot, then run the SAME
-# `fsck -p` + `mount -uw` launchd runs as PID 1 — capturing the real error
-# (which at boot is lost to the quiet console). Fully guarded; never fatal.
-echo "==> [mount-uw DIAG] reproducing launchd rw-remount on rootfs.ufs"
-( set +e
-  _md=$(mdconfig -a -t vnode -f "$WORK/rootfs.ufs" 2>/dev/null)
-  echo "    md device: ${_md:-<none>}"
-  if [ -n "$_md" ]; then
-    sync; sleep 1
-    echo "    geom-labelled as: $(ls -l /dev/ufs/ROOTFS 2>&1)"
-    mkdir -p /tmp/uwtest
-    echo "    --- mount -r /dev/$_md /tmp/uwtest ---"
-    mount -r "/dev/$_md" /tmp/uwtest 2>&1; echo "    mount -r exit=$?"
-    echo "    --- fsck -p /tmp/uwtest (launchd step 1) ---"
-    fsck -p "/dev/$_md" 2>&1; echo "    fsck -p exit=$?"
-    echo "    --- mount -uw /tmp/uwtest (launchd step 2, THE failing call) ---"
-    mount -uw /tmp/uwtest 2>&1; echo "    mount -uw exit=$?"
-    echo "    --- post-state ---"
-    mount | grep -E 'uwtest|/dev/'"$_md" 2>&1
-    touch /tmp/uwtest/.uw_probe 2>&1 && echo "    write probe: OK" || echo "    write probe: FAILED"
-    rm -f /tmp/uwtest/.uw_probe 2>/dev/null
-    umount /tmp/uwtest 2>/dev/null
-    mdconfig -d -u "${_md#md}" 2>/dev/null
-  else
-    echo "    mdconfig failed; skipping DIAG"
-  fi
-  true
-)
-echo "==> [mount-uw DIAG] end"
 
 # 6b. EFI System Partition — FAT, FreeBSD's loader.efi at the UEFI
 #     fallback path /EFI/BOOT/BOOTX64.EFI. 33 MB / FAT32, matching
