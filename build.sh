@@ -115,7 +115,7 @@ echo "    cert.pem: $(grep -c 'BEGIN CERT' "$WORK/rootfs/etc/ssl/cert.pem" 2>/de
 # address -> "Can't assign requested address"). nsswitch.conf=files+dns,
 # hosts=localhost, services=port names (https->443), protocols. Transient
 # build config (nextbsd's overlays/etc owns the shipped ones).
-for f in nsswitch.conf hosts services protocols; do
+for f in nsswitch.conf hosts services protocols gettytab ttys; do
     [ -e "$WORK/rootfs/etc/$f" ] || cp -p "/etc/$f" "$WORK/rootfs/etc/$f" 2>/dev/null || true
 done
 # rc.subr + defaults/rc.conf so pkg post-install/post-deinstall scripts that
