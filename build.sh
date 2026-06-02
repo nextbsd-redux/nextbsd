@@ -437,19 +437,14 @@ ls -lh "$WORK/rootfs/bin/chflags" "$WORK/rootfs/bin/rm" \
 echo "==> building Apple shell_cmds (iter 1+2+3+4+5: 39 POSIX tools)"
 make -C "$ROOT/src/shell_cmds" install DESTDIR="$WORK/rootfs"
 
-# /bin/sh FROM SOURCE — the vendored FreeBSD sh in src/shell_cmds/sh (25 .c
-# files). The shell_cmds top Makefile does NOT install sh, so build+install it
-# explicitly to /bin/sh. This restores the from-source /bin/sh the old fbsdglue
-# layer built (removing fbsdglue wrongly assumed shell_cmds installs sh — it
-# only vendors the sources). Overwrites the transient bootstrap shell used for
-# the early pkg phase. Verify it runs (links our base libs) before relying on
-# it as root's login shell.
-echo "==> building /bin/sh from source (src/shell_cmds/sh)"
-make -C "$ROOT/src/shell_cmds/sh" DESTDIR="$WORK/rootfs" BINDIR=/bin \
-    MK_MAN=no MK_TESTS=no all install
-[ -x "$WORK/rootfs/bin/sh" ] || { echo "ERROR: /bin/sh not installed from source" >&2; exit 1; }
-chroot "$WORK/rootfs" /bin/sh -c 'echo SH-FROM-SOURCE-OK' \
-    || { echo "ERROR: from-source /bin/sh failed to run in chroot" >&2; exit 1; }
+# NB: /bin/sh (FreeBSD's POSIX sh) is built FROM SOURCE in nextbsd-freebsd-compat
+# (bin/sh in its srclist), not here — its FreeBSD src Makefile needs the full
+# make.py buildenv (src.opts.mk), which compat already provides for every base
+# lib. It ships in the base artifact and is laid into the rootfs at the top
+# (overlay-first), so /bin/sh is present from the first extract — covering both
+# the early pkg phase and root's login shell. (The old fbsdglue layer built it
+# the same way in the buildenv; removing fbsdglue wrongly assumed shell_cmds
+# installs sh — shell_cmds only vendors the sources, never installs /bin/sh.)
 
 for SHELLCMD_BIN in /usr/bin/true /usr/bin/false \
                     /bin/echo /bin/sleep /usr/bin/basename \
