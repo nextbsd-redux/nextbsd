@@ -437,6 +437,19 @@ ls -lh "$WORK/rootfs/bin/chflags" "$WORK/rootfs/bin/rm" \
 echo "==> building Apple shell_cmds (iter 1+2+3+4+5: 39 POSIX tools)"
 make -C "$ROOT/src/shell_cmds" install DESTDIR="$WORK/rootfs"
 
+# /bin/sh FROM SOURCE — the vendored FreeBSD sh in src/shell_cmds/sh (25 .c
+# files). The shell_cmds top Makefile does NOT install sh, so build+install it
+# explicitly to /bin/sh. This restores the from-source /bin/sh the old fbsdglue
+# layer built (removing fbsdglue wrongly assumed shell_cmds installs sh — it
+# only vendors the sources). Overwrites the transient bootstrap shell used for
+# the early pkg phase. Verify it runs (links our base libs) before relying on
+# it as root's login shell.
+echo "==> building /bin/sh from source (src/shell_cmds/sh)"
+make -C "$ROOT/src/shell_cmds/sh" DESTDIR="$WORK/rootfs" BINDIR=/bin MK_MAN=no all install
+[ -x "$WORK/rootfs/bin/sh" ] || { echo "ERROR: /bin/sh not installed from source" >&2; exit 1; }
+chroot "$WORK/rootfs" /bin/sh -c 'echo SH-FROM-SOURCE-OK' \
+    || { echo "ERROR: from-source /bin/sh failed to run in chroot" >&2; exit 1; }
+
 for SHELLCMD_BIN in /usr/bin/true /usr/bin/false \
                     /bin/echo /bin/sleep /usr/bin/basename \
                     /usr/bin/apply /usr/bin/dirname /usr/bin/env \
