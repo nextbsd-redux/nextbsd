@@ -128,17 +128,22 @@ echo "    base files: $(find "$WORK/rootfs" -type f | wc -l | tr -d ' ') | pkg: 
 # STATIC /rescue toolset (one binary, no libc dependency, so it runs
 # regardless of our libc), symlinked to the standard names. BUILD-ONLY: the
 # Apple suites replace each name with the real shipped binary before mkuzip.
+echo "==> transient build coreutils (Apple suites overwrite their subset; rest are a file-purity follow-up)"
+# Static /rescue/sh as /bin/sh — most robust (no libc dependency, for pkg's
+# #!/bin/sh post-install scripts).
 if [ -d /rescue ]; then
-    echo "==> transient build shell from static /rescue (overwritten by Apple suites)"
     cp -a /rescue "$WORK/rootfs/rescue"
-    for t in $(ls /rescue); do
-        for d in bin usr/bin sbin usr/sbin; do
-            [ -e "$WORK/rootfs/$d/$t" ] || ln -sf "/rescue/$t" "$WORK/rootfs/$d/$t"
-        done
-    done
     [ -e "$WORK/rootfs/bin/sh" ] || ln -sf /rescue/sh "$WORK/rootfs/bin/sh"
-    echo "    /bin/sh -> $(readlink "$WORK/rootfs/bin/sh" 2>/dev/null || echo '(real)'); rescue tools: $(ls /rescue | wc -l | tr -d ' ')"
 fi
+# The rest of the build/script tools (env/awk/sed/grep/make/find/install/...)
+# from the VM base, NO-CLOBBER (-n) so our from-source base (libc, fbsdglue,
+# loader, ...) and the /bin/sh symlink are preserved. These are BUILD tools;
+# the pkg DB stays free of base packages (copied files, not pkg-managed).
+for d in bin usr/bin usr/sbin; do
+    mkdir -p "$WORK/rootfs/$d"
+    cp -RpPn "/$d/." "$WORK/rootfs/$d/" 2>/dev/null || true
+done
+echo "    /bin/sh -> $(readlink "$WORK/rootfs/bin/sh" 2>/dev/null || echo real) | /usr/bin tools: $(ls "$WORK/rootfs/usr/bin" 2>/dev/null | wc -l | tr -d ' ') | env: $(ls "$WORK/rootfs/usr/bin/env" 2>/dev/null && echo ok)"
 
 #
 # 3. chroot: install runtime pkgs (pkglist.txt) + build pkgs (buildpkgs.txt)
