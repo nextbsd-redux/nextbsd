@@ -140,7 +140,10 @@ void list_all_valid_locales() {
 	static string expected[] = { "LC_COLLATE", "LC_CTYPE", "LC_MESSAGES",
 	  "LC_NUMERIC", "LC_TIME" };
 
-	for(de = readdir(d); de; de = readdir(d)) {
+	/* opendir() returns NULL when /usr/share/locale is absent (e.g. a
+	 * minimal from-source base with no locale data installed). readdir(NULL)
+	 * segfaults, so guard the scan; the built-in C/POSIX still print below. */
+	for(de = d ? readdir(d) : NULL; de; de = readdir(d)) {
 		string lname(de->d_name, de->d_namlen);
 		string ldir(locale_dir + "/" + lname);
 		int cnt = 0;
@@ -168,7 +171,7 @@ void list_all_valid_locales() {
 			}
 		}
 	}
-	closedir(d);
+	if (d) closedir(d);
 	if (!found_C) {
 		cout << "C" << endl;
 	}
@@ -184,7 +187,8 @@ void show_all_unique_codesets() {
 	static string expected[] = { "LC_COLLATE", "LC_CTYPE", "LC_MESSAGES",
 	  "LC_NUMERIC", "LC_TIME" };
 	set<string> codesets;
-	for(de = readdir(d); de; de = readdir(d)) {
+	/* see list_all_valid_locales(): guard against a missing locale dir. */
+	for(de = d ? readdir(d) : NULL; de; de = readdir(d)) {
 		string lname(de->d_name, de->d_namlen);
 		string ldir(locale_dir + "/" + lname);
 		int cnt = 0;
@@ -212,7 +216,7 @@ void show_all_unique_codesets() {
 			}
 		}
 	}
-	closedir(d);
+	if (d) closedir(d);
 }
 
 typedef map<string, keyword *> keywords_t;
