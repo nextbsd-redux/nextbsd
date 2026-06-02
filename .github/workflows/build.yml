@@ -63,17 +63,18 @@ jobs:
         id: meta
         run: echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
 
-      # STAGE 1: pull the from-source base artifact from nextbsd-freebsd-compat
-      # into the workspace ($ROOT/base-artifact/), which vmactions rsyncs into
-      # the VM. build.sh overlays it on the pkgbase base (removes nothing yet).
-      # Needs DISPATCH_TOKEN (cross-repo artifact read). amd64 only for now.
+      # Pull the from-source base artifact from nextbsd-freebsd-compat into the
+      # workspace ($ROOT/base-artifact/), which vmactions rsyncs into the VM.
+      # build.sh lays this down as the ENTIRE rootfs (overlay-first: zero
+      # pkgbase; pkg bootstraps on our own base). Needs DISPATCH_TOKEN
+      # (cross-repo artifact read). amd64 only for now.
       - name: download nextbsd base artifact
         if: matrix.arch == 'amd64'
         env:
           GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
         run: |
           RUN_ID=$(gh run list -R nextbsd-redux/nextbsd-freebsd-compat \
-            -w "Build NextBSD Base (curated)" --branch add-pkg-keys --status success \
+            -w "Build NextBSD Base (curated)" --branch main --status success \
             --limit 1 --json databaseId -q '.[0].databaseId')
           echo "nextbsd-freebsd-compat run: ${RUN_ID:-<none>}"
           if [ -n "$RUN_ID" ]; then
@@ -81,7 +82,8 @@ jobs:
               -n nextbsd-base-amd64 -D base-artifact
             ls -lh base-artifact/
           else
-            echo "no successful compat main run yet; build.sh will skip the overlay"
+            echo "ERROR: no successful compat main run — overlay-first needs the base artifact" >&2
+            exit 1
           fi
 
       # Pull the NEXTBSD kernel (ident NEXTBSD, = GENERIC) from nextbsd-kernel,
