@@ -107,6 +107,14 @@ pwd_mkdb -p -d "$WORK/rootfs/etc" "$WORK/rootfs/etc/master.passwd"
 cat "$WORK/rootfs/usr/share/certs/trusted/"*.pem \
     > "$WORK/rootfs/etc/ssl/cert.pem" 2>/dev/null
 echo "    cert.pem: $(grep -c 'BEGIN CERT' "$WORK/rootfs/etc/ssl/cert.pem" 2>/dev/null) CA certs"
+# Resolver/network config so the in-chroot pkg's getaddrinfo/getservbyname
+# work (without these, name/service lookup fails -> pkg connects to a bad
+# address -> "Can't assign requested address"). nsswitch.conf=files+dns,
+# hosts=localhost, services=port names (https->443), protocols. Transient
+# build config (nextbsd's overlays/etc owns the shipped ones).
+for f in nsswitch.conf hosts services protocols; do
+    [ -e "$WORK/rootfs/etc/$f" ] || cp -p "/etc/$f" "$WORK/rootfs/etc/$f" 2>/dev/null || true
+done
 # PORTS repo (NOT base): pkg bootstrap fetches the real pkg(8) + cmake/ninja/
 # llvm19 from here, verified against our /usr/share/keys/pkg fingerprints.
 cat > "$WORK/rootfs/etc/pkg/FreeBSD.conf" <<'EOF'
