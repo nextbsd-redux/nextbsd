@@ -1309,21 +1309,6 @@ open_shared_memory(const char *name)
 	return 0;
 }
 
-/* DIAG: notifyd reaches dispatch_main (CP13) then the process vanishes with
- * no console message (quiet console). Catch the fatal signal, write it to
- * stderr (fd 2 -> /var/log/notifyd.stderr, which the boot probe dumps), then
- * re-raise with the default disposition so the exit status is unchanged.
- * async-signal-safe: write(2) + getpid() only. */
-static void
-notifyd_crash_handler(int sig)
-{
-	char buf[64];
-	int n = snprintf(buf, sizeof(buf), "notifyd[%d]: FATAL signal %d\n", getpid(), sig);
-	if (n > 0) (void)write(2, buf, (size_t)n);
-	signal(sig, SIG_DFL);
-	raise(sig);
-}
-
 int
 main(int argc, const char *argv[])
 {
@@ -1408,11 +1393,6 @@ main(int argc, const char *argv[])
 	log_message(ASL_LEVEL_DEBUG, "--------------------\nnotifyd start PID %u\n", getpid());
 
 	fprintf(stderr, "notifyd[%d]: CP1 before init_launch_config\n", getpid()); fflush(stderr);
-	{
-		int _csig[] = { SIGSEGV, SIGBUS, SIGABRT, SIGILL, SIGFPE, SIGTRAP, SIGSYS, SIGTERM };
-		for (unsigned _i = 0; _i < sizeof(_csig)/sizeof(_csig[0]); _i++)
-			signal(_csig[_i], notifyd_crash_handler);
-	}
 	init_launch_config(service_name);
 	fprintf(stderr, "notifyd[%d]: CP2 after init_launch_config\n", getpid()); fflush(stderr);
 
@@ -1495,7 +1475,6 @@ main(int argc, const char *argv[])
 	});
 	xpc_event_publisher_set_throttling(publisher, INFLIGHT_XPC_EVENT_HARD_LIMIT);
 	xpc_event_publisher_activate(publisher);
-	fprintf(stderr, "notifyd[%d]: CP11 after xpc_event_publisher_activate\n", getpid()); fflush(stderr);
 
 	/* Set up SIGUSR1 */
 	global.sig_usr1_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL,
@@ -1522,7 +1501,6 @@ main(int argc, const char *argv[])
 		else global.log_cutoff = ASL_LEVEL_DEBUG;
 	});
 	dispatch_activate(global.sig_winch_src);
-	fprintf(stderr, "notifyd[%d]: CP12 after signal sources\n", getpid()); fflush(stderr);
 
 	global.stat_reset_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, global.workloop);
 	{
@@ -1549,7 +1527,6 @@ main(int argc, const char *argv[])
 		notify_reset_stats();
 	});
 
-	fprintf(stderr, "notifyd[%d]: CP13 reaching dispatch_main (progname=%s)\n", getpid(), getprogname()); fflush(stderr);
+	fprintf(stderr, "notifyd[%d]: CP13 reaching dispatch_main\n", getpid()); fflush(stderr);
 	dispatch_main();
-	fprintf(stderr, "notifyd[%d]: CP14 dispatch_main RETURNED (libdispatch did not block!)\n", getpid()); fflush(stderr);
 }
