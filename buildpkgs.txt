@@ -7,3 +7,9 @@ ninja
 # CMake's find_package module-mode probes use pkg-config under the
 # hood — keep pkgconf so libdispatch's cmake discovery works.
 pkgconf
+
+# clang/clang++/lld + binutils from ports (devel/llvm19) — replaces the
+# pkgbase FreeBSD-clang/lld/toolchain build compiler. build.sh symlinks the
+# unprefixed tool names (cc/ld/ar/...) from /usr/local/llvm19/bin into
+# /usr/local/bin so make/cmake/kmod builds pick it up.
+llvm19

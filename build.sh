@@ -78,36 +78,118 @@ fi
 # / FreeBSD-runtime pkg post-install scripts rebuild login.conf.db and
 # pwd.db / spwd.db automatically.
 #
-echo "==> writing pkgbase repo config (${PKG_ABI}, base_latest)"
-mkdir -p "$PKG_CONFIG" "$WORK/rootfs"
-cat > "$PKG_CONFIG/FreeBSD-base.conf" <<EOF
-FreeBSD-base: {
-  url: "https://pkg.freebsd.org/${PKG_ABI}/base_latest",
+# OVERLAY-FIRST (pkgbase-free): lay our COMPLETE from-source base into the
+# rootfs FIRST (libc + all libs + pkg + loader + headers + certs + pkg keys),
+# bootstrap a minimal /etc + TLS by hand, then pkg-bootstrap ON our base and
+# install ONLY ports build tools. NO pkgbase base package is EVER installed —
+# the shipped pkg DB contains zero base packages. (pkglist-base.txt and
+# buildpkgs-base.txt are now both effectively empty / historical.)
+NEXTBSD_BASE_ARTIFACT="${NEXTBSD_BASE_ARTIFACT:-$ROOT/base-artifact/nextbsd-base-amd64.tar.gz}"
+if [ ! -f "$NEXTBSD_BASE_ARTIFACT" ]; then
+    echo "ERROR: from-source base artifact missing: $NEXTBSD_BASE_ARTIFACT" >&2
+    echo "       (overlay-first assembly requires it — no pkgbase fallback)" >&2
+    exit 1
+fi
+echo "==> overlay-first: laying from-source base into $WORK/rootfs"
+mkdir -p "$WORK/rootfs"
+tar -xzf "$NEXTBSD_BASE_ARTIFACT" -C "$WORK/rootfs"
+# Minimal /etc + /var the in-chroot pkg needs (our artifact ships no /etc,/var).
+mkdir -p "$WORK/rootfs/etc/ssl" "$WORK/rootfs/etc/pkg" \
+         "$WORK/rootfs/var/db/pkg" "$WORK/rootfs/var/cache/pkg" \
+         "$WORK/rootfs/var/run" "$WORK/rootfs/var/log" "$WORK/rootfs/var/empty" \
+         "$WORK/rootfs/var/tmp" "$WORK/rootfs/usr/local/sbin" \
+         "$WORK/rootfs/usr/local/bin" "$WORK/rootfs/tmp" "$WORK/rootfs/dev" \
+         "$WORK/rootfs/usr/share/man/man1" "$WORK/rootfs/usr/share/man/man3" \
+         "$WORK/rootfs/usr/share/man/man5" "$WORK/rootfs/usr/share/man/man7" \
+         "$WORK/rootfs/usr/share/man/man8" "$WORK/rootfs/usr/share/openssl"
+chmod 1777 "$WORK/rootfs/tmp" "$WORK/rootfs/var/tmp"
+# utmpx session files so login/PAM can record logins. pkgbase's /var skeleton
+# used to ship these; overlay-first hand-builds /var. Without them PAM's
+# pam_open_session fails "Unable to write the utmp record" -> "system error"
+# -> login aborts before execing root's shell -> "no response after sending
+# root". Empty files are fine (login/init populate them).
+: > "$WORK/rootfs/var/run/utx.active"
+: > "$WORK/rootfs/var/log/utx.lastlogin"
+: > "$WORK/rootfs/var/log/utx.log"
+chmod 644 "$WORK/rootfs/var/run/utx.active" \
+          "$WORK/rootfs/var/log/utx.lastlogin" "$WORK/rootfs/var/log/utx.log"
+# user/group db so pkg's install chown(root:wheel) resolves names.
+cp "$ROOT/overlays/etc/master.passwd" "$WORK/rootfs/etc/master.passwd"
+cp "$ROOT/overlays/etc/group"         "$WORK/rootfs/etc/group"
+pwd_mkdb -p -d "$WORK/rootfs/etc" "$WORK/rootfs/etc/master.passwd"
+# CA bundle for pkg's https fetch — concatenate our caroot trusted certs.
+cat "$WORK/rootfs/usr/share/certs/trusted/"*.pem \
+    > "$WORK/rootfs/etc/ssl/cert.pem" 2>/dev/null
+echo "    cert.pem: $(grep -c 'BEGIN CERT' "$WORK/rootfs/etc/ssl/cert.pem" 2>/dev/null) CA certs"
+# Resolver/network config so the in-chroot pkg's getaddrinfo/getservbyname
+# work (without these, name/service lookup fails -> pkg connects to a bad
+# address -> "Can't assign requested address"). nsswitch.conf=files+dns,
+# hosts=localhost, services=port names (https->443), protocols. Transient
+# build config (nextbsd's overlays/etc owns the shipped ones).
+for f in nsswitch.conf hosts services protocols gettytab ttys; do
+    [ -e "$WORK/rootfs/etc/$f" ] || cp -p "/etc/$f" "$WORK/rootfs/etc/$f" 2>/dev/null || true
+done
+# rc.subr + defaults/rc.conf so pkg post-install/post-deinstall scripts that
+# source /etc/rc.subr don't fail (transient build config).
+[ -e "$WORK/rootfs/etc/rc.subr" ] || cp -p /etc/rc.subr "$WORK/rootfs/etc/rc.subr" 2>/dev/null || true
+mkdir -p "$WORK/rootfs/etc/defaults"
+[ -e "$WORK/rootfs/etc/defaults/rc.conf" ] || cp -p /etc/defaults/rc.conf "$WORK/rootfs/etc/defaults/rc.conf" 2>/dev/null || true
+# PORTS repo (NOT base): pkg bootstrap fetches the real pkg(8) + cmake/ninja/
+# llvm19 from here, verified against our /usr/share/keys/pkg fingerprints.
+cat > "$WORK/rootfs/etc/pkg/FreeBSD.conf" <<'EOF'
+FreeBSD: {
+  url: "pkg+https://pkg.freebsd.org/${ABI}/latest",
+  mirror_type: "srv",
+  signature_type: "fingerprints",
+  fingerprints: "/usr/share/keys/pkg",
   enabled: yes
 }
 EOF
+# pkg loads BOTH trusted/ and revoked/ fingerprint dirs; our share/keys ships
+# trusted/ but the empty revoked/ dir isn't installed -> "Error loading revoked
+# certificates". Create it (empty = nothing revoked).
+mkdir -p "$WORK/rootfs/usr/share/keys/pkg/revoked"
+echo "    base files: $(find "$WORK/rootfs" -type f | wc -l | tr -d ' ') | pkg: $(ls "$WORK/rootfs/usr/sbin/pkg" 2>/dev/null && echo present) | keys: $(ls "$WORK/rootfs/usr/share/keys/pkg/trusted/" 2>/dev/null | head -1)"
 
-BASE_PKGS=$(     grep -v '^[[:space:]]*#' "$ROOT/pkglist-base.txt"   2>/dev/null | grep -v '^[[:space:]]*$' || true)
-BASE_BUILD_PKGS=$(grep -v '^[[:space:]]*#' "$ROOT/buildpkgs-base.txt" 2>/dev/null | grep -v '^[[:space:]]*$' || true)
-
-if [ -z "$BASE_PKGS" ]; then
-    echo "ERROR: pkglist-base.txt is empty; refusing to build empty rootfs" >&2
-    exit 1
-fi
-
-# Single combined install — runtime + build-only — so the dep solver
-# resolves once. buildpkgs-base.txt entries get pkg deleted at the end of
-# step 3 alongside buildpkgs.txt.
-echo "==> installing pkgbase runtime + build pkgs into $WORK/rootfs"
-echo "$BASE_PKGS" | sed 's/^/    runtime  /'
-echo "$BASE_BUILD_PKGS" | sed 's/^/    build    /'
-# shellcheck disable=SC2086
-env ABI="${PKG_ABI}" \
-    OSVERSION="${PKG_MAJOR}00000" \
-    IGNORE_OSVERSION=yes \
-    ASSUME_ALWAYS_YES=yes \
-    pkg -R "$PKG_CONFIG" -r "$WORK/rootfs" install -y -r FreeBSD-base \
-        $BASE_PKGS $BASE_BUILD_PKGS
+# TRANSIENT build shell + coreutils. The early in-chroot pkg phase (pkg
+# bootstrap + ports install) and pkg post-install scripts need /bin/sh +
+# coreutils (awk/sed/grep/cp/mkdir/...), but our from-source base deliberately
+# excludes them — Apple's shell_cmds/file_cmds/text_cmds build the SHIPPED
+# /bin/sh + coreutils LATER (overwriting these). Bootstrap with the VM's
+# STATIC /rescue toolset (one binary, no libc dependency, so it runs
+# regardless of our libc), symlinked to the standard names. BUILD-ONLY: the
+# Apple suites replace each name with the real shipped binary before mkuzip.
+echo "==> transient build coreutils (Apple suites overwrite their subset; rest are a file-purity follow-up)"
+# NB: do NOT symlink /bin/sh -> /rescue/sh. /rescue is a crunchgen multi-call
+# binary that dispatches on basename(argv[0]); login execs the shell as "-sh"
+# (login-shell convention), which /rescue doesn't recognise -> root's shell
+# never starts ("no response after sending root"). Instead let the cp loop
+# below bring the VM's REAL /bin/sh (dynamic, links our libc which is already
+# in place). It works for pkg #!/bin/sh scripts AND as an interactive login
+# shell. (Apple shell_cmds doesn't install /bin/sh yet — that's a follow-up;
+# the old build's /bin/sh was pkgbase's, another silent pkgbase dependency.)
+# The rest of the build/script tools (env/awk/sed/grep/make/find/install/...)
+# from the VM base, NO-CLOBBER (-n) so our from-source base (libc, fbsdglue,
+# loader, ...) and the /bin/sh symlink are preserved. These are BUILD tools;
+# the pkg DB stays free of base packages (copied files, not pkg-managed).
+for d in bin sbin usr/bin usr/sbin; do
+    mkdir -p "$WORK/rootfs/$d"
+    cp -RpPn "/$d/." "$WORK/rootfs/$d/" 2>/dev/null || true
+done
+# The transient VM tools link FreeBSD "private" libs (libprivate*.so) our base
+# doesn't ship — copy them transiently so those tools run (e.g. kldxref ->
+# libprivatekldelf). No-clobber preserves our libprivatezstd etc.
+cp -RpPn /lib/libprivate*.so* "$WORK/rootfs/lib/" 2>/dev/null || true
+cp -RpPn /usr/lib/libprivate*.so* "$WORK/rootfs/usr/lib/" 2>/dev/null || true
+# Drop the VM base toolchain binaries (cc/clang/ld/...) so the ONLY compiler
+# is the ports-llvm19 shim (/usr/local/bin/cc). Otherwise the VM cc (which
+# needs libprivateclang) would shadow the shim via PATH order.
+rm -f "$WORK/rootfs"/usr/bin/cc "$WORK/rootfs"/usr/bin/c++ \
+      "$WORK/rootfs"/usr/bin/cpp "$WORK/rootfs"/usr/bin/clang \
+      "$WORK/rootfs"/usr/bin/clang++ "$WORK/rootfs"/usr/bin/clang-cpp \
+      "$WORK/rootfs"/usr/bin/CC "$WORK/rootfs"/usr/bin/ld \
+      "$WORK/rootfs"/usr/bin/ld.lld 2>/dev/null || true
+echo "    /bin/sh -> $(readlink "$WORK/rootfs/bin/sh" 2>/dev/null || echo real) | /usr/bin tools: $(ls "$WORK/rootfs/usr/bin" 2>/dev/null | wc -l | tr -d ' ') | env: $(ls "$WORK/rootfs/usr/bin/env" 2>/dev/null && echo ok)"
 
 #
 # 3. chroot: install runtime pkgs (pkglist.txt) + build pkgs (buildpkgs.txt)
@@ -157,7 +239,12 @@ if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
     }
     trap cleanup_chroot EXIT INT TERM
 
-    chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes IGNORE_OSVERSION=yes pkg bootstrap -f
+    # Bootstrap the real pkg(8) ON our from-source base: our /usr/sbin/pkg
+    # (the base pkg(7) bootstrap) reads /etc/pkg/FreeBSD.conf (PORTS repo) and
+    # fetches+verifies pkg(8) against our /usr/share/keys/pkg fingerprints.
+    # No pkgbase involved. ABI pinned so it targets FreeBSD:15:amd64 ports.
+    chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes IGNORE_OSVERSION=yes \
+        ABI="${PKG_ABI}" pkg bootstrap -f
 
     # Single combined install for runtime + drivers so the dep solver
     # runs once. Drivers are logged as their own category for clarity,
@@ -213,6 +300,34 @@ if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
             pkg install -y $BUILD_PKGS
     fi
 
+    # PORTS TOOLCHAIN SHIM. The build compiler now comes from the ports
+    # llvm19 package (devel/llvm19, clang 19.1.7) instead of the pkgbase
+    # FreeBSD-clang/lld/toolchain (dropped from buildpkgs-base.txt). Ports
+    # llvm installs PREFIXED tools under /usr/local/llvm19/bin
+    # (clang, clang++, ld.lld, llvm-ar, llvm-nm, ...), but the FreeBSD
+    # make-based builds (mach.ko via bsd.kmod.mk, MIG, the Apple suites)
+    # and cmake call the UNPREFIXED names (cc/c++/cpp/ld/ar/nm/objcopy/...).
+    # Symlink the unprefixed names into /usr/local/bin so every invocation
+    # resolves to ports clang once /usr/bin/cc (base) is gone. /usr/local/bin
+    # follows /usr/bin in PATH, so with base clang removed our shim wins.
+    if [ -x "$WORK/rootfs/usr/local/llvm19/bin/clang" ]; then
+        echo "==> wiring ports llvm19 toolchain shim into /usr/local/bin"
+        LLVMBIN=/usr/local/llvm19/bin
+        # name-in-/usr/local/bin  ->  target-in-$LLVMBIN
+        for map in cc:clang c++:clang++ cpp:clang-cpp clang:clang \
+                   clang++:clang++ clang-cpp:clang-cpp ld:ld.lld ld.lld:ld.lld \
+                   ar:llvm-ar nm:llvm-nm ranlib:llvm-ranlib objcopy:llvm-objcopy \
+                   strip:llvm-strip size:llvm-size readelf:llvm-readelf \
+                   strings:llvm-strings addr2line:llvm-addr2line objdump:llvm-objdump; do
+            name=${map%%:*}; tgt=${map##*:}
+            ln -sf "$LLVMBIN/$tgt" "$WORK/rootfs/usr/local/bin/$name"
+        done
+        chroot "$WORK/rootfs" /bin/sh -c 'command -v cc; cc --version | head -1' || true
+    else
+        echo "==> NOTE: ports llvm19 not present (/usr/local/llvm19/bin/clang missing)"
+        echo "    falling back to whatever cc is on PATH (pkgbase clang if still installed)"
+    fi
+
     # Build pkgs (cmake/ninja/clang/etc.) stay installed through the
     # subsequent build steps (mach.ko, libsystem_kernel, libdispatch).
     # Purge + chroot cleanup move to the very end of the build phase,
@@ -222,30 +337,16 @@ if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
 fi
 
 #
-# 3a0. STAGE 1 — download + VERIFY the nextbsd-freebsd-compat from-source base
-#      artifact, NON-DESTRUCTIVELY. Confirms the cross-repo download + extract
-#      works and the artifact is valid/complete, WITHOUT touching the rootfs.
-#      (A full overlay onto pkgbase breaks the in-chroot clang build — our
-#      /usr/include conflicts with pkgbase's compiler setup, e.g. stdint.h. The
-#      real rootfs replacement is stage 2, when pkgbase base is removed and the
-#      compiler comes from ports.) The artifact is downloaded on the CI host
-#      into $ROOT/base-artifact/ and rsync'd into the VM by vmactions.
+# 3a0. (was the verify/overlay step) — the from-source base is now laid into
+#      the rootfs at the TOP of this script (overlay-first, pkgbase-free), and
+#      the in-chroot pkg bootstrapped ports ON it. Nothing to overlay here.
 #
-NEXTBSD_BASE_ARTIFACT="${NEXTBSD_BASE_ARTIFACT:-$ROOT/base-artifact/nextbsd-base-amd64.tar.gz}"
-if [ -f "$NEXTBSD_BASE_ARTIFACT" ]; then
-    echo "==> verifying nextbsd-freebsd-compat base artifact: $NEXTBSD_BASE_ARTIFACT"
-    VBASE="$WORK/nextbsd-base-verify"
-    rm -rf "$VBASE"; mkdir -p "$VBASE"
-    tar -xzf "$NEXTBSD_BASE_ARTIFACT" -C "$VBASE"
-    echo "    extracted OK ($(du -sh "$VBASE" | cut -f1)); key paths:"
-    for f in lib/libc.so.7 libexec/ld-elf.so.1 sbin/kldload sbin/mount \
-             usr/sbin/pw usr/sbin/pkg usr/include/stdint.h usr/include/sys/types.h; do
-        if [ -e "$VBASE/$f" ]; then echo "      OK   $f"; else echo "      MISS $f"; fi
-    done
-    echo "    stage 1 = verify only; rootfs untouched (replacement is stage 2)"
-else
-    echo "==> NOTE: no nextbsd base artifact at $NEXTBSD_BASE_ARTIFACT — skipping"
-fi
+echo "==> from-source base is the rootfs (overlay-first); zero pkgbase base pkgs"
+# Overlay-first installs NO pkgbase base packages, so these lists are empty.
+# Keep them DEFINED (set -u) — the end-of-build purge still references
+# BASE_BUILD_PKGS. (pklist-base.txt/buildpkgs-base.txt are now historical.)
+BASE_PKGS=""
+BASE_BUILD_PKGS=""
 
 #
 # 3a. extract src.txz to $WORK/freebsd-src. Used for two things in
@@ -259,98 +360,28 @@ mkdir -p "$WORK/freebsd-src"
 tar -xJf "$DIST/src.txz" -C "$WORK/freebsd-src"
 
 #
-# 3a2. build the irreducibly-FreeBSD-only userland from /usr/src per
-#      srclist-fbsdglue.txt. The 43 leaf binaries + 1 prereq lib
-#      (lib/libsysdecode for kdump/truss) have no Apple equivalent at
-#      all — kernel-bound platform glue (kld*, UFS, devfs, ldconfig,
-#      etc.) plus BSD-specific debug tooling (fstat/sockstat/procstat/
-#      ktrace/truss/ldd/etc.). Overlay-overwrite their pkgbase paths
-#      with /usr/src builds so downstream Apple-repo PRs (#105b-#105g)
-#      can iterate the remaining ~155 Apple-replaceable paths, and
-#      #105h can finally drop FreeBSD-runtime entirely once
-#      srclist-fbsdglue.txt owns every non-Apple path the ISO needs.
+# 3a2. The irreducibly-FreeBSD-only userland (kld*, UFS, devfs, ldconfig,
+#      mount, newfs, pw, login, su, ldd, geom, ... plus their prereq libs)
+#      now comes from the nextbsd-freebsd-compat from-source artifact,
+#      overlaid at 3a0 (NEXTBSD_BASE_FROM_SOURCE=1). The old in-VM
+#      `srclist-fbsdglue.txt` build of these very same /usr/src paths was
+#      redundant with that overlay and has been REMOVED: the compat
+#      srclist is a strict superset of srclist-fbsdglue.txt — it builds
+#      every fbsdglue entry except bin/sh, which Apple's shell_cmds owns
+#      (and pkgbase /bin/sh remains until FreeBSD-runtime is peeled).
+#      Dropping the layer also removes a multi-minute in-VM build.
 #
-#      Manifest is iterated in file order so prereq libs can be listed
-#      above consumers. lib/libsysdecode comes first so its mktables-
-#      generated headers (tables.h / tables_linux.h / ioctl.c) exist
-#      in $MAKEOBJDIRPREFIX when kdump+truss link against it. Same
-#      shape as the lib/libifconfig codegen-prereq that defeated
-#      PR #107 — this iter explicitly exercises that path.
+#      Verify the overlay actually laid the load-bearing tools down
+#      before the Apple build depends on them — this catches both an
+#      accidentally-disabled overlay and an incomplete compat artifact.
 #
-#      Iter 1 (commit 62dd735) validated the mechanism on ~11
-#      Category A/B leaf tools with no codegen prereqs. Iter 2 (this
-#      change / #109 / #105a iter 2) extends to the full 43 entries
-#      and the codegen-prereq case.
-#
-#      MAKEOBJDIRPREFIX isolates obj dirs under $WORK (keeps /usr/obj
-#      on the builder clean). SRCCONF/__MAKE_CONF=/dev/null isolates
-#      from host /etc/src.conf flags.
-#
-#      Plan: https://pkgdemon.github.io/freebsd-srclist-build-plan.html
-#
-echo "==> building irreducibly-FreeBSD-only userland from /usr/src per srclist-fbsdglue.txt"
-SRCLIST_FBSDGLUE="$ROOT/srclist-fbsdglue.txt"
-if [ ! -f "$SRCLIST_FBSDGLUE" ]; then
-    echo "ERROR: srclist-fbsdglue.txt missing at $SRCLIST_FBSDGLUE" >&2
-    exit 1
-fi
-
-FBSDGLUE_LIST=$(grep -v '^[[:space:]]*#' "$SRCLIST_FBSDGLUE" 2>/dev/null \
-                | grep -v '^[[:space:]]*$' || true)
-if [ -z "$FBSDGLUE_LIST" ]; then
-    echo "ERROR: srclist-fbsdglue.txt is empty; refusing to skip the fbsdglue layer" >&2
-    exit 1
-fi
-
-SRCBUILD_OBJ="$WORK/srcbuild-obj"
-mkdir -p "$SRCBUILD_OBJ"
-SRCBUILD_MAKE_FLAGS="__MAKE_CONF=/dev/null SRCCONF=/dev/null \
-                     MK_MAN=no MK_TESTS=no"
-
-# Pre-create /usr/include/ subdirs that FreeBSD-lib installs assume
-# exist (FreeBSD normally pre-populates these via `mtree -d` from
-# /etc/mtree/BSD.include.dist before make install). Without these
-# the `install` command exits 71 (EX_OSERR / no such directory).
-#
-#   casper/         ← lib/libcasper installs cap_*.h here
-#   bsm/            ← lib/libbsm installs <bsm/*.h> here
-#   editline/       ← lib/libedit installs <editline/readline/readline.h>
-#   lzma/           ← lib/liblzma installs <lzma/*.h>
-#   libdata/pkgconfig/ ← lib/liblzma installs liblzma.pc here
-mkdir -p "$WORK/rootfs/usr/include/casper" \
-         "$WORK/rootfs/usr/include/bsm" \
-         "$WORK/rootfs/usr/include/editline" \
-         "$WORK/rootfs/usr/include/editline/readline" \
-         "$WORK/rootfs/usr/include/lzma" \
-         "$WORK/rootfs/usr/libdata/pkgconfig"
-
-for DIR in $FBSDGLUE_LIST; do
-    SRC="$WORK/freebsd-src/usr/src/$DIR"
-    if [ ! -d "$SRC" ]; then
-        echo "ERROR: srclist-fbsdglue entry '$DIR' not under usr/src ($SRC)" >&2
-        exit 1
-    fi
-    echo "    fbsdglue: $DIR"
-    # shellcheck disable=SC2086
-    env MAKEOBJDIRPREFIX="$SRCBUILD_OBJ" \
-        make -C "$SRC" $SRCBUILD_MAKE_FLAGS obj
-    # shellcheck disable=SC2086
-    env MAKEOBJDIRPREFIX="$SRCBUILD_OBJ" \
-        make -C "$SRC" $SRCBUILD_MAKE_FLAGS
-    # shellcheck disable=SC2086
-    env MAKEOBJDIRPREFIX="$SRCBUILD_OBJ" \
-        make -C "$SRC" $SRCBUILD_MAKE_FLAGS \
-        install DESTDIR="$WORK/rootfs"
-done
-
-# Confirm a few load-bearing binaries from each category are actually
-# present + executable in the rootfs after the manifest run. Catches
-# silent "make install" no-ops (e.g., if a Makefile's PROG variable
-# was renamed upstream).
+echo "==> verifying from-source base overlay provided the FreeBSD-only userland"
 for KEY_BIN in /sbin/kldload /sbin/mount /bin/kenv \
                /usr/bin/ldd /usr/sbin/pciconf; do
     if [ ! -x "$WORK/rootfs$KEY_BIN" ]; then
-        echo "ERROR: fbsdglue manifest didn't install $KEY_BIN" >&2
+        echo "ERROR: from-source base overlay did not provide $KEY_BIN" >&2
+        echo "       (NEXTBSD_BASE_FROM_SOURCE must be 1 and the compat" >&2
+        echo "        artifact's srclist must include it)" >&2
         exit 1
     fi
 done
@@ -416,6 +447,15 @@ ls -lh "$WORK/rootfs/bin/chflags" "$WORK/rootfs/bin/rm" \
 #
 echo "==> building Apple shell_cmds (iter 1+2+3+4+5: 39 POSIX tools)"
 make -C "$ROOT/src/shell_cmds" install DESTDIR="$WORK/rootfs"
+
+# NB: /bin/sh (FreeBSD's POSIX sh) is built FROM SOURCE in nextbsd-freebsd-compat
+# (bin/sh in its srclist), not here — its FreeBSD src Makefile needs the full
+# make.py buildenv (src.opts.mk), which compat already provides for every base
+# lib. It ships in the base artifact and is laid into the rootfs at the top
+# (overlay-first), so /bin/sh is present from the first extract — covering both
+# the early pkg phase and root's login shell. (The old fbsdglue layer built it
+# the same way in the buildenv; removing fbsdglue wrongly assumed shell_cmds
+# installs sh — shell_cmds only vendors the sources, never installs /bin/sh.)
 
 for SHELLCMD_BIN in /usr/bin/true /usr/bin/false \
                     /bin/echo /bin/sleep /usr/bin/basename \
@@ -536,16 +576,82 @@ ls -lh "$WORK/rootfs/bin/sync" "$WORK/rootfs/bin/wait4path" \
 # master.passwd named /bin/csh and we dropped FreeBSD-csh.)
 
 #
-# 3b. build mach.ko against the freshly-extracted kernel sources and
-#     install it into $WORK/rootfs/boot/kernel/mach.ko so it ships
-#     inside rootfs.uzip. Step 8 below also copies it onto the cd9660
-#     so the loader can preload it before init runs.
+# 3a4. ingest the NEXTBSD kernel (ident NEXTBSD, = GENERIC) from the
+#      nextbsd-kernel artifact, replacing pkgbase FreeBSD-kernel-generic
+#      (dropped from pkglist-base.txt). The artifact is the cross-build obj
+#      subtree down to sys/NEXTBSD/, containing both the loadable `kernel`
+#      and the opt_*.h build dir mach.ko must compile against for KBI match.
+#      Locate them by find (the internal obj path varies). Install the kernel
+#      to /boot/kernel/kernel; the GENERIC-equivalent config has the disk +
+#      UFS drivers built in, so it boots ufs:/dev/ufs/ROOTFS directly
+#      (loader.conf's ahci/virtio/* preloads are harmless-if-builtin). The
+#      separate module tree (nextbsd-kernel-modules) is layered in afterward.
 #
-echo "==> building mach.ko"
+NEXTBSD_KERNEL_ARTIFACT="${NEXTBSD_KERNEL_ARTIFACT:-$ROOT/kernel-artifact}"
+KBUILDDIR=""
+if [ -d "$NEXTBSD_KERNEL_ARTIFACT" ]; then
+    echo "==> ingesting NEXTBSD kernel from $NEXTBSD_KERNEL_ARTIFACT"
+    KOBJ=$(find "$NEXTBSD_KERNEL_ARTIFACT" -type f -name kernel -path '*NEXTBSD*' 2>/dev/null | head -1)
+    [ -n "$KOBJ" ] || { echo "ERROR: no NEXTBSD kernel binary in artifact" >&2; exit 1; }
+    KBUILDDIR=$(dirname "$KOBJ")   # sys/NEXTBSD build dir (has opt_*.h)
+    echo "    kernel:       $KOBJ ($(du -h "$KOBJ" | cut -f1))"
+    echo "    kernbuilddir: $KBUILDDIR"
+    mkdir -p "$WORK/rootfs/boot/kernel"
+    install -o root -g wheel -m 555 "$KOBJ" "$WORK/rootfs/boot/kernel/kernel"
+    ls -lh "$WORK/rootfs/boot/kernel/kernel"
+    strings "$KOBJ" 2>/dev/null | grep -m1 'releng/15.0' || true
+else
+    echo "ERROR: NEXTBSD kernel artifact missing at $NEXTBSD_KERNEL_ARTIFACT" >&2
+    echo "       FreeBSD-kernel-generic was dropped from pkglist-base; a kernel is required." >&2
+    exit 1
+fi
+
+#
+# 3b. build mach.ko against the kernel sources + the NEXTBSD kernel's build
+#     dir (--kernbuilddir => matching opt_*.h, so mach.ko's KBI matches the
+#     ingested kernel). Install into $WORK/rootfs/boot/kernel/mach.ko so it
+#     ships inside the rootfs; the loader preloads it (mach_load=YES).
+#
+echo "==> building mach.ko (against NEXTBSD kernbuilddir)"
 "$ROOT/make-mach-kmod.sh" \
     --sysdir="$WORK/freebsd-src/usr/src/sys" \
+    --kernbuilddir="$KBUILDDIR" \
     --prefix="$WORK/rootfs"
 ls -lh "$WORK/rootfs/boot/kernel/mach.ko"
+
+#
+# 3b2. install the NEXTBSD module tree (nextbsd-kernel-modules artifact) into
+#      /boot/kernel — the GENERIC modules (cd9660, zfs, drm, sound, NICs, ...)
+#      that FreeBSD-kernel-generic used to ship but aren't compiled into the
+#      kernel. The artifact is the cross-build obj modules subtree; the final
+#      loadable files are the *.ko (the *.ko.full / *.ko.debug are build
+#      byproducts). After copying, regenerate /boot/kernel/linker.hints with
+#      kldxref so the loader can resolve modules by name (the loader.conf
+#      ahci/virtio/* preloads then stop being "can't find module" warnings).
+#      Optional: if the artifact is absent the kernel still boots on built-ins.
+#
+NEXTBSD_MODULES_ARTIFACT="${NEXTBSD_MODULES_ARTIFACT:-$ROOT/modules-artifact}"
+if [ -d "$NEXTBSD_MODULES_ARTIFACT" ] && \
+   [ -n "$(find "$NEXTBSD_MODULES_ARTIFACT" -name '*.ko' 2>/dev/null | head -1)" ]; then
+    echo "==> installing NEXTBSD module tree into /boot/kernel"
+    find "$NEXTBSD_MODULES_ARTIFACT" -type f -name '*.ko' | while IFS= read -r ko; do
+        install -o root -g wheel -m 555 "$ko" \
+            "$WORK/rootfs/boot/kernel/$(basename "$ko")"
+    done
+    NMODS=$(find "$WORK/rootfs/boot/kernel" -name '*.ko' | wc -l | tr -d ' ')
+    echo "    installed module count (incl. mach.ko): $NMODS"
+    # linker.hints: name->module index the loader/kldload use. mach.ko is
+    # already in place, so this indexes it too.
+    chroot "$WORK/rootfs" kldxref /boot/kernel || \
+        kldxref "$WORK/rootfs/boot/kernel" || true
+    ls -lh "$WORK/rootfs/boot/kernel/linker.hints" 2>&1 || \
+        echo "    NOTE: linker.hints not generated (kldxref unavailable)"
+else
+    echo "==> NOTE: no NEXTBSD module tree artifact — shipping kernel built-ins only"
+    echo "    (boots fine; cd9660/zfs/drm/sound/etc. modules just won't be present)"
+    # still index mach.ko so the loader can resolve it by name
+    chroot "$WORK/rootfs" kldxref /boot/kernel 2>/dev/null || true
+fi
 
 #
 # 3c. build libsystem_kernel (formerly libmach) on the host and install
@@ -724,6 +830,7 @@ echo "==> building migcom (early, for libdispatch HAVE_MACH path)"
 make -C "$ROOT/src/bootstrap_cmds/migcom.tproj" \
     DESTDIR="$WORK/rootfs" \
     BINDIR=/usr/libexec \
+    MK_MAN=no \
     all install
 install -m 0755 "$ROOT/src/bootstrap_cmds/migcom.tproj/mig.sh" \
                 "$WORK/rootfs/usr/bin/mig"
@@ -994,7 +1101,7 @@ for d in job job_forward job_reply internal helper mach_exc notify; do
     # -sheader emits ${d}Server.h — libvproc.c #includes helperServer.h
     # to drive a helper-downcall server via mach_msg_server_once().
     ( cd "$MIG_OUT" && \
-      MIGCC=/usr/bin/cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
+      MIGCC=cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
       /bin/sh "$ROOT/src/bootstrap_cmds/migcom.tproj/mig.sh" \
         $MIG_INCS \
         -header "${d}.h" -user "${d}User.c" \
@@ -1271,7 +1378,7 @@ mkdir -p "$WORK/rootfs/usr/sbin"
 HWREG_MIG="$WORK/hwreg-mig"
 mkdir -p "$HWREG_MIG"
 ( cd "$HWREG_MIG" && \
-  MIGCC=/usr/bin/cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
+  MIGCC=cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
   /bin/sh "$ROOT/src/bootstrap_cmds/migcom.tproj/mig.sh" \
     -I"$ROOT/src/libmach/include" \
     -header hwreg.h -user hwregUser.c \
@@ -1333,7 +1440,7 @@ echo "==> building configd (src/configd)"
 CONFIGD_MIG="$WORK/configd-mig"
 mkdir -p "$CONFIGD_MIG"
 ( cd "$CONFIGD_MIG" && \
-  MIGCC=/usr/bin/cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
+  MIGCC=cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
   /bin/sh "$ROOT/src/bootstrap_cmds/migcom.tproj/mig.sh" \
     -I"$ROOT/src/libmach/include" \
     -header config.h -user configUser.c \
@@ -1848,7 +1955,7 @@ for d in notify_ipc notify_old_ipc; do
     defs="$ROOT/src/Libnotify/${d}.defs"
     echo "  mig: ${d}.defs"
     ( cd "$LIBNOTIFY_MIG_OUT" && \
-      MIGCC=/usr/bin/cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
+      MIGCC=cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
       /bin/sh "$ROOT/src/bootstrap_cmds/migcom.tproj/mig.sh" \
         $LIBNOTIFY_MIG_INCS \
         -header "${d}.h" -user "${d}User.c" \
@@ -1898,7 +2005,7 @@ ASL_MIG_OUT="$WORK/asl-mig"
 mkdir -p "$ASL_MIG_OUT"
 ASL_MIG_INCS="-I$ROOT/src/libmach/include -I$ROOT/src/syslog/aslcommon -I$ROOT/src/syslog/libsystem_asl.tproj/include"
 ( cd "$ASL_MIG_OUT" && \
-  MIGCC=/usr/bin/cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
+  MIGCC=cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
   /bin/sh "$ROOT/src/bootstrap_cmds/migcom.tproj/mig.sh" \
     $ASL_MIG_INCS \
     -header "asl_ipc.h" -user "asl_ipcUser.c" \
@@ -2025,7 +2132,7 @@ echo "==> building ipconfigd (src/IPConfiguration)"
 IPCFG_MIG="$WORK/ipcfg-mig"
 mkdir -p "$IPCFG_MIG"
 ( cd "$IPCFG_MIG" && \
-  MIGCC=/usr/bin/cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
+  MIGCC=cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
   /bin/sh "$ROOT/src/bootstrap_cmds/migcom.tproj/mig.sh" \
     -I"$ROOT/src/libmach/include" \
     -I"$ROOT/src/IPConfiguration" \
@@ -2407,15 +2514,19 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/pammodulestest" \
 #
 if [ -n "$BUILD_PKGS" ] || [ -n "$BASE_BUILD_PKGS" ]; then
     echo "==> purging build packages (ports + pkgbase build-only)"
+    # `|| true`: build-pkg POST-DEINSTALL scripts (service restarts, etc.) can
+    # fail in our minimal transient /etc and make pkg exit non-zero — but the
+    # packages ARE removed (the purge goal). The build tools are being deleted
+    # anyway, so their script outcomes don't matter.
     if [ -n "$BUILD_PKGS" ]; then
         # shellcheck disable=SC2086
         chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
-            pkg delete -y $BUILD_PKGS
+            pkg delete -y $BUILD_PKGS || true
     fi
     if [ -n "$BASE_BUILD_PKGS" ]; then
         # shellcheck disable=SC2086
         chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
-            pkg delete -y $BASE_BUILD_PKGS
+            pkg delete -y $BASE_BUILD_PKGS || true
     fi
     # pkg autoremove DISABLED 2026-05-27 — when no installed pkg
     # requires FreeBSD-runtime (consumers libarchive/libexecinfo/mtree/
@@ -2574,6 +2685,34 @@ chroot "$WORK/rootfs" /usr/bin/cap_mkdb /etc/login.conf
 #
 CONTENT_BYTES=$(du -sk "$WORK/rootfs" | awk '{print $1*1024}')
 echo "==> rootfs content = $CONTENT_BYTES bytes ($((CONTENT_BYTES / 1024 / 1024)) MiB)"
+
+# 5z. ELF shared-library closure check. overlay-first builds the base from
+#     a curated srclist; any tool whose NEEDED soname isn't provided in the
+#     rootfs fails at ld-elf.so.1 load time (e.g. /sbin/mount needing the
+#     silently-pkgbase-provided libxo.so.0 -> launchd's rw remount exited 1
+#     -> read-only root). Scan every ELF's NEEDED entries against the .so
+#     files actually present in the rootfs and report any with no provider.
+#     Diagnostic only (never fatal): surfaces the COMPLETE missing-lib set
+#     in one build instead of one boot-failure round-trip per missing lib.
+echo "==> [libscan] ELF shared-library closure over rootfs"
+( set +e
+  RF="$WORK/rootfs"
+  find "$RF" \( -name '*.so' -o -name '*.so.*' \) \( -type f -o -type l \) \
+      -exec basename {} \; 2>/dev/null | sort -u > /tmp/provided.txt
+  : > /tmp/needed.txt
+  find "$RF/bin" "$RF/sbin" "$RF/usr/bin" "$RF/usr/sbin" "$RF/libexec" \
+       "$RF/lib" "$RF/usr/lib" "$RF/usr/libexec" -type f 2>/dev/null | while IFS= read -r f; do
+    readelf -d "$f" 2>/dev/null | sed -n 's/.*(NEEDED).*\[\(.*\)\].*/\1/p'
+  done | sort -u > /tmp/needed.txt
+  echo "    provided .so files: $(wc -l < /tmp/provided.txt), distinct NEEDED sonames: $(wc -l < /tmp/needed.txt)"
+  miss=0
+  while IFS= read -r so; do
+    [ -z "$so" ] && continue
+    grep -qx "$so" /tmp/provided.txt || { echo "    MISSING: $so"; miss=$((miss+1)); }
+  done < /tmp/needed.txt
+  echo "    total NEEDED sonames with no provider in rootfs: $miss"
+)
+echo "==> [libscan] end"
 
 # 6a. root UFS — content plus ~1.5 GB read-write headroom. UFS label
 #     "ROOTFS" matches loader.conf.d's vfs.root.mountfrom and the

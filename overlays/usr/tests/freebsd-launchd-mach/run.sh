@@ -519,12 +519,14 @@ done
 #     without dyld errors (rc 1 or 64 = usage exit).
 #   finger with no user prints header or "No one logged on".
 if [ $ADVCMD_FAIL -eq 0 ]; then
+    echo "ADVCMD-PROBE: lsvfs"          # DIAG: label each probe so a SIGSEGV is attributable
     if ! /usr/sbin/lsvfs >/dev/null 2>&1; then
         echo "ADVCMD-LEAF-FAIL: lsvfs failed"
         ADVCMD_FAIL=1
     fi
 fi
 if [ $ADVCMD_FAIL -eq 0 ]; then
+    echo "ADVCMD-PROBE: cap_mkdb"
     /usr/bin/cap_mkdb 2>/dev/null
     rc=$?
     if [ $rc -ne 1 ] && [ $rc -ne 2 ] && [ $rc -ne 64 ]; then
@@ -533,12 +535,14 @@ if [ $ADVCMD_FAIL -eq 0 ]; then
     fi
 fi
 if [ $ADVCMD_FAIL -eq 0 ]; then
+    echo "ADVCMD-PROBE: finger"
     if ! /usr/bin/finger 2>/dev/null | /usr/bin/head -1 >/dev/null; then
         echo "ADVCMD-LEAF-FAIL: finger didn't produce output"
         ADVCMD_FAIL=1
     fi
 fi
 if [ $ADVCMD_FAIL -eq 0 ]; then
+    echo "ADVCMD-PROBE: locale"
     # locale -a lists all installed locales; should at least print "C".
     if ! /usr/bin/locale -a 2>/dev/null | /usr/bin/grep -q '^C$'; then
         echo "ADVCMD-LEAF-FAIL: locale -a didn't list C locale"
@@ -546,6 +550,7 @@ if [ $ADVCMD_FAIL -eq 0 ]; then
     fi
 fi
 if [ $ADVCMD_FAIL -eq 0 ]; then
+    echo "ADVCMD-PROBE: stty"
     # stty -a reads current termios; on a serial console (CI) the tty
     # is valid so this must succeed and print at least "speed".
     if ! /bin/stty -a 2>/dev/null | /usr/bin/grep -q 'speed'; then
@@ -553,6 +558,7 @@ if [ $ADVCMD_FAIL -eq 0 ]; then
         ADVCMD_FAIL=1
     fi
 fi
+echo "ADVCMD-PROBE: all functional probes done"
 if [ $ADVCMD_FAIL -eq 0 ]; then
     echo "ADVCMD-LEAF-OK: 8/8 adv_cmds binaries overlaid (lsvfs/cap_mkdb/finger/locale/stty probes pass)"
 else
@@ -819,8 +825,21 @@ done
 if pgrep -x notifyd >/dev/null 2>&1; then
     echo "NOTIFYD-PROC-OK: notifyd running as pid $(pgrep -x notifyd)"
 else
+    # DIAG: dump launchd's view BEFORE the FAIL token (the expect harness
+    # kills the VM on NOTIFYD-PROC-FAIL). launchctl list's Status column =
+    # the job's last wait status: a small +N is exit(N); a value encoding a
+    # signal (or 0x8N / negative) means killed by signal N (e.g. 9=SIGKILL).
+    echo "=== NOTIFYD-PROC diagnostics (pre-FAIL) ==="
+    echo "--- pgrep -fl notifyd (any process, any name) ---"
+    pgrep -fl notifyd || echo "(no process matches 'notifyd')"
+    echo "--- ps auxww | grep notifyd ---"
+    ps auxww | grep -E 'notifyd' | grep -v grep || echo "(none in ps)"
+    echo "--- launchctl list | grep notifyd (PID Status Label) ---"
+    launchctl list 2>/dev/null | grep -iE 'notifyd' || echo "(notifyd not in launchctl list)"
+    echo "--- launchctl list com.apple.notifyd (LastExitStatus) ---"
+    launchctl list com.apple.notifyd 2>&1 | grep -iE 'PID|Status|LastExit|Label' || true
+    echo "=== end NOTIFYD-PROC diagnostics ==="
     echo "NOTIFYD-PROC-FAIL: notifyd not running"
-    ps auxww | grep -E 'syslogd|notifyd' || true
     exit 1
 fi
 

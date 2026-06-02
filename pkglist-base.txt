@@ -26,8 +26,17 @@
 # libthread_db (gdb-only), libmagic (file(1)-only).
 
 # ---- bootloader + kernel ----
-FreeBSD-bootloader
-FreeBSD-kernel-generic
+# FreeBSD-bootloader REMOVED 2026-06-02 — the loader now comes from compat
+# (stand/ from source): /boot/loader_lua.efi + lua scripts + boot blocks,
+# overlaid onto rootfs. The LAST pkgbase content package in the ISO.
+#FreeBSD-bootloader
+# FreeBSD-kernel-generic REMOVED 2026-06-01 — the kernel now comes from the
+# nextbsd-kernel repo (ident NEXTBSD, = GENERIC), ingested by build.sh step
+# 3a4 from the nextbsd-kernel-amd64 artifact and installed to
+# /boot/kernel/kernel, with mach.ko built against its matching obj. (The
+# module tree from nextbsd-kernel-modules is layered in as a follow-up.)
+# FreeBSD-bootloader stays for now — stand/ from-source is the last peel.
+#FreeBSD-kernel-generic
 
 # ---- /sbin/init + boot ----
 # rescue: DROPPED 2026-05-26 (#108 / #105a iter 1). Apple has no
@@ -63,7 +72,8 @@ FreeBSD-clibs
 #FreeBSD-vi
 
 # Console keymap data (loaded by vt(4)).
-FreeBSD-vt-data
+# FreeBSD-vt-data REMOVED 2026-06-02 — vt fonts/keymaps now from compat (share/vt).
+#FreeBSD-vt-data
 
 # ---- filesystems ----
 # UFS userland (mount_ufs, fsck_ffs, newfs) — DROPPED 2026-05-27:
@@ -153,4 +163,5 @@ FreeBSD-bzip2
 
 # ---- locale / timezone ----
 # zoneinfo: many libs misbehave without /usr/share/zoneinfo/UTC.
-FreeBSD-zoneinfo
+# FreeBSD-zoneinfo REMOVED 2026-06-02 — tzdata now from compat (share/zoneinfo).
+#FreeBSD-zoneinfo

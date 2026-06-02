@@ -1527,5 +1527,6 @@ main(int argc, const char *argv[])
 		notify_reset_stats();
 	});
 
+	fprintf(stderr, "notifyd[%d]: CP13 reaching dispatch_main\n", getpid()); fflush(stderr);
 	dispatch_main();
 }

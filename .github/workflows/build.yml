@@ -69,10 +69,11 @@ jobs:
         id: meta
         run: echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
 
-      # STAGE 1: pull the from-source base artifact from nextbsd-freebsd-compat
-      # into the workspace ($ROOT/base-artifact/), which vmactions rsyncs into
-      # the VM. build.sh overlays it on the pkgbase base (removes nothing yet).
-      # Needs DISPATCH_TOKEN (cross-repo artifact read). amd64 only for now.
+      # Pull the from-source base artifact from nextbsd-freebsd-compat into the
+      # workspace ($ROOT/base-artifact/), which vmactions rsyncs into the VM.
+      # build.sh lays this down as the ENTIRE rootfs (overlay-first: zero
+      # pkgbase; pkg bootstraps on our own base). Needs DISPATCH_TOKEN
+      # (cross-repo artifact read). amd64 only for now.
       - name: download nextbsd base artifact
         if: matrix.arch == 'amd64'
         env:
@@ -87,7 +88,56 @@ jobs:
               -n nextbsd-base-amd64 -D base-artifact
             ls -lh base-artifact/
           else
-            echo "no successful compat main run yet; build.sh will skip the overlay"
+            echo "ERROR: no successful compat main run — overlay-first needs the base artifact" >&2
+            exit 1
+          fi
+
+      # Pull the NEXTBSD kernel (ident NEXTBSD, = GENERIC) from nextbsd-kernel,
+      # replacing the pkgbase FreeBSD-kernel-generic. The nextbsd-kernel-<arch>
+      # artifact is the obj subtree down to sys/NEXTBSD/ — it contains both the
+      # built `kernel` and the opt_*.h build dir that mach.ko must compile
+      # against (KBI match). build.sh installs it to /boot/kernel/kernel and
+      # points the mach.ko build at it. amd64 only for now.
+      - name: download NEXTBSD kernel artifact
+        if: matrix.arch == 'amd64'
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+        run: |
+          KRUN=$(gh run list -R nextbsd-redux/nextbsd-kernel \
+            -w "Build NextBSD Kernel" --branch main --status success \
+            --limit 1 --json databaseId -q '.[0].databaseId')
+          echo "nextbsd-kernel run: ${KRUN:-<none>}"
+          if [ -n "$KRUN" ]; then
+            gh run download "$KRUN" -R nextbsd-redux/nextbsd-kernel \
+              -n nextbsd-kernel-amd64 -D kernel-artifact
+            echo "kernel artifact tree (sys/NEXTBSD):"
+            find kernel-artifact -maxdepth 6 -name kernel -path '*sys/NEXTBSD*' -o -name 'opt_global.h' 2>/dev/null | head
+          else
+            echo "ERROR: no successful nextbsd-kernel main run — cannot ingest kernel" >&2
+            exit 1
+          fi
+
+      # Pull the NEXTBSD module tree (cd9660, zfs, drm, sound, NICs, ...) from
+      # nextbsd-kernel-modules — these are the GENERIC modules that were shipped
+      # by FreeBSD-kernel-generic but aren't built into the kernel. build.sh
+      # installs the *.ko into /boot/kernel and regenerates linker.hints.
+      # Non-fatal if absent: the kernel boots on built-in drivers regardless.
+      - name: download NEXTBSD modules artifact
+        if: matrix.arch == 'amd64'
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+        run: |
+          MRUN=$(gh run list -R nextbsd-redux/nextbsd-kernel-modules \
+            -w "Build NextBSD Modules" --branch main --status success \
+            --limit 1 --json databaseId -q '.[0].databaseId')
+          echo "nextbsd-kernel-modules run: ${MRUN:-<none>}"
+          if [ -n "$MRUN" ]; then
+            gh run download "$MRUN" -R nextbsd-redux/nextbsd-kernel-modules \
+              -n nextbsd-modules-amd64 -D modules-artifact || \
+              echo "WARN: module artifact download failed; kernel boots on built-ins"
+            echo "module .ko count: $(find modules-artifact -name '*.ko' 2>/dev/null | wc -l)"
+          else
+            echo "WARN: no successful nextbsd-kernel-modules main run; shipping kernel built-ins only"
           fi
 
       - name: build ISO inside FreeBSD VM
@@ -118,6 +168,7 @@ jobs:
             export FREEBSD_VARIANT=${{ matrix.variant }}
             export ARCH=${{ matrix.arch }}
             export IMG_DATE=${{ steps.meta.outputs.date }}
+            export NEXTBSD_BASE_FROM_SOURCE=1   # STAGE 2: overlay from-source base
             sh build.sh
 
       - name: checksum + summary

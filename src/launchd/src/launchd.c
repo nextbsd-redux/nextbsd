@@ -378,21 +378,46 @@ launchd_run_tool(const char *const argv[])
 {
 	pid_t pid;
 	int status;
+	int pfd[2] = { -1, -1 };
+	char errbuf[512];
+	ssize_t off = 0, n;
 
+	/* DIAG: capture the tool's stderr (the early console is quiet, so a
+	 * failing mount(8)/fsck(8) error would otherwise be lost). Logged
+	 * below only on non-zero exit. */
+	if (pipe(pfd) == -1) {
+		pfd[0] = pfd[1] = -1;
+	}
 	pid = fork();
 	if (pid == -1) {
+		if (pfd[0] >= 0) { close(pfd[0]); close(pfd[1]); }
 		return -1;
 	}
 	if (pid == 0) {
+		if (pfd[1] >= 0) { dup2(pfd[1], STDERR_FILENO); close(pfd[0]); close(pfd[1]); }
 		execv(argv[0], (char *const *)argv);
 		_exit(127);
 	}
+	if (pfd[1] >= 0) close(pfd[1]);
+	if (pfd[0] >= 0) {
+		while (off < (ssize_t)sizeof(errbuf) - 1 &&
+		    (n = read(pfd[0], errbuf + off, sizeof(errbuf) - 1 - off)) > 0) {
+			off += n;
+		}
+		close(pfd[0]);
+	}
+	errbuf[off] = '\0';
 	while (waitpid(pid, &status, 0) == -1) {
 		if (errno != EINTR) {
 			return -1;
 		}
 	}
-	return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+	status = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+	if (status != 0 && errbuf[0] != '\0') {
+		launchd_syslog(LOG_ERR | LOG_CONSOLE,
+		    "root-rw: %s stderr: %.400s", argv[0], errbuf);
+	}
+	return status;
 }
 
 static void
