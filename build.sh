@@ -149,12 +149,14 @@ echo "    base files: $(find "$WORK/rootfs" -type f | wc -l | tr -d ' ') | pkg: 
 # regardless of our libc), symlinked to the standard names. BUILD-ONLY: the
 # Apple suites replace each name with the real shipped binary before mkuzip.
 echo "==> transient build coreutils (Apple suites overwrite their subset; rest are a file-purity follow-up)"
-# Static /rescue/sh as /bin/sh — most robust (no libc dependency, for pkg's
-# #!/bin/sh post-install scripts).
-if [ -d /rescue ]; then
-    cp -a /rescue "$WORK/rootfs/rescue"
-    [ -e "$WORK/rootfs/bin/sh" ] || ln -sf /rescue/sh "$WORK/rootfs/bin/sh"
-fi
+# NB: do NOT symlink /bin/sh -> /rescue/sh. /rescue is a crunchgen multi-call
+# binary that dispatches on basename(argv[0]); login execs the shell as "-sh"
+# (login-shell convention), which /rescue doesn't recognise -> root's shell
+# never starts ("no response after sending root"). Instead let the cp loop
+# below bring the VM's REAL /bin/sh (dynamic, links our libc which is already
+# in place). It works for pkg #!/bin/sh scripts AND as an interactive login
+# shell. (Apple shell_cmds doesn't install /bin/sh yet — that's a follow-up;
+# the old build's /bin/sh was pkgbase's, another silent pkgbase dependency.)
 # The rest of the build/script tools (env/awk/sed/grep/make/find/install/...)
 # from the VM base, NO-CLOBBER (-n) so our from-source base (libc, fbsdglue,
 # loader, ...) and the /bin/sh symlink are preserved. These are BUILD tools;
