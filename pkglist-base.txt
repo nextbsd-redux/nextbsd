@@ -69,7 +69,8 @@ FreeBSD-clibs
 #FreeBSD-vi
 
 # Console keymap data (loaded by vt(4)).
-FreeBSD-vt-data
+# FreeBSD-vt-data REMOVED 2026-06-02 — vt fonts/keymaps now from compat (share/vt).
+#FreeBSD-vt-data
 
 # ---- filesystems ----
 # UFS userland (mount_ufs, fsck_ffs, newfs) — DROPPED 2026-05-27:
@@ -159,4 +160,5 @@ FreeBSD-bzip2
 
 # ---- locale / timezone ----
 # zoneinfo: many libs misbehave without /usr/share/zoneinfo/UTC.
-FreeBSD-zoneinfo
+# FreeBSD-zoneinfo REMOVED 2026-06-02 — tzdata now from compat (share/zoneinfo).
+#FreeBSD-zoneinfo
