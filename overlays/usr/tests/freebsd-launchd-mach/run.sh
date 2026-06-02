@@ -519,12 +519,14 @@ done
 #     without dyld errors (rc 1 or 64 = usage exit).
 #   finger with no user prints header or "No one logged on".
 if [ $ADVCMD_FAIL -eq 0 ]; then
+    echo "ADVCMD-PROBE: lsvfs"          # DIAG: label each probe so a SIGSEGV is attributable
     if ! /usr/sbin/lsvfs >/dev/null 2>&1; then
         echo "ADVCMD-LEAF-FAIL: lsvfs failed"
         ADVCMD_FAIL=1
     fi
 fi
 if [ $ADVCMD_FAIL -eq 0 ]; then
+    echo "ADVCMD-PROBE: cap_mkdb"
     /usr/bin/cap_mkdb 2>/dev/null
     rc=$?
     if [ $rc -ne 1 ] && [ $rc -ne 2 ] && [ $rc -ne 64 ]; then
@@ -533,12 +535,14 @@ if [ $ADVCMD_FAIL -eq 0 ]; then
     fi
 fi
 if [ $ADVCMD_FAIL -eq 0 ]; then
+    echo "ADVCMD-PROBE: finger"
     if ! /usr/bin/finger 2>/dev/null | /usr/bin/head -1 >/dev/null; then
         echo "ADVCMD-LEAF-FAIL: finger didn't produce output"
         ADVCMD_FAIL=1
     fi
 fi
 if [ $ADVCMD_FAIL -eq 0 ]; then
+    echo "ADVCMD-PROBE: locale"
     # locale -a lists all installed locales; should at least print "C".
     if ! /usr/bin/locale -a 2>/dev/null | /usr/bin/grep -q '^C$'; then
         echo "ADVCMD-LEAF-FAIL: locale -a didn't list C locale"
@@ -546,6 +550,7 @@ if [ $ADVCMD_FAIL -eq 0 ]; then
     fi
 fi
 if [ $ADVCMD_FAIL -eq 0 ]; then
+    echo "ADVCMD-PROBE: stty"
     # stty -a reads current termios; on a serial console (CI) the tty
     # is valid so this must succeed and print at least "speed".
     if ! /bin/stty -a 2>/dev/null | /usr/bin/grep -q 'speed'; then
@@ -553,6 +558,7 @@ if [ $ADVCMD_FAIL -eq 0 ]; then
         ADVCMD_FAIL=1
     fi
 fi
+echo "ADVCMD-PROBE: all functional probes done"
 if [ $ADVCMD_FAIL -eq 0 ]; then
     echo "ADVCMD-LEAF-OK: 8/8 adv_cmds binaries overlaid (lsvfs/cap_mkdb/finger/locale/stty probes pass)"
 else
