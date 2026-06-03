@@ -178,18 +178,28 @@ struct task_set_special_port_trap_args {
 	char port_l_[PADL_(mach_port_name_t)]; mach_port_name_t port; char port_r_[PADR_(mach_port_name_t)];
 };
 /*
- * Mach trap multiplexer args. op selects which Mach trap to invoke;
- * a1..a5 are the trap's own arguments (the multiplexer is amd64-libc
- * 6-arg ABI: op consumes one, leaving five for the trap). Op numbers
- * defined in <mach/mach_traps_mux.h>.
+ * host_set_special_port trap. Mirrors task_set_special_port: `host` is
+ * the host port name (ignored — the kernel uses realhost), `which`
+ * selects the slot per <sys/mach/host_special_ports.h>, `port` is the
+ * send right to install (a userland mach_port_name_t).
  */
-struct mach_trap_mux_trap_args {
-	char op_l_[PADL_(int)]; int op; char op_r_[PADR_(int)];
-	char a1_l_[PADL_(uint64_t)]; uint64_t a1; char a1_r_[PADR_(uint64_t)];
-	char a2_l_[PADL_(uint64_t)]; uint64_t a2; char a2_r_[PADR_(uint64_t)];
-	char a3_l_[PADL_(uint64_t)]; uint64_t a3; char a3_r_[PADR_(uint64_t)];
-	char a4_l_[PADL_(uint64_t)]; uint64_t a4; char a4_r_[PADR_(uint64_t)];
-	char a5_l_[PADL_(uint64_t)]; uint64_t a5; char a5_r_[PADR_(uint64_t)];
+struct host_set_special_port_trap_args {
+	char host_l_[PADL_(mach_port_name_t)]; mach_port_name_t host; char host_r_[PADR_(mach_port_name_t)];
+	char which_l_[PADL_(int)]; int which; char which_r_[PADR_(int)];
+	char port_l_[PADL_(mach_port_name_t)]; mach_port_name_t port; char port_r_[PADR_(mach_port_name_t)];
+};
+/*
+ * Event-bell traps (Task #39 Path B). register_event_bell installs the
+ * write-end fd of a userland wakeup pipe against a Mach port set;
+ * unregister_event_bell tears it down. See src/mach_kmod/src/
+ * mach_event_bridge.c.
+ */
+struct register_event_bell_trap_args {
+	char port_l_[PADL_(mach_port_name_t)]; mach_port_name_t port; char port_r_[PADR_(mach_port_name_t)];
+	char write_fd_l_[PADL_(int)]; int write_fd; char write_fd_r_[PADR_(int)];
+};
+struct unregister_event_bell_trap_args {
+	char port_l_[PADL_(mach_port_name_t)]; mach_port_name_t port; char port_r_[PADR_(mach_port_name_t)];
 };
 struct mach_msg_trap_args {
 	char msg_l_[PADL_(mach_msg_header_t *)]; mach_msg_header_t * msg; char msg_r_[PADR_(mach_msg_header_t *)];

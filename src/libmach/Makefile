@@ -10,7 +10,6 @@
 #     ${DESTDIR}/usr/lib/system/libsystem_kernel.so
 #     ${DESTDIR}/usr/lib/system/libsystem_kernel.so.0
 #     ${DESTDIR}/usr/include/mach/mach_traps.h
-#     ${DESTDIR}/usr/include/mach/mach_traps_mux.h
 #     ${DESTDIR}/usr/include/mach/mach_port.h
 #     ${DESTDIR}/usr/include/mach/message.h
 #     ${DESTDIR}/usr/include/mach/task_special_ports.h
@@ -38,7 +37,6 @@ LIBADD+=	execinfo
 # headers (mach_voucher_t, etc.) are kept minimal or stubbed.
 INCS=		include/mach/mach.h \
 		include/mach/mach_traps.h \
-		include/mach/mach_traps_mux.h \
 		include/mach/mach_port.h \
 		include/mach/message.h \
 		include/mach/task_special_ports.h \

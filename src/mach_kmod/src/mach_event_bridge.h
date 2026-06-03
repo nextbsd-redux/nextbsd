@@ -21,11 +21,11 @@ struct ipc_pset;
 void mach_event_bridge_init(void);
 void mach_event_bridge_destroy(void);
 
-/* Trap-mux op 4 handler: register a pipe write-end with a pset. */
+/* register_event_bell handler: register a pipe write-end with a pset. */
 int  mach_event_bridge_register(struct thread *td,
     mach_port_name_t pset_name, int write_fd);
 
-/* Trap-mux op 5 handler: unregister a bell by pset name. */
+/* unregister_event_bell handler: unregister a bell by pset name. */
 int  mach_event_bridge_unregister(struct thread *td,
     mach_port_name_t pset_name);
 

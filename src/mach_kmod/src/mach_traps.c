@@ -288,19 +288,14 @@ sys_task_set_special_port_trap(struct thread *td,
 }
 
 /*
- * mach_trap_mux — multiplexer dispatcher. One FreeBSD syscall slot
- * hosts an internal table of Mach traps, keyed by op-number. Frees
- * us from FreeBSD's 10-slot lkmnosys cap (210-219) for the bulk of
- * the Mach trap surface. mach_msg_trap and mach_msg_overwrite_trap
- * stay in dedicated slots because their 7+/9-arg shapes don't fit
- * inside the 5-user-arg budget the multiplexer leaves (libc's
- * 6-arg syscall ABI minus one slot for op).
- *
- * See <mach/mach_traps_mux.h> for the op-number namespace.
+ * host_set_special_port — set a slot in the host's special-port array.
+ * Dedicated syscall (each Mach trap gets its own FreeBSD slot from the
+ * widened lkmnosys band). `host` is the host port name; we ignore it
+ * and operate on realhost — matches the existing trap pattern.
  */
-static int
-mux_host_set_special_port(struct thread *td,
-    mach_port_name_t host __unused, int which, mach_port_name_t portname)
+int
+sys_host_set_special_port_trap(struct thread *td,
+    struct host_set_special_port_trap_args *uap)
 {
 	task_t task = current_task();
 	ipc_port_t port = IP_NULL;
@@ -310,13 +305,13 @@ mux_host_set_special_port(struct thread *td,
 	/* Only HOST_BOOTSTRAP_PORT is settable from userland at the
 	 * moment — kernel-provided slots (HOST_PORT etc.) and other
 	 * Apple-defined slots are rejected. */
-	if (which != HOST_BOOTSTRAP_PORT) {
+	if (uap->which != HOST_BOOTSTRAP_PORT) {
 		td->td_retval[0] = KERN_INVALID_ARGUMENT;
 		return (0);
 	}
 
-	if (portname != 0) {
-		kr = ipc_object_copyin(task->itk_space, portname,
+	if (uap->port != 0) {
+		kr = ipc_object_copyin(task->itk_space, uap->port,
 		    MACH_MSG_TYPE_COPY_SEND, (ipc_object_t *)&port);
 		if (kr != KERN_SUCCESS) {
 			td->td_retval[0] = kr;
@@ -325,8 +320,8 @@ mux_host_set_special_port(struct thread *td,
 	}
 
 	host_lock(&realhost);
-	old = realhost.special[which];
-	realhost.special[which] = port;
+	old = realhost.special[uap->which];
+	realhost.special[uap->which] = port;
 	host_unlock(&realhost);
 
 	if (IP_VALID(old))
@@ -337,84 +332,27 @@ mux_host_set_special_port(struct thread *td,
 }
 
 /*
- * task_set_special_port migrated from its previous dedicated slot
- * into the multiplexer to free the slot for the multiplexer itself.
+ * register_event_bell / unregister_event_bell — Task #39 Path B.
+ * Dedicated syscalls wrapping the pset/pipe wakeup bridge. See
+ * src/mach_kmod/src/mach_event_bridge.c.
  */
-static int
-mux_task_set_special_port(struct thread *td,
-    mach_port_name_t target_task __unused, int which,
-    mach_port_name_t portname)
+int
+sys_register_event_bell_trap(struct thread *td,
+    struct register_event_bell_trap_args *uap)
 {
-	task_t task = current_task();
-	ipc_port_t port = IP_NULL;
-	kern_return_t kr;
 
-	if (portname != 0) {
-		kr = ipc_object_copyin(task->itk_space, portname,
-		    MACH_MSG_TYPE_COPY_SEND, (ipc_object_t *)&port);
-		if (kr != KERN_SUCCESS) {
-			td->td_retval[0] = kr;
-			return (0);
-		}
-	}
-	td->td_retval[0] = task_set_special_port(task, which, port);
-	return (0);
-}
-
-/*
- * mach_port_move_member via the mux. Task #41 root cause: libmach's
- * mach_port_move_member was a no-op stub returning KERN_SUCCESS, so
- * launchd's runtime_add_mport silently failed to link
- * launchd_internal_port into ipc_port_set. Result: every kqueue→Mach
- * bridge message enqueued on a port with no pset, the main thread's
- * pset receive never woke, every launchd-spawned daemon hung in
- * launch_msg(CHECKIN). The kernel-side trap existed
- * (sys__kernelrpc_mach_port_move_member_trap) but had no dedicated
- * lkmnosys slot left to wire it to. Route through the mux instead.
- */
-static int
-mux_port_move_member(struct thread *td __unused,
-    mach_port_name_t member, mach_port_name_t after)
-{
-	ipc_space_t space = current_task()->itk_space;
-
-	td->td_retval[0] = mach_port_move_member(space, member, after);
+	td->td_retval[0] = mach_event_bridge_register(td, uap->port,
+	    uap->write_fd);
 	return (0);
 }
 
 int
-sys_mach_trap_mux_trap(struct thread *td,
-    struct mach_trap_mux_trap_args *uap)
+sys_unregister_event_bell_trap(struct thread *td,
+    struct unregister_event_bell_trap_args *uap)
 {
 
-	switch (uap->op) {
-	case 1:		/* MACH_TRAP_OP_HOST_SET_SPECIAL_PORT */
-		return (mux_host_set_special_port(td,
-		    (mach_port_name_t)uap->a1,
-		    (int)uap->a2,
-		    (mach_port_name_t)uap->a3));
-	case 2:		/* MACH_TRAP_OP_TASK_SET_SPECIAL_PORT */
-		return (mux_task_set_special_port(td,
-		    (mach_port_name_t)uap->a1,
-		    (int)uap->a2,
-		    (mach_port_name_t)uap->a3));
-	case 3:		/* MACH_TRAP_OP_PORT_MOVE_MEMBER */
-		return (mux_port_move_member(td,
-		    (mach_port_name_t)uap->a1,
-		    (mach_port_name_t)uap->a2));
-	case 4:		/* MACH_TRAP_OP_REGISTER_EVENT_BELL */
-		td->td_retval[0] = mach_event_bridge_register(td,
-		    (mach_port_name_t)uap->a1,
-		    (int)uap->a2);
-		return (0);
-	case 5:		/* MACH_TRAP_OP_UNREGISTER_EVENT_BELL */
-		td->td_retval[0] = mach_event_bridge_unregister(td,
-		    (mach_port_name_t)uap->a1);
-		return (0);
-	default:
-		td->td_retval[0] = KERN_INVALID_ARGUMENT;
-		return (0);
-	}
+	td->td_retval[0] = mach_event_bridge_unregister(td, uap->port);
+	return (0);
 }
 
 int

@@ -13,7 +13,7 @@
  *     1. libdispatch creates a pipe() pair.
  *     2. libdispatch creates a Mach port set, adds its receive ports
  *        to it.
- *     3. libdispatch calls MACH_TRAP_OP_REGISTER_EVENT_BELL(pset,
+ *     3. libdispatch calls the register_event_bell syscall (pset,
  *        write_fd) to register the pipe's write-end with mach.ko,
  *        associated with the pset.
  *     4. libdispatch registers EVFILT_READ on the pipe's read-end
@@ -27,8 +27,8 @@
  *        and drains the pset via mach_msg(MACH_RCV_TIMEOUT 0, pset).
  *
  * MIG/syscall preference (memory:freebsd-mach-architecture-prefs):
- *   The registration operation lives in the existing trap-mux at
- *   slot 219 (op 4) rather than a /dev/mach ioctl. A future
+ *   The registration operation is a dedicated mach.ko syscall
+ *   (register_event_bell) rather than a /dev/mach ioctl. A future
  *   migration to MIG-over-mach_msg on a kernel-side mach port is
  *   tracked separately.
  */
@@ -177,7 +177,7 @@ mach_event_bridge_register(struct thread *td, mach_port_name_t pset_name,
 }
 
 /*
- * Unregister a bell by pset name. Trap-mux op 5 handler. Userland
+ * Unregister a bell by pset name. unregister_event_bell handler. Userland
  * (the libmach EVFILT_MACHPORT wrapper) calls this from reg_destroy
  * when a dispatch source is torn down, BEFORE closing the wakeup
  * pipe. Without it the kernel bell outlives the pipe — the next
