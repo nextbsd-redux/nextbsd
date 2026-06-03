@@ -17,6 +17,9 @@
 #include <servers/bootstrap.h>
 
 #include <sys/syscall.h>	/* NO_SYSCALL */
+#ifndef NO_SYSCALL
+#define NO_SYSCALL (-1)	/* kernel sentinel; sysctl reports -1 when a trap is unwired */
+#endif
 #include <sys/sysctl.h>		/* sysctlbyname (mach.bus.busy / mach.syscall.*) */
 
 #include <pthread.h>

@@ -29,6 +29,9 @@
 #include <mach/mach_port.h>
 
 #include <sys/syscall.h>	/* NO_SYSCALL */
+#ifndef NO_SYSCALL
+#define NO_SYSCALL (-1)	/* kernel sentinel; sysctl reports -1 when a trap is unwired */
+#endif
 #include <sys/sysctl.h>		/* sysctlbyname */
 #include <stdint.h>
 #include <stdio.h>		/* snprintf */
