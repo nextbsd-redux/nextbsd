@@ -54,7 +54,10 @@ struct _kernelrpc_mach_port_deallocate_trap_args;
 struct _kernelrpc_mach_port_insert_right_trap_args;
 struct task_get_special_port_trap_args;
 struct task_set_special_port_trap_args;
-struct mach_trap_mux_trap_args;
+struct host_set_special_port_trap_args;
+struct _kernelrpc_mach_port_move_member_trap_args;
+struct register_event_bell_trap_args;
+struct unregister_event_bell_trap_args;
 
 SYSCTL_DECL(_mach);
 static SYSCTL_NODE(_mach, OID_AUTO, syscall, CTLFLAG_RW, 0,
@@ -86,8 +89,14 @@ int sys_task_get_special_port_trap(struct thread *,
     struct task_get_special_port_trap_args *);
 int sys_task_set_special_port_trap(struct thread *,
     struct task_set_special_port_trap_args *);
-int sys_mach_trap_mux_trap(struct thread *,
-    struct mach_trap_mux_trap_args *);
+int sys_host_set_special_port_trap(struct thread *,
+    struct host_set_special_port_trap_args *);
+int sys__kernelrpc_mach_port_move_member_trap(struct thread *,
+    struct _kernelrpc_mach_port_move_member_trap_args *);
+int sys_register_event_bell_trap(struct thread *,
+    struct register_event_bell_trap_args *);
+int sys_unregister_event_bell_trap(struct thread *,
+    struct unregister_event_bell_trap_args *);
 
 /*
  * Phase C2: lazy Mach init. If the calling process/thread has no
@@ -252,14 +261,9 @@ sys_task_get_special_port_trap_guarded(struct thread *td,
 	return (sys_task_get_special_port_trap(td, uap));
 }
 
-/*
- * Mach trap multiplexer. Needs Mach task state for the same reason
- * the individual port traps do — the inlined handlers reach
- * current_task()->itk_space.
- */
 static int
-sys_mach_trap_mux_trap_guarded(struct thread *td,
-    struct mach_trap_mux_trap_args *uap)
+sys_task_set_special_port_trap_guarded(struct thread *td,
+    struct task_set_special_port_trap_args *uap)
 {
 	if (td->td_proc->p_machdata == NULL)
 		mach_task_init_lazy(td->td_proc);
@@ -267,7 +271,70 @@ sys_mach_trap_mux_trap_guarded(struct thread *td,
 		td->td_retval[0] = 4;	/* KERN_INVALID_ARGUMENT */
 		return (0);
 	}
-	return (sys_mach_trap_mux_trap(td, uap));
+	return (sys_task_set_special_port_trap(td, uap));
+}
+
+static int
+sys_host_set_special_port_trap_guarded(struct thread *td,
+    struct host_set_special_port_trap_args *uap)
+{
+	if (td->td_proc->p_machdata == NULL)
+		mach_task_init_lazy(td->td_proc);
+	if (td->td_proc->p_machdata == NULL) {
+		td->td_retval[0] = 4;	/* KERN_INVALID_ARGUMENT */
+		return (0);
+	}
+	return (sys_host_set_special_port_trap(td, uap));
+}
+
+/*
+ * mach_port_move_member — needs Mach task state; the handler reaches
+ * current_task()->itk_space. On no-Mach-state return KERN_INVALID_ARGUMENT
+ * (4), the closest "task is null" code in the standard return set.
+ */
+static int
+sys__kernelrpc_mach_port_move_member_trap_guarded(struct thread *td,
+    struct _kernelrpc_mach_port_move_member_trap_args *uap)
+{
+	if (td->td_proc->p_machdata == NULL)
+		mach_task_init_lazy(td->td_proc);
+	if (td->td_proc->p_machdata == NULL) {
+		td->td_retval[0] = 4;	/* KERN_INVALID_ARGUMENT */
+		return (0);
+	}
+	return (sys__kernelrpc_mach_port_move_member_trap(td, uap));
+}
+
+/*
+ * Event-bell traps (Task #39 Path B). The bridge handlers reach
+ * current_task() to resolve the pset name, so they need Mach task
+ * state. On no-Mach-state return ENOSYS — matches the libmach
+ * wrapper's "bell unavailable" expectation.
+ */
+static int
+sys_register_event_bell_trap_guarded(struct thread *td,
+    struct register_event_bell_trap_args *uap)
+{
+	if (td->td_proc->p_machdata == NULL)
+		mach_task_init_lazy(td->td_proc);
+	if (td->td_proc->p_machdata == NULL) {
+		td->td_retval[0] = ENOSYS;
+		return (0);
+	}
+	return (sys_register_event_bell_trap(td, uap));
+}
+
+static int
+sys_unregister_event_bell_trap_guarded(struct thread *td,
+    struct unregister_event_bell_trap_args *uap)
+{
+	if (td->td_proc->p_machdata == NULL)
+		mach_task_init_lazy(td->td_proc);
+	if (td->td_proc->p_machdata == NULL) {
+		td->td_retval[0] = ENOSYS;
+		return (0);
+	}
+	return (sys_unregister_event_bell_trap(td, uap));
 }
 
 static struct sysent mach_reply_port_sysent = {
@@ -356,23 +423,51 @@ static struct sysent task_get_special_port_sysent = {
 	.sy_flags	= 0,
 };
 
+static struct sysent task_set_special_port_sysent = {
+	.sy_narg	= 3,
+	.sy_call	= (sy_call_t *)sys_task_set_special_port_trap_guarded,
+	.sy_auevent	= AUE_NULL,
+	.sy_flags	= 0,
+};
+
 /*
- * Multiplexer sysent. 6 args: op + 5 args. Op-number namespace in
- * <mach/mach_traps_mux.h>.
- *
- * Registered dynamically via kern_syscall_register's auto-allocate
- * path — claims the last remaining lkmnosys slot in 210-219.
- * RESERVED slots elsewhere in the table use sysent[N].sy_call =
- * nosys, which kern_syscall_register rejects (it only accepts
- * lkmnosys or lkmressys, see freebsd-src/sys/kern/kern_syscalls.c:142).
- * NOSTD/lkmressys slots are earmarked for specific FreeBSD modules
- * (nfssvc / semsys / msgsys / shmsys / nlm_syscall) and hostile to
- * claim. So we live within the 10 lkmnosys slots; the multiplexer
- * uses one of them, and unbounded Mach traps live inside it as ops.
+ * host_set_special_port sysent. 3 args: (host, which, port). Each Mach
+ * trap now gets its own dedicated FreeBSD syscall slot (the kernel's
+ * lkmnosys band is wide enough), auto-allocated via NO_SYSCALL.
  */
-static struct sysent mach_trap_mux_sysent = {
-	.sy_narg	= 6,
-	.sy_call	= (sy_call_t *)sys_mach_trap_mux_trap_guarded,
+static struct sysent host_set_special_port_sysent = {
+	.sy_narg	= 3,
+	.sy_call	= (sy_call_t *)sys_host_set_special_port_trap_guarded,
+	.sy_auevent	= AUE_NULL,
+	.sy_flags	= 0,
+};
+
+/*
+ * mach_port_move_member sysent. 3 args: (target, member, after). Wired
+ * to the existing Apple-imported _kernelrpc trap handler.
+ */
+static struct sysent _kernelrpc_mach_port_move_member_sysent = {
+	.sy_narg	= 3,
+	.sy_call	= (sy_call_t *)sys__kernelrpc_mach_port_move_member_trap_guarded,
+	.sy_auevent	= AUE_NULL,
+	.sy_flags	= 0,
+};
+
+/*
+ * Event-bell sysents (Task #39 Path B):
+ *   register_event_bell:   (port, write_fd)  = 2
+ *   unregister_event_bell: (port)            = 1
+ */
+static struct sysent register_event_bell_sysent = {
+	.sy_narg	= 2,
+	.sy_call	= (sy_call_t *)sys_register_event_bell_trap_guarded,
+	.sy_auevent	= AUE_NULL,
+	.sy_flags	= 0,
+};
+
+static struct sysent unregister_event_bell_sysent = {
+	.sy_narg	= 1,
+	.sy_call	= (sy_call_t *)sys_unregister_event_bell_trap_guarded,
 	.sy_auevent	= AUE_NULL,
 	.sy_flags	= 0,
 };
@@ -404,8 +499,20 @@ static struct sysent _kernelrpc_mach_port_insert_right_old_sysent;
 static int task_get_special_port_offset = NO_SYSCALL;
 static struct sysent task_get_special_port_old_sysent;
 
-static int mach_trap_mux_offset = NO_SYSCALL;
-static struct sysent mach_trap_mux_old_sysent;
+static int task_set_special_port_offset = NO_SYSCALL;
+static struct sysent task_set_special_port_old_sysent;
+
+static int host_set_special_port_offset = NO_SYSCALL;
+static struct sysent host_set_special_port_old_sysent;
+
+static int _kernelrpc_mach_port_move_member_offset = NO_SYSCALL;
+static struct sysent _kernelrpc_mach_port_move_member_old_sysent;
+
+static int register_event_bell_offset = NO_SYSCALL;
+static struct sysent register_event_bell_old_sysent;
+
+static int unregister_event_bell_offset = NO_SYSCALL;
+static struct sysent unregister_event_bell_old_sysent;
 
 SYSCTL_INT(_mach_syscall, OID_AUTO, mach_reply_port, CTLFLAG_RD,
     &mach_reply_port_offset, 0,
@@ -466,11 +573,35 @@ SYSCTL_INT(_mach_syscall, OID_AUTO, task_get_special_port, CTLFLAG_RD,
     "Dynamically-allocated FreeBSD syscall number for task_get_special_port "
     "(3-arg syscall; -1 if registration failed)");
 
-SYSCTL_INT(_mach_syscall, OID_AUTO, mach_trap_mux, CTLFLAG_RD,
-    &mach_trap_mux_offset, 0,
-    "FreeBSD syscall number for the Mach trap multiplexer "
-    "(6-arg syscall: op + 5 args; ops in <mach/mach_traps_mux.h>; "
-    "-1 if registration failed)");
+SYSCTL_INT(_mach_syscall, OID_AUTO, task_set_special_port, CTLFLAG_RD,
+    &task_set_special_port_offset, 0,
+    "Dynamically-allocated FreeBSD syscall number for task_set_special_port "
+    "(3-arg syscall; -1 if registration failed)");
+
+SYSCTL_INT(_mach_syscall, OID_AUTO, host_set_special_port, CTLFLAG_RD,
+    &host_set_special_port_offset, 0,
+    "Dynamically-allocated FreeBSD syscall number for host_set_special_port "
+    "(3-arg syscall; -1 if registration failed)");
+
+/*
+ * mach_port_move_member sysctl name uses the userland-friendly form
+ * (matches libmach's resolve_syscall("mach_port_move_member")); the
+ * kernel-side handler retains the Apple `_kernelrpc_*_trap` naming.
+ */
+SYSCTL_INT(_mach_syscall, OID_AUTO, mach_port_move_member, CTLFLAG_RD,
+    &_kernelrpc_mach_port_move_member_offset, 0,
+    "Dynamically-allocated FreeBSD syscall number for mach_port_move_member "
+    "(3-arg syscall; -1 if registration failed)");
+
+SYSCTL_INT(_mach_syscall, OID_AUTO, register_event_bell, CTLFLAG_RD,
+    &register_event_bell_offset, 0,
+    "Dynamically-allocated FreeBSD syscall number for register_event_bell "
+    "(2-arg syscall; -1 if registration failed)");
+
+SYSCTL_INT(_mach_syscall, OID_AUTO, unregister_event_bell, CTLFLAG_RD,
+    &unregister_event_bell_offset, 0,
+    "Dynamically-allocated FreeBSD syscall number for unregister_event_bell "
+    "(1-arg syscall; -1 if registration failed)");
 
 static void
 wire_one(const char *name, int *offset, struct sysent *sy,
@@ -558,22 +689,38 @@ mach_syscall_wire_register(void *arg __unused)
 	    &_kernelrpc_mach_port_insert_right_old_sysent);
 	wire_one("task_get_special_port", &task_get_special_port_offset,
 	    &task_get_special_port_sysent, &task_get_special_port_old_sysent);
-	/*
-	 * task_set_special_port migrated into the multiplexer (op=2). Its
-	 * dedicated slot is freed for the multiplexer itself, which lands
-	 * in the last available lkmnosys slot (219 on FreeBSD-15-amd64).
-	 */
-	wire_one("mach_trap_mux", &mach_trap_mux_offset,
-	    &mach_trap_mux_sysent, &mach_trap_mux_old_sysent);
+	wire_one("task_set_special_port", &task_set_special_port_offset,
+	    &task_set_special_port_sysent, &task_set_special_port_old_sysent);
+	wire_one("host_set_special_port", &host_set_special_port_offset,
+	    &host_set_special_port_sysent, &host_set_special_port_old_sysent);
+	wire_one("mach_port_move_member", &_kernelrpc_mach_port_move_member_offset,
+	    &_kernelrpc_mach_port_move_member_sysent,
+	    &_kernelrpc_mach_port_move_member_old_sysent);
+	wire_one("register_event_bell", &register_event_bell_offset,
+	    &register_event_bell_sysent, &register_event_bell_old_sysent);
+	wire_one("unregister_event_bell", &unregister_event_bell_offset,
+	    &unregister_event_bell_sysent, &unregister_event_bell_old_sysent);
 }
 
 static void
 mach_syscall_wire_deregister(void *arg __unused)
 {
 
-	unwire_one("mach_trap_mux",
-	    &mach_trap_mux_offset,
-	    &mach_trap_mux_old_sysent);
+	unwire_one("unregister_event_bell",
+	    &unregister_event_bell_offset,
+	    &unregister_event_bell_old_sysent);
+	unwire_one("register_event_bell",
+	    &register_event_bell_offset,
+	    &register_event_bell_old_sysent);
+	unwire_one("mach_port_move_member",
+	    &_kernelrpc_mach_port_move_member_offset,
+	    &_kernelrpc_mach_port_move_member_old_sysent);
+	unwire_one("host_set_special_port",
+	    &host_set_special_port_offset,
+	    &host_set_special_port_old_sysent);
+	unwire_one("task_set_special_port",
+	    &task_set_special_port_offset,
+	    &task_set_special_port_old_sysent);
 	unwire_one("task_get_special_port",
 	    &task_get_special_port_offset,
 	    &task_get_special_port_old_sysent);

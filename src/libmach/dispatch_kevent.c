@@ -7,7 +7,7 @@
  * HAVE_MACH paths compile against Apple-shape APIs. The wrapper
  * translates kevent_qos_s ↔ FreeBSD's struct kevent at the
  * __sys_kevent boundary, intercepting EVFILT_MACHPORT registrations
- * and routing them through mach.ko's trap-mux op 4 bell mechanism.
+ * and routing them through mach.ko's register_event_bell mechanism.
  *
  * Concurrency. A single global mutex protects the registration list.
  * The list is expected to stay small (a handful of dispatch_mach_t
@@ -48,7 +48,6 @@
 #include <mach/dispatch_kevent.h>
 #include <mach/mach_port.h>
 #include <mach/mach_traps.h>
-#include <mach/mach_traps_mux.h>
 #include <mach/message.h>
 #include <mach/port.h>
 
@@ -188,59 +187,57 @@ reg_remove_locked(struct mach_kev_reg *target)
 }
 
 /*
- * Resolve the mach_trap_mux FreeBSD syscall number (lazy, cached).
+ * Resolve a named mach.ko syscall (lazy, cached per call site).
  * Returns the syscall number or -1 if mach.ko isn't loaded.
  */
 static int
-mach_trap_mux_syscall(void)
+resolve_mach_syscall(const char *name)
 {
-	static int mux = -2;	/* -2 = unresolved, -1 = unavailable */
+	int tmp;
+	size_t len = sizeof(tmp);
+	char oid[64];
 
-	if (mux == -2) {
-		int tmp;
-		size_t len = sizeof(tmp);
-		if (sysctlbyname("mach.syscall.mach_trap_mux", &tmp, &len,
-		    NULL, 0) != 0)
-			mux = -1;
-		else
-			mux = tmp;
-	}
-	return (mux);
+	if (snprintf(oid, sizeof(oid), "mach.syscall.%s", name) >=
+	    (int)sizeof(oid))
+		return (-1);
+	if (sysctlbyname(oid, &tmp, &len, NULL, 0) != 0)
+		return (-1);
+	return (tmp);
 }
 
 int
 mach_event_bell_register(mach_port_name_t pset_name, int pipe_w)
 {
-	int mux = mach_trap_mux_syscall();
+	static int num = -2;	/* -2 = unresolved, -1 = unavailable */
 	long ret;
 
-	if (mux < 0)
+	if (num == -2)
+		num = resolve_mach_syscall("register_event_bell");
+	if (num < 0)
 		return (ENOSYS);
-	ret = syscall(mux, MACH_TRAP_OP_REGISTER_EVENT_BELL,
-	    (uint64_t)pset_name, (uint64_t)(unsigned)pipe_w,
-	    (uint64_t)0, (uint64_t)0, (uint64_t)0);
+	ret = syscall(num, (uint64_t)pset_name, (uint64_t)(unsigned)pipe_w);
 	if (ret != 0)
 		return ((int)ret);
 	return (0);
 }
 
 /*
- * mach_event_bell_unregister — trap-mux op 5. Tears down the bell
- * registered by mach_event_bell_register so the kernel stops writing
- * wakeup bytes to a pipe whose read-end the wrapper is about to
- * close. Returns 0 on success, errno on failure.
+ * mach_event_bell_unregister — dedicated unregister_event_bell syscall.
+ * Tears down the bell registered by mach_event_bell_register so the
+ * kernel stops writing wakeup bytes to a pipe whose read-end the
+ * wrapper is about to close. Returns 0 on success, errno on failure.
  */
 int
 mach_event_bell_unregister(mach_port_name_t pset_name)
 {
-	int mux = mach_trap_mux_syscall();
+	static int num = -2;	/* -2 = unresolved, -1 = unavailable */
 	long ret;
 
-	if (mux < 0)
+	if (num == -2)
+		num = resolve_mach_syscall("unregister_event_bell");
+	if (num < 0)
 		return (ENOSYS);
-	ret = syscall(mux, MACH_TRAP_OP_UNREGISTER_EVENT_BELL,
-	    (uint64_t)pset_name, (uint64_t)0, (uint64_t)0,
-	    (uint64_t)0, (uint64_t)0);
+	ret = syscall(num, (uint64_t)pset_name);
 	if (ret != 0)
 		return ((int)ret);
 	return (0);

@@ -27,7 +27,6 @@
 #include <mach/ndr.h>
 #include <mach/task_special_ports.h>
 #include <mach/host_special_ports.h>
-#include <mach/mach_traps_mux.h>
 
 #define	NO_SYSCALL	(-1)
 
@@ -272,11 +271,9 @@ task_get_special_port(mach_port_name_t task, int which,
 }
 
 /*
- * task_set_special_port routes through the Mach trap multiplexer (op=2).
- * Migrated off its previously-dedicated FreeBSD syscall slot to free
- * that slot for the multiplexer itself (FreeBSD's lkmnosys range is
- * exactly 10 entries and we use all of them on foundational Mach
- * traps; the multiplexer hosts unbounded ops in one slot).
+ * task_set_special_port — dedicated syscall (mach.syscall.
+ * task_set_special_port). Each Mach trap now has its own FreeBSD
+ * syscall slot, resolved by name; no multiplexer.
  */
 kern_return_t
 task_set_special_port(mach_port_name_t task, int which, mach_port_t port)
@@ -284,22 +281,16 @@ task_set_special_port(mach_port_name_t task, int which, mach_port_t port)
 	static int num = NO_SYSCALL;
 
 	if (num == NO_SYSCALL) {
-		num = resolve_syscall("mach_trap_mux");
+		num = resolve_syscall("task_set_special_port");
 		if (num == NO_SYSCALL)
 			return (KERN_RESOURCE_SHORTAGE);
 	}
-	return ((kern_return_t)syscall(num,
-	    MACH_TRAP_OP_TASK_SET_SPECIAL_PORT,
-	    (uint64_t)task, (uint64_t)which, (uint64_t)port,
-	    (uint64_t)0, (uint64_t)0));
+	return ((kern_return_t)syscall(num, task, which, port));
 }
 
 /*
  * host_set_special_port — set a slot in the host's special-port
- * array. Routes through the Mach trap multiplexer (one FreeBSD
- * syscall slot, op-number selects the trap). FreeBSD reserves only
- * 10 dynamic lkmnosys slots (210-219) and we've used them all on
- * foundational traps; the multiplexer covers everything else.
+ * array. Dedicated syscall (mach.syscall.host_set_special_port).
  *
  * The bootstrap server calls this once at startup to publish its
  * receive port host-wide; thereafter task_get_special_port(
@@ -312,14 +303,11 @@ host_set_special_port(mach_port_name_t host, int which, mach_port_t port)
 	static int num = NO_SYSCALL;
 
 	if (num == NO_SYSCALL) {
-		num = resolve_syscall("mach_trap_mux");
+		num = resolve_syscall("host_set_special_port");
 		if (num == NO_SYSCALL)
 			return (KERN_RESOURCE_SHORTAGE);
 	}
-	return ((kern_return_t)syscall(num,
-	    MACH_TRAP_OP_HOST_SET_SPECIAL_PORT,
-	    (uint64_t)host, (uint64_t)which, (uint64_t)port,
-	    (uint64_t)0, (uint64_t)0));
+	return ((kern_return_t)syscall(num, host, which, port));
 }
 
 /*
@@ -462,11 +450,11 @@ mach_port_mod_refs(mach_port_name_t task, mach_port_name_t name,
 }
 
 /*
- * mach_port_move_member: route through the Mach trap multiplexer
- * (op=3). Task #41 root cause: this used to return KERN_SUCCESS
- * without doing anything, so launchd's runtime_add_mport silently
- * failed to add launchd_internal_port to its ipc_port_set. Every
- * launchd-spawned daemon hung in launch_msg(CHECKIN) because the
+ * mach_port_move_member: dedicated syscall (mach.syscall.
+ * mach_port_move_member). Task #41 root cause: this used to return
+ * KERN_SUCCESS without doing anything, so launchd's runtime_add_mport
+ * silently failed to add launchd_internal_port to its ipc_port_set.
+ * Every launchd-spawned daemon hung in launch_msg(CHECKIN) because the
  * kqueue→handle_kqueue Mach send arrived on a port the main thread
  * wasn't listening on.
  */
@@ -476,16 +464,12 @@ mach_port_move_member(mach_port_name_t task, mach_port_name_t member,
 {
 	static int num = NO_SYSCALL;
 
-	(void)task;
 	if (num == NO_SYSCALL) {
-		num = resolve_syscall("mach_trap_mux");
+		num = resolve_syscall("mach_port_move_member");
 		if (num == NO_SYSCALL)
 			return (KERN_RESOURCE_SHORTAGE);
 	}
-	return ((kern_return_t)syscall(num,
-	    MACH_TRAP_OP_PORT_MOVE_MEMBER,
-	    (uint64_t)member, (uint64_t)after,
-	    (uint64_t)0, (uint64_t)0, (uint64_t)0));
+	return ((kern_return_t)syscall(num, task, member, after));
 }
 
 kern_return_t

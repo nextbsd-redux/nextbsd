@@ -21,7 +21,7 @@
  *   2. kevent_qos() — wrapper that translates kevent_qos_s ↔
  *      struct kevent at the FreeBSD __sys_kevent boundary. Non-mach
  *      changelist entries pass through; EVFILT_MACHPORT entries get
- *      routed through mach.ko's trap-mux op 4 bell mechanism (see
+ *      routed through mach.ko's register_event_bell mechanism (see
  *      mach_kmod/src/mach_event_bridge.c). Returned EVFILT_READ
  *      events on libmach-owned pipes are transmuted back into
  *      Apple-shape EVFILT_MACHPORT events, complete with a mach_msg
@@ -179,8 +179,9 @@ int kevent_qos(int kq, const struct kevent_qos_s *changelist, int nchanges,
     void *data_out, size_t *data_available, unsigned int flags);
 
 /*
- * mach_event_bell_register — userland wrapper around trap-mux op 4.
- * Registers `pipe_w` as the wakeup file descriptor for `pset_name`.
+ * mach_event_bell_register — userland wrapper around the
+ * register_event_bell syscall. Registers `pipe_w` as the wakeup file
+ * descriptor for `pset_name`.
  * Returns 0 on success, errno on failure.
  *
  * Exposed in this header so other consumers (tests, future libxpc
@@ -190,8 +191,9 @@ int kevent_qos(int kq, const struct kevent_qos_s *changelist, int nchanges,
 int mach_event_bell_register(mach_port_name_t pset_name, int pipe_w);
 
 /*
- * mach_event_bell_unregister — trap-mux op 5. Drop the bell op 4
- * armed so the kernel stops writing wakeup bytes to the pipe.
+ * mach_event_bell_unregister — the unregister_event_bell syscall. Drop
+ * the bell register armed so the kernel stops writing wakeup bytes to
+ * the pipe.
  * Returns 0 on success, errno on failure.
  */
 int mach_event_bell_unregister(mach_port_name_t pset_name);
