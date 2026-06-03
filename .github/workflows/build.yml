@@ -234,9 +234,12 @@ jobs:
   release:
     name: release (FreeBSD ${{ matrix.variant }} ${{ matrix.arch }})
     needs: [build, test]
-    # Only publish when both jobs pass on a push to main. PRs and other
-    # branches build + test but never publish.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Publish when both jobs pass on main — either from a push to this repo or
+    # from an upstream cascade (repository_dispatch: base-updated), so an
+    # upstream change (releng -> toolchain -> compat -> nextbsd) refreshes the
+    # published continuous ISO, not just nextbsd-repo pushes. PRs and other
+    # branches build + test but never publish (ref is not refs/heads/main).
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'repository_dispatch')
     runs-on: ubuntu-latest
     permissions:
       contents: write
