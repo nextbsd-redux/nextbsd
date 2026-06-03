@@ -74,23 +74,21 @@ jobs:
       # build.sh lays this down as the ENTIRE rootfs (overlay-first: zero
       # pkgbase; pkg bootstraps on our own base). Needs DISPATCH_TOKEN
       # (cross-repo artifact read). amd64 only for now.
-      - name: download nextbsd base artifact
+      - name: download nextbsd base from compat continuous release
         if: matrix.arch == 'amd64'
         env:
           GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
         run: |
-          RUN_ID=$(gh run list -R nextbsd-redux/nextbsd-freebsd-compat \
-            -w "Build NextBSD Base (curated)" --branch main --status success \
-            --limit 1 --json databaseId -q '.[0].databaseId')
-          echo "nextbsd-freebsd-compat run: ${RUN_ID:-<none>}"
-          if [ -n "$RUN_ID" ]; then
-            gh run download "$RUN_ID" -R nextbsd-redux/nextbsd-freebsd-compat \
-              -n nextbsd-base-amd64 -D base-artifact
-            ls -lh base-artifact/
-          else
-            echo "ERROR: no successful compat main run — overlay-first needs the base artifact" >&2
-            exit 1
-          fi
+          mkdir -p base-artifact
+          # Ingest the CI-gated base from nextbsd-freebsd-compat's rolling
+          # `continuous` release (always present; only a green main build
+          # refreshes it). Same tarball + path build.sh already expects, so the
+          # overlay-first rootfs lay-down is unchanged.
+          gh release download continuous \
+            -R nextbsd-redux/nextbsd-freebsd-compat \
+            --pattern "nextbsd-base-${{ matrix.arch }}.tar.gz" \
+            --dir base-artifact --clobber
+          ls -lh base-artifact/
 
       # Pull the NEXTBSD kernel (ident NEXTBSD, = GENERIC) from nextbsd-kernel,
       # replacing the pkgbase FreeBSD-kernel-generic. The nextbsd-kernel-<arch>
@@ -98,46 +96,43 @@ jobs:
       # built `kernel` and the opt_*.h build dir that mach.ko must compile
       # against (KBI match). build.sh installs it to /boot/kernel/kernel and
       # points the mach.ko build at it. amd64 only for now.
-      - name: download NEXTBSD kernel artifact
+      - name: download NEXTBSD kernel from kernel continuous release
         if: matrix.arch == 'amd64'
         env:
           GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
         run: |
-          KRUN=$(gh run list -R nextbsd-redux/nextbsd-kernel \
-            -w "Build NextBSD Kernel" --branch main --status success \
-            --limit 1 --json databaseId -q '.[0].databaseId')
-          echo "nextbsd-kernel run: ${KRUN:-<none>}"
-          if [ -n "$KRUN" ]; then
-            gh run download "$KRUN" -R nextbsd-redux/nextbsd-kernel \
-              -n nextbsd-kernel-amd64 -D kernel-artifact
-            echo "kernel artifact tree (sys/NEXTBSD):"
-            find kernel-artifact -maxdepth 6 -name kernel -path '*sys/NEXTBSD*' -o -name 'opt_global.h' 2>/dev/null | head
-          else
-            echo "ERROR: no successful nextbsd-kernel main run — cannot ingest kernel" >&2
-            exit 1
-          fi
+          mkdir -p kernel-artifact
+          gh release download continuous \
+            -R nextbsd-redux/nextbsd-kernel \
+            --pattern "nextbsd-kernel-${{ matrix.arch }}.tar.gz" \
+            --output /tmp/nextbsd-kernel.tar.gz --clobber
+          # The asset is the sys/NEXTBSD obj subtree (kernel + opt_*.h), tarred
+          # in-container so the kernel's exec bit survives. Extract it to
+          # reproduce the tree build.sh locates via `find ... -name kernel`.
+          tar -C kernel-artifact -xzf /tmp/nextbsd-kernel.tar.gz
+          echo "kernel artifact tree (sys/NEXTBSD):"
+          find kernel-artifact -name kernel -path '*sys/NEXTBSD*' -o -name 'opt_global.h' 2>/dev/null | head
 
       # Pull the NEXTBSD module tree (cd9660, zfs, drm, sound, NICs, ...) from
       # nextbsd-kernel-modules — these are the GENERIC modules that were shipped
       # by FreeBSD-kernel-generic but aren't built into the kernel. build.sh
       # installs the *.ko into /boot/kernel and regenerates linker.hints.
       # Non-fatal if absent: the kernel boots on built-in drivers regardless.
-      - name: download NEXTBSD modules artifact
+      - name: download NEXTBSD modules from modules continuous release
         if: matrix.arch == 'amd64'
         env:
           GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
         run: |
-          MRUN=$(gh run list -R nextbsd-redux/nextbsd-kernel-modules \
-            -w "Build NextBSD Modules" --branch main --status success \
-            --limit 1 --json databaseId -q '.[0].databaseId')
-          echo "nextbsd-kernel-modules run: ${MRUN:-<none>}"
-          if [ -n "$MRUN" ]; then
-            gh run download "$MRUN" -R nextbsd-redux/nextbsd-kernel-modules \
-              -n nextbsd-modules-amd64 -D modules-artifact || \
-              echo "WARN: module artifact download failed; kernel boots on built-ins"
+          mkdir -p modules-artifact
+          # Non-fatal: the kernel boots on its built-in drivers if absent.
+          if gh release download continuous \
+               -R nextbsd-redux/nextbsd-kernel-modules \
+               --pattern "nextbsd-modules-${{ matrix.arch }}.tar.gz" \
+               --output /tmp/nextbsd-modules.tar.gz --clobber; then
+            tar -C modules-artifact -xzf /tmp/nextbsd-modules.tar.gz
             echo "module .ko count: $(find modules-artifact -name '*.ko' 2>/dev/null | wc -l)"
           else
-            echo "WARN: no successful nextbsd-kernel-modules main run; shipping kernel built-ins only"
+            echo "WARN: no modules continuous asset; shipping kernel built-ins only"
           fi
 
       - name: build ISO inside FreeBSD VM
