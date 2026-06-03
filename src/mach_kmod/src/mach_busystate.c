@@ -47,7 +47,7 @@
  * decremented on device_match_end; the 1->0 transition bumps
  * bus_quiesce_gen and wakes any thread sleeping in mach_wait_quiet.
  */
-static volatile int	bus_busy;
+static int bus_busy;
 static int		bus_quiesce_gen;
 
 static eventhandler_tag	mach_busy_start_tag;
