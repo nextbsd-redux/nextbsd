@@ -360,6 +360,39 @@ mkdir -p "$WORK/freebsd-src"
 tar -xJf "$DIST/src.txz" -C "$WORK/freebsd-src"
 
 #
+# 3a1. Patch the extracted STOCK src tree with the NEXTBSD kernel
+#      patches so mach.ko compiles against the SAME headers the ingested
+#      NEXTBSD kernel was built from. Critically this lands
+#      0002-newbus-device-match-quiesce-hook.patch, which adds the
+#      device_match_start / device_match_end declarations to
+#      sys/sys/eventhandler.h — without it mach_busystate.c fails to
+#      compile (no EVENTHANDLER_DECLARE for those events). Mirrors the
+#      "Apply patches to source" step in nextbsd-kernel-modules's
+#      build.yml: clone nextbsd-kernel (depth 1), apply each entry in
+#      patches/series with `git apply`, falling back to `patch -p1`.
+#      No syscalls.master regen is needed — mach.ko doesn't compile the
+#      generated syscall tables.
+#
+echo "==> applying NEXTBSD kernel patches to extracted src tree"
+NEXTBSD_KERNEL_REPO="${NEXTBSD_KERNEL_REPO:-https://github.com/nextbsd-redux/nextbsd-kernel.git}"
+NK_DIR="$WORK/nextbsd-kernel"
+rm -rf "$NK_DIR"
+git clone --depth 1 "$NEXTBSD_KERNEL_REPO" "$NK_DIR"
+for p in $(cat "$NK_DIR/patches/series"); do
+    echo "    applying $p"
+    if ! (cd "$WORK/freebsd-src/usr/src" && git apply "$NK_DIR/patches/$p"); then
+        echo "    git apply failed for $p — retrying with patch -p1"
+        (cd "$WORK/freebsd-src/usr/src" && patch -p1 < "$NK_DIR/patches/$p")
+    fi
+done
+echo "==> NEXTBSD kernel patches applied; verifying device_match_start landed"
+grep -q 'device_match_start' \
+    "$WORK/freebsd-src/usr/src/sys/sys/eventhandler.h" || {
+    echo "ERROR: device_match_start not present in patched eventhandler.h" >&2
+    exit 1
+}
+
+#
 # 3a2. The irreducibly-FreeBSD-only userland (kld*, UFS, devfs, ldconfig,
 #      mount, newfs, pw, login, su, ldd, geom, ... plus their prereq libs)
 #      now comes from the nextbsd-freebsd-compat from-source artifact,
@@ -726,6 +759,17 @@ cc -I"$WORK/rootfs/usr/include" \
    "$ROOT/src/mach_kmod/tests/test_task_special_port.c" \
    -lsystem_kernel
 ls -lh "$WORK/rootfs/usr/tests/freebsd-launchd-mach/test_task_special_port"
+
+# test_busystate — validates the bus-quiescence feature: reads
+# mach.bus.busy (must settle to 0 after boot probe finishes) and calls
+# mach_wait_quiet (must return promptly on a quiescent bus). Uses only
+# libc sysctlbyname + syscall, so no -lsystem_kernel needed. Failure
+# surfaces as BUSYSTATE-FAIL / WAITQUIET-FAIL.
+echo "==> building test_busystate"
+cc -I"$WORK/rootfs/usr/include" \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/test_busystate" \
+   "$ROOT/src/mach_kmod/tests/test_busystate.c"
+ls -lh "$WORK/rootfs/usr/tests/freebsd-launchd-mach/test_busystate"
 
 # test_host_bootstrap — Phase G2b validation: host_set_special_port
 # stores into realhost.special[HOST_BOOTSTRAP_PORT], and

@@ -281,6 +281,28 @@ expect {
 }
 expect {
     timeout {
+        puts "\nFAIL: BUSYSTATE marker not seen"
+        exit 1
+    }
+    "BUSYSTATE-FAIL" {
+        puts "\nFAIL: mach.bus.busy did not settle to 0 (bus not quiescent / mach.ko hook missing)"
+        exit 1
+    }
+    "BUSYSTATE-OK" { puts "\nOK: mach.bus.busy quiescent (device_match_start/end counter works)" }
+}
+expect {
+    timeout {
+        puts "\nFAIL: WAITQUIET marker not seen"
+        exit 1
+    }
+    "WAITQUIET-FAIL" {
+        puts "\nFAIL: mach_wait_quiet did not return promptly on a quiescent bus"
+        exit 1
+    }
+    "WAITQUIET-OK" { puts "\nOK: mach_wait_quiet returns on quiescence" }
+}
+expect {
+    timeout {
         puts "\nFAIL: BOOTSTRAP marker not seen"
         exit 1
     }

@@ -298,6 +298,57 @@ kern_return_t	IOServiceAddMatchingNotification(
 		    void *refCon,
 		    io_iterator_t *notification);
 
+/*
+ * iter 5 — bus quiescence -----------------------------------------
+ *
+ * mach_timespec_t — Apple's IOKit wait-timeout struct (normally from
+ * <mach/clock_types.h>). Declared inline here to avoid dragging in the
+ * whole clock-types header (clock_res_t et al.) just for the two
+ * fields IOServiceWaitQuiet / IOKitWaitQuiet consume. tv_sec/tv_nsec
+ * are summed to a nanosecond budget and handed to the mach_wait_quiet
+ * syscall.
+ */
+#ifndef _MACH_CLOCK_TYPES_H_
+typedef struct mach_timespec {
+	unsigned int	tv_sec;
+	int		tv_nsec;
+} mach_timespec_t;
+#endif
+
+/*
+ * IORegistryEntryGetBusyState — *busyState = the number of in-flight
+ * device probe->attach operations on the host.
+ *
+ * GLOBAL-APPROXIMATION DIVERGENCE FROM APPLE: on macOS this reports the
+ * busy count of a SPECIFIC IORegistryEntry's subtree. This facade has
+ * no kernel IOService tree to walk per-entry; it reports the GLOBAL
+ * kernel bus-busy count from `sysctl mach.bus.busy` (the in-flight
+ * device_probe_and_attach() depth maintained by mach.ko's
+ * device_match_start/device_match_end eventhandler consumer). The
+ * `entry` argument is therefore accepted for source compatibility and
+ * IGNORED — busyState is host-wide, not subtree-scoped. Returns
+ * kIOReturnSuccess (0) once the count was read; non-zero kern_return_t
+ * if the sysctl is unavailable (mach.ko not loaded).
+ */
+kern_return_t	IORegistryEntryGetBusyState(mach_port_t mainPort,
+		    io_registry_entry_t entry, uint32_t *busyState);
+
+/*
+ * IOServiceWaitQuiet / IOKitWaitQuiet — block until the host's device
+ * tree quiesces (global mach.bus.busy reaches 0), or until `timeout`
+ * elapses (NULL == wait indefinitely). Both resolve the mach_wait_quiet
+ * syscall via `sysctl mach.syscall.mach_wait_quiet` and call it with the
+ * timeout converted to nanoseconds. Like Apple's APIs they return
+ * success on EITHER quiescence or the deadline elapsing
+ * (kIOReturnSuccess); a resolution failure maps to kIOReturnError.
+ *
+ * Per the GLOBAL-APPROXIMATION note above, IOServiceWaitQuiet ignores
+ * its `service` argument — the wait is host-wide.
+ */
+kern_return_t	IOServiceWaitQuiet(io_service_t service,
+		    mach_timespec_t *timeout);
+IOReturn	IOKitWaitQuiet(mach_port_t mainPort, mach_timespec_t *timeout);
+
 #ifdef __cplusplus
 }
 #endif
