@@ -349,48 +349,21 @@ BASE_PKGS=""
 BASE_BUILD_PKGS=""
 
 #
-# 3a. extract src.txz to $WORK/freebsd-src. Used for two things in
-#     subsequent steps:
-#       - kernel sources for the mach.ko out-of-tree build (3b)
-#       - FreeBSD's release scripts (mkisoimages.sh) at step 11
-#     One extraction, two consumers.
+# 3a. extract src.txz to $WORK/freebsd-src for FreeBSD's release scripts
+#     (mkisoimages.sh) at step 11. (It also used to feed the out-of-tree
+#     mach.ko build, but mach is compiled into the kernel now — #181 — and
+#     mach.ko is gone — #189 — so that consumer and the patch step that
+#     prepared the tree for it have been removed; see #190.)
 #
-echo "==> extracting src.txz for kernel sources + release scripts"
+echo "==> extracting src.txz for the release scripts (mkisoimages.sh)"
 mkdir -p "$WORK/freebsd-src"
 tar -xJf "$DIST/src.txz" -C "$WORK/freebsd-src"
 
-#
-# 3a1. Patch the extracted STOCK src tree with the NEXTBSD kernel
-#      patches so mach.ko compiles against the SAME headers the ingested
-#      NEXTBSD kernel was built from. Critically this lands
-#      0002-newbus-device-match-quiesce-hook.patch, which adds the
-#      device_match_start / device_match_end declarations to
-#      sys/sys/eventhandler.h — without it mach_busystate.c fails to
-#      compile (no EVENTHANDLER_DECLARE for those events). Mirrors the
-#      "Apply patches to source" step in nextbsd-kernel-modules's
-#      build.yml: clone nextbsd-kernel (depth 1), apply each entry in
-#      patches/series with `git apply`, falling back to `patch -p1`.
-#      No syscalls.master regen is needed — mach.ko doesn't compile the
-#      generated syscall tables.
-#
-echo "==> applying NEXTBSD kernel patches to extracted src tree"
-NEXTBSD_KERNEL_REPO="${NEXTBSD_KERNEL_REPO:-https://github.com/nextbsd-redux/nextbsd-kernel.git}"
-NK_DIR="$WORK/nextbsd-kernel"
-rm -rf "$NK_DIR"
-git clone --depth 1 "$NEXTBSD_KERNEL_REPO" "$NK_DIR"
-for p in $(cat "$NK_DIR/patches/series"); do
-    echo "    applying $p"
-    if ! (cd "$WORK/freebsd-src/usr/src" && git apply "$NK_DIR/patches/$p"); then
-        echo "    git apply failed for $p — retrying with patch -p1"
-        (cd "$WORK/freebsd-src/usr/src" && patch -p1 < "$NK_DIR/patches/$p")
-    fi
-done
-echo "==> NEXTBSD kernel patches applied; verifying device_match_start landed"
-grep -q 'device_match_start' \
-    "$WORK/freebsd-src/usr/src/sys/sys/eventhandler.h" || {
-    echo "ERROR: device_match_start not present in patched eventhandler.h" >&2
-    exit 1
-}
+# 3a1. (removed, #190) The extracted src tree used to be patched with the
+#      NEXTBSD kernel patch series so the out-of-tree mach.ko compiled against
+#      matching headers. mach is in the kernel now (#181) and mach.ko is gone
+#      (#189), so no patching is needed — mkisoimages.sh (step 11) uses the
+#      stock-extracted tree as-is.
 
 #
 # 3a2. The irreducibly-FreeBSD-only userland (kld*, UFS, devfs, ldconfig,

@@ -21,8 +21,9 @@
  *   2. kevent_qos() — wrapper that translates kevent_qos_s ↔
  *      struct kevent at the FreeBSD __sys_kevent boundary. Non-mach
  *      changelist entries pass through; EVFILT_MACHPORT entries get
- *      routed through mach.ko's register_event_bell mechanism (see
- *      mach_kmod/src/mach_event_bridge.c). Returned EVFILT_READ
+ *      routed through mach's register_event_bell mechanism (see
+ *      nextbsd-kernel src-overlay sys/compat/mach/mach_event_bridge.c;
+ *      mach is built into the kernel now, #181). Returned EVFILT_READ
  *      events on libmach-owned pipes are transmuted back into
  *      Apple-shape EVFILT_MACHPORT events, complete with a mach_msg
  *      recv'd buffer in ext[0] and size in ext[1].
