@@ -613,22 +613,20 @@ ls -lh "$WORK/rootfs/bin/sync" "$WORK/rootfs/bin/wait4path" \
 #      nextbsd-kernel artifact, replacing pkgbase FreeBSD-kernel-generic
 #      (dropped from pkglist-base.txt). The artifact is the cross-build obj
 #      subtree down to sys/NEXTBSD/, containing both the loadable `kernel`
-#      and the opt_*.h build dir mach.ko must compile against for KBI match.
-#      Locate them by find (the internal obj path varies). Install the kernel
+#      with mach now compiled in (options COMPAT_MACH, #181 — no separate mach.ko).
+#      Locate it by find (the internal obj path varies). Install the kernel
 #      to /boot/kernel/kernel; the GENERIC-equivalent config has the disk +
-#      UFS drivers built in, so it boots ufs:/dev/ufs/ROOTFS directly
-#      (loader.conf's ahci/virtio/* preloads are harmless-if-builtin). The
+#      UFS drivers + mach built in, and ROOTDEVNAME/INIT_PATH baked in, so it
+#      boots ufs:/dev/ufs/ROOTFS and execs launchd with no loader.conf module
+#      loads (#180). The
 #      separate module tree (nextbsd-kernel-modules) is layered in afterward.
 #
 NEXTBSD_KERNEL_ARTIFACT="${NEXTBSD_KERNEL_ARTIFACT:-$ROOT/kernel-artifact}"
-KBUILDDIR=""
 if [ -d "$NEXTBSD_KERNEL_ARTIFACT" ]; then
     echo "==> ingesting NEXTBSD kernel from $NEXTBSD_KERNEL_ARTIFACT"
     KOBJ=$(find "$NEXTBSD_KERNEL_ARTIFACT" -type f -name kernel -path '*NEXTBSD*' 2>/dev/null | head -1)
     [ -n "$KOBJ" ] || { echo "ERROR: no NEXTBSD kernel binary in artifact" >&2; exit 1; }
-    KBUILDDIR=$(dirname "$KOBJ")   # sys/NEXTBSD build dir (has opt_*.h)
     echo "    kernel:       $KOBJ ($(du -h "$KOBJ" | cut -f1))"
-    echo "    kernbuilddir: $KBUILDDIR"
     mkdir -p "$WORK/rootfs/boot/kernel"
     install -o root -g wheel -m 555 "$KOBJ" "$WORK/rootfs/boot/kernel/kernel"
     ls -lh "$WORK/rootfs/boot/kernel/kernel"
@@ -640,17 +638,12 @@ else
 fi
 
 #
-# 3b. build mach.ko against the kernel sources + the NEXTBSD kernel's build
-#     dir (--kernbuilddir => matching opt_*.h, so mach.ko's KBI matches the
-#     ingested kernel). Install into $WORK/rootfs/boot/kernel/mach.ko so it
-#     ships inside the rootfs; the loader preloads it (mach_load=YES).
-#
-echo "==> building mach.ko (against NEXTBSD kernbuilddir)"
-"$ROOT/make-mach-kmod.sh" \
-    --sysdir="$WORK/freebsd-src/usr/src/sys" \
-    --kernbuilddir="$KBUILDDIR" \
-    --prefix="$WORK/rootfs"
-ls -lh "$WORK/rootfs/boot/kernel/mach.ko"
+# 3b. (removed, #181/#180) mach is compiled INTO the kernel (options
+#     COMPAT_MACH), so there is no out-of-tree mach.ko build and no
+#     /boot/kernel/mach.ko to ship — the ingested kernel already contains
+#     mach, and libsystem_kernel (3c) provides the userland syscall stubs.
+#     (The 3a/3a1 freebsd-src extract+patch that fed this build is now
+#     vestigial; left in place, safe to remove in a follow-up.)
 
 #
 # 3b2. install the NEXTBSD module tree (nextbsd-kernel-modules artifact) into
@@ -672,9 +665,10 @@ if [ -d "$NEXTBSD_MODULES_ARTIFACT" ] && \
             "$WORK/rootfs/boot/kernel/$(basename "$ko")"
     done
     NMODS=$(find "$WORK/rootfs/boot/kernel" -name '*.ko' | wc -l | tr -d ' ')
-    echo "    installed module count (incl. mach.ko): $NMODS"
-    # linker.hints: name->module index the loader/kldload use. mach.ko is
-    # already in place, so this indexes it too.
+    echo "    installed module count: $NMODS"
+    # linker.hints: name->module index kldload uses to resolve on-demand
+    # loads by name (the GENERIC modules: cd9660/zfs/drm/...). mach is in
+    # the kernel, not a module, so there is nothing mach-related to index.
     chroot "$WORK/rootfs" kldxref /boot/kernel || \
         kldxref "$WORK/rootfs/boot/kernel" || true
     ls -lh "$WORK/rootfs/boot/kernel/linker.hints" 2>&1 || \
@@ -682,7 +676,7 @@ if [ -d "$NEXTBSD_MODULES_ARTIFACT" ] && \
 else
     echo "==> NOTE: no NEXTBSD module tree artifact — shipping kernel built-ins only"
     echo "    (boots fine; cd9660/zfs/drm/sound/etc. modules just won't be present)"
-    # still index mach.ko so the loader can resolve it by name
+    # no modules present (mach is built into the kernel); kldxref is a no-op
     chroot "$WORK/rootfs" kldxref /boot/kernel 2>/dev/null || true
 fi
 
