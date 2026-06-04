@@ -30,6 +30,10 @@ SRCS+=		macho_compat.c
 CFLAGS.macho_util.c+=	-include ${KT}/compat/nextbsd_mach_types.h
 CFLAGS.fat_util.c+=	-include ${KT}/compat/nextbsd_mach_types.h
 
+# FreeBSD 15 links executables as PIE; static-lib objects pulled into a PIE must
+# be position-independent or ld rejects R_X86_64_32 relocations against locals.
+CFLAGS+=	-fPIC
+
 CFLAGS+=	-I${KT}/compat -I${.CURDIR} -I${KT}/../libIOKit
 CFLAGS+=	-include ${KT}/compat/apple-availability-shim.h
 CFLAGS+=	-fblocks -fconstant-cfstrings
