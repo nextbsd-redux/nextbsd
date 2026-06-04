@@ -14,4 +14,10 @@ CFLAGS+=	-D__HAS_APPLE_ICU__=1 -DU_DISABLE_RENAMING=1 -DAPPLE_ICU_CHANGES=1
 CFLAGS+=	-I${SYSROOT}/usr/include		# CoreFoundation/, dispatch/, ...
 LDFLAGS+=	-L${SYSROOT}/usr/lib/system
 LDFLAGS+=	-Wl,-rpath,/usr/lib/system
+# libCoreFoundation.so carries undefined refs (libm: floor/fmod/ceil/scalbn,
+# and CF-internal _CFThreadSetName/_CFGetCurrentDirectory) that the strict
+# default --no-allow-shlib-undefined rejects; they resolve at runtime (libm
+# arrives via the CF/ICU DT_NEEDED chain). launchctl links CF the same way
+# and uses the same workaround.
+LDFLAGS+=	-Wl,--allow-shlib-undefined
 .endif
