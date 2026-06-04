@@ -17,6 +17,16 @@
 typedef int boolean_t;
 #endif
 
+/* Mach VM scalar types fat_util.c/macho_util.c use (<mach/vm_types.h>), absent
+ * from the FreeBSD sysroot. Identical-typedef redefinition is allowed in C11 if
+ * another compat header also provides them. */
+#ifndef _NEXTBSD_VM_TYPES
+#define _NEXTBSD_VM_TYPES
+typedef uintptr_t vm_offset_t;
+typedef uintptr_t vm_address_t;
+typedef uintptr_t vm_size_t;
+#endif
+
 /* <mach-o/reloc.h>'s relocation_info — referenced by macho_util.c's linkedit
  * trim path. Absent on FreeBSD; the Mach-O bitfield layout is ABI-fixed. */
 #ifndef _NEXTBSD_RELOCATION_INFO
