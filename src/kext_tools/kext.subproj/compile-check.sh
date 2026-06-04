@@ -38,8 +38,12 @@ echo "==> include path: $INCS"
 echo
 
 rc=0
-# OSKext + its direct helpers first; KextManager (MIG client) comes later.
-for f in OSKext.c OSKextVersion.c macho_util.c misc_util.c fat_util.c printPList_new.c; do
+# OSKext + the helpers it actually links against. macho_util.c / fat_util.c are
+# the Mach-O executable parsers — bypassed on NextBSD (kext executables are ELF
+# .ko, not Mach-O), so they're NOT built; OSKext.c only needs their *headers'*
+# declarations (macho_util.h/fat_util.h, which pull mach-o/{loader,nlist}.h +
+# uuid — all provided). KextManager.c (MIG client to kextd) comes later.
+for f in OSKext.c OSKextVersion.c misc_util.c printPList_new.c; do
   src="$HERE/$f"
   [ -f "$src" ] || continue
   echo "================= $f ================="
