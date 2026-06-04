@@ -24,6 +24,12 @@ SRCS=		OSKext.c OSKextVersion.c misc_util.c printPList_new.c \
 .PATH:		${KT}/compat
 SRCS+=		macho_compat.c
 
+# Apple's macho_util.c / fat_util.c use Mach's boolean_t + TRUE/FALSE
+# (<mach/boolean.h>), absent on FreeBSD. Force-include the shim into ONLY these
+# two vendored files so it can't clash with OSKext.c's own boolean_t.
+CFLAGS.macho_util.c+=	-include ${KT}/compat/nextbsd_mach_types.h
+CFLAGS.fat_util.c+=	-include ${KT}/compat/nextbsd_mach_types.h
+
 CFLAGS+=	-I${KT}/compat -I${.CURDIR} -I${KT}/../libIOKit
 CFLAGS+=	-include ${KT}/compat/apple-availability-shim.h
 CFLAGS+=	-fblocks -fconstant-cfstrings
