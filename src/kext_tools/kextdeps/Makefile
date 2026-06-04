@@ -20,8 +20,11 @@ CFLAGS+=	-DPRIVATE=1 -D__APPLE_API_PRIVATE
 WARNS=		0
 CFLAGS+=	-Wno-everything
 
-# -lz: OSKext's cache read/write paths use zlib (inflate*/gz*).
-LDADD+=	${KT}/kext.subproj/libkext.a -lCoreFoundation -lIOKit -lz
+# libkext + CoreFoundation + zlib only. No -lIOKit: libkext's iocf_compat.c
+# provides the IOCFSerialize/IOCFUnserialize symbols OSKext needs, so nothing
+# is pulled from libIOKit — and it isn't installed in the rootfs at this build
+# step anyway. (-lz: OSKext's cache paths use inflate*/gz*.)
+LDADD+=	${KT}/kext.subproj/libkext.a -lCoreFoundation -lz
 DPADD+=	${KT}/kext.subproj/libkext.a
 
 .include <bsd.prog.mk>
