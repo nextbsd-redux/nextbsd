@@ -10,6 +10,9 @@
 # Build:   cd src/kext_tools && make
 # Install: make DESTDIR=/path/to/rootfs SYSROOT=/path/to/rootfs install
 
-SUBDIR=	kextload kextstat kextunload
+# kext.subproj builds libkext.a (Apple's OSKext engine, #182) first; kextdeps
+# links it (Phase 1: dependency resolution). The minimal kld trio (#183) stays
+# until the OSKext-backed tools graduate. Order matters: libkext before kextdeps.
+SUBDIR=	kext.subproj kextload kextstat kextunload kextdeps
 
 .include <bsd.subdir.mk>

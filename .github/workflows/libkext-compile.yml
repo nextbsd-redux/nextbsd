@@ -9,8 +9,7 @@ name: libkext compile-check (OSKext port #182)
 on:
   pull_request:
     paths:
-      - 'src/kext_tools/kext.subproj/**'
-      - 'src/kext_tools/compat/**'
+      - 'src/kext_tools/**'
       - '.github/workflows/libkext-compile.yml'
   workflow_dispatch:
 
@@ -65,7 +64,16 @@ jobs:
             ls /mnt-root/usr/include | head -20 || true
             ls -d /mnt-root/usr/include/CoreFoundation /mnt-root/usr/include/IOKit 2>&1 || true
             rc=0
+            # Fast syntax pre-check (4 core sources) — quick signal.
             SYSROOT=/mnt-root sh src/kext_tools/kext.subproj/compile-check.sh || rc=$?
+            # Real build: compile + link libkext.a and the kextdeps CLI (Phase 1)
+            # plus the kld trio, against the mounted sysroot. This is the link
+            # gate the syntax-only check can't give.
+            echo "==> make: libkext + kext_tools (compile + link)"
+            make -C src/kext_tools SYSROOT=/mnt-root || rc=$?
+            echo "==> built binaries:"
+            ls -l src/kext_tools/kextdeps/kextdeps \
+                  src/kext_tools/kext.subproj/libkext.a 2>&1 || true
             umount /mnt-root || true
             mdconfig -d -u "$md" || true
             exit $rc
