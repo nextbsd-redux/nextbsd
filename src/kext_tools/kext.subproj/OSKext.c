@@ -49,8 +49,17 @@
 #include <zlib.h>
 #include <sys/file.h>
 #include <sys/mman.h>
+#include <sys/mount.h>
 #include <sys/sysctl.h>
+#include <sys/linker.h>   /* NextBSD: kldload/kldunload/kldnext/kldstat (#182) */
+#include <errno.h>
 #include <uuid/uuid.h>
+
+/* NextBSD: kNilOptions is a CoreFoundation constant our libCoreFoundation does
+ * not export; it is simply 0. (#182) */
+#ifndef kNilOptions
+#define kNilOptions 0
+#endif
 
 #include "OSKext.h"
 #include "OSKextPrivate.h"
@@ -8546,16 +8555,8 @@ OSReturn __OSKextLoadWithArgsDict(
     char               kextPath[PATH_MAX];
     CFIndex            count = 0, i = 0;
 
-   /* If we are privileged this will work.
-    */
-    hostPriv = mach_host_self();
-    if (hostPriv == HOST_PRIV_NULL) {
-        result = kOSKextReturnNotPrivileged;
-        OSKextLog(aKext, kOSKextLogErrorLevel | kOSKextLogLoadFlag,
-             "Process must be running as root to load kexts.");
-        goto finish;
-    }
-
+    /* NextBSD: no host-priv port / kext_request — kldload enforces root
+     * itself, and the kernel's kld linker performs the load (#182). */
     __OSKextGetFileSystemPath(aKext, /* otherURL */ NULL,
         /* resolveToBase */ false, kextPath);
 
@@ -8715,53 +8716,48 @@ OSReturn __OSKextLoadWithArgsDict(
         goto finish;
     }
 
-    // construct mkext w/o compression & w/o loaded kexts in it
-    mkext = __OSKextCreateMkext(CFGetAllocator(aKext), loadList,
-        /* volumeRootURL */ NULL,
-        /* requiredFlags */ 0,
-        /* compress */ false,
-        /* skipLoaded */ true,
-        loadArgsDict);
-    if (!mkext) {
-        OSKextLog(aKext, kOSKextLogErrorLevel | kOSKextLogLoadFlag,
-             "Can't create kernel load request for %s.", kextPath);
-        goto finish;
-    }
-
-    requestBuffer = CFDataGetBytePtr(mkext);
-    requestLength = CFDataGetLength(mkext);
-
+   /* NextBSD: load the dependency-ordered list by kldload'ing each kext's
+    * executable. This replaces the XNU __OSKextCreateMkext + kext_request(
+    * HOST_PRIV) path — the kernel's kld linker resolves each .ko against the
+    * kernel and already-loaded kexts. loadList is ordered dependencies-first,
+    * so a kext's libraries are loaded before it. Codeless kexts (no
+    * CFBundleExecutable) carry only personalities and are skipped here;
+    * driver matching / personality handling is kextd's job (#177). (#182)
+    */
     OSKextLog(aKext, kOSKextLogProgressLevel | kOSKextLogLoadFlag,
          "Loading %s.", kextPath);
 
-   /* We don't actually expect a response, but try to tell MIG that
-    * by passing a NULL pointer and it throws a hissy fit and crashes
-    * your program. Fine, MIG; you has a bukkit for the response that
-    * ain't coming. Are you happy now?
-    *
-    * Also, if we don't have a log function to process the messages,
-    * don't bother sending any log flags to the kernel.
-    */
-    mig_result = kext_request(
-        hostPriv,
-        __sOSKextLogOutputFunction ? __sKernelLogFilter : kOSKextLogSilentFilter,
-        (vm_offset_t)requestBuffer,
-        (mach_msg_type_number_t)requestLength,
-        &responseBuffer,
-        &responseLength,
-        (vm_offset_t *)&logInfoBuffer,
-        &logInfoLength,
-        &op_result);
+    count = CFArrayGetCount(loadList);
+    for (i = 0; i < count; i++) {
+        OSKextRef   thisKext    = (OSKextRef)CFArrayGetValueAtIndex(loadList, i);
+        CFStringRef execNameRef = OSKextGetValueForInfoDictionaryKey(thisKext,
+            CFSTR("CFBundleExecutable"));
+        char        bundlePath[PATH_MAX];
+        char        execName[PATH_MAX];
+        char        execPath[PATH_MAX];
 
-    result = __OSKextProcessKextRequestResults(aKext,
-        mig_result, op_result,
-        (char *)logInfoBuffer, logInfoLength);
-    if (result != kOSReturnSuccess) {
-        OSKextLog(aKext, kOSKextLogErrorLevel | kOSKextLogLoadFlag,
-            "Failed to load %s - %s.",
-            kextPath, safe_mach_error_string(result));
-        goto finish;
+        if (OSKextIsLoaded(thisKext)) {
+            continue;   /* already in the kernel */
+        }
+        if (!execNameRef ||
+            !CFStringGetCString(execNameRef, execName, sizeof(execName),
+                kCFStringEncodingUTF8)) {
+            continue;   /* codeless kext: no executable to kldload */
+        }
+        __OSKextGetFileSystemPath(thisKext, /* otherURL */ NULL,
+            /* resolveToBase */ false, bundlePath);
+        snprintf(execPath, sizeof(execPath), "%s/Contents/MacOS/%s",
+            bundlePath, execName);
+
+        if (kldload(execPath) < 0 && errno != EEXIST) {
+            OSKextLog(aKext, kOSKextLogErrorLevel | kOSKextLogLoadFlag,
+                "Failed to load %s - kldload(%s): %s.",
+                kextPath, execPath, strerror(errno));
+            result = kOSKextReturnLinkError;
+            goto finish;
+        }
     }
+    result = kOSReturnSuccess;
 
 finish:
     SAFE_RELEASE(kextIdentifiers);
