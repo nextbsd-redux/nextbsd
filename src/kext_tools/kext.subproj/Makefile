@@ -22,7 +22,7 @@ SRCS=		OSKext.c OSKextVersion.c misc_util.c printPList_new.c \
 		macho_util.c fat_util.c
 
 .PATH:		${KT}/compat
-SRCS+=		macho_compat.c
+SRCS+=		macho_compat.c iocf_compat.c
 
 # Apple's macho_util.c / fat_util.c use Mach's boolean_t + TRUE/FALSE
 # (<mach/boolean.h>), absent on FreeBSD. Force-include the shim into ONLY these

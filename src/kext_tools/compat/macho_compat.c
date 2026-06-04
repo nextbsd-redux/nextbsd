@@ -14,7 +14,9 @@
  *     against (moot for ELF, which is never fat).
  */
 #include <stddef.h>
+#include <string.h>
 #include <mach-o/arch.h>
+#include <mach-o/fat.h>
 #include <mach-o/swap.h>
 
 /* mach/machine.h cputype values (Apple); only the host's is needed. */
@@ -49,4 +51,41 @@ NXGetLocalArchInfo(void)
     };
 #endif
     return &local;
+}
+
+const NXArchInfo *
+NXGetArchInfoFromName(const char *name)
+{
+    const NXArchInfo *local = NXGetLocalArchInfo();
+
+    return (name != NULL && local != NULL && strcmp(name, local->name) == 0)
+        ? local : NULL;
+}
+
+const NXArchInfo *
+NXGetArchInfoFromCpuType(cpu_type_t cputype, cpu_subtype_t cpusubtype)
+{
+    const NXArchInfo *local = NXGetLocalArchInfo();
+
+    (void)cpusubtype;
+    /* Single-arch host: match the local arch (cputype 0 means "any"). */
+    return (local != NULL && (cputype == 0 || cputype == local->cputype))
+        ? local : NULL;
+}
+
+/* No fat (universal) binaries on NextBSD — kext executables are thin ELF .ko. */
+struct fat_arch *
+NXFindBestFatArch(cpu_type_t cputype, cpu_subtype_t cpusubtype,
+    struct fat_arch *fat_archs, uint32_t nfat_archs)
+{
+    (void)cputype; (void)cpusubtype; (void)fat_archs; (void)nfat_archs;
+    return NULL;
+}
+
+/* NextBSD does not gate kext loads on the OSBundleCopyright string format. */
+int
+kxld_validate_copyright_string(const char *str)
+{
+    (void)str;
+    return 1;
 }

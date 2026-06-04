@@ -5872,42 +5872,17 @@ Boolean __OSKextReadExecutable(OSKextRef aKext)
         result = false;  // nothing to read
         goto finish;
     } else if (aKext->staticFlags.isFromMkext) {
+        /* NextBSD: kexts never come from an mkext archive — there is no mkext
+         * on NextBSD (kld loads .ko directly), so __OSKextExtractMkext2FileEntry
+         * and the mkext executable-extraction path are removed. If a kext is
+         * somehow flagged isFromMkext, it has no readable executable here. (#182)
+         */
         if (aKext->mkextInfo && aKext->mkextInfo->executable) {
             result = true;
-            goto finish;
         } else {
-            CFNumberRef executableOffsetNum = NULL;  // do not release
-
-            if (!__OSKextCreateMkextInfo(aKext)) {
-                goto finish;
-            }
-
-// xxx - log a msg on kOSKextLogArchiveFlag ?
-
-           /* Do not use OSKextGetValueForInfoDictionaryKey() here,
-            * this isn't an arch-spefic prop.
-            */
-            executableOffsetNum = CFDictionaryGetValue(aKext->infoDictionary,
-                CFSTR(kMKEXTExecutableKey));
-            if (executableOffsetNum) {
-                aKext->mkextInfo->executable = __OSKextExtractMkext2FileEntry(
-                    aKext,
-                    aKext->mkextInfo->mkextData,
-                    executableOffsetNum,
-                    /* filename */ NULL);
-                if (!aKext->mkextInfo->executable) {
-                    __OSKextAddDiagnostic(aKext, kOSKextDiagnosticsFlagValidation,
-                        kOSKextDiagnosticExecutableMissingKey,
-                        CFSTR("(executable from mkext)"), /* note */ NULL);
-                    aKext->flags.invalid = 1;
-                    aKext->flags.valid = 0;
-                    goto finish;
-                }
-            }
-
-            result = true;
-            goto finish;
+            result = false;
         }
+        goto finish;
     } else {
         if (aKext->loadInfo && aKext->loadInfo->executable) {
             result = true;

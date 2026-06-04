@@ -16,4 +16,9 @@ typedef int  KXLDFlags;
 typedef int  KXLDAllocateFlags;
 typedef int  KXLDLogLevel;
 typedef int  KXLDLogSubsystem;
+
+/* The one kxld helper OSKext calls from live (non-linker) code: copyright-
+ * string validation during dependency resolution. Backed by a permissive stub
+ * in macho_compat.c (NextBSD does not gate loads on copyright strings). */
+int kxld_validate_copyright_string(const char *str);
 #endif

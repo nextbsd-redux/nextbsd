@@ -25,4 +25,10 @@ extern const NXArchInfo *NXGetAllArchInfos(void);
 extern const NXArchInfo *NXGetLocalArchInfo(void);
 extern const NXArchInfo *NXGetArchInfoFromName(const char *name);
 extern const NXArchInfo *NXGetArchInfoFromCpuType(cpu_type_t cputype, cpu_subtype_t cpusubtype);
+
+/* fat_util.c uses NXFindBestFatArch; declare it (returns a pointer) so the
+ * caller doesn't truncate it through an implicit int declaration on LP64. */
+struct fat_arch;
+extern struct fat_arch *NXFindBestFatArch(cpu_type_t cputype,
+    cpu_subtype_t cpusubtype, struct fat_arch *fat_archs, uint32_t nfat_archs);
 #endif

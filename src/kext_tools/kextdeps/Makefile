@@ -20,7 +20,8 @@ CFLAGS+=	-DPRIVATE=1 -D__APPLE_API_PRIVATE
 WARNS=		0
 CFLAGS+=	-Wno-everything
 
-LDADD+=	${KT}/kext.subproj/libkext.a -lCoreFoundation -lIOKit
+# -lz: OSKext's cache read/write paths use zlib (inflate*/gz*).
+LDADD+=	${KT}/kext.subproj/libkext.a -lCoreFoundation -lIOKit -lz
 DPADD+=	${KT}/kext.subproj/libkext.a
 
 .include <bsd.prog.mk>
