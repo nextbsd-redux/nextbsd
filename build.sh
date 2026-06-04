@@ -1405,6 +1405,29 @@ chroot "$WORK/rootfs" ldd /bin/launchctl \
 echo "==> launchctl built + ldd verified"
 
 #
+# 3q1. build kext_tools (src/kext_tools) — minimal kld-backed
+#      kextload/kextstat/kextunload. NextBSD kext proof-of-concept (#183):
+#      prove a FreeBSD .ko wrapped as a .kext loads via an Apple-shaped tool.
+#      kextload/kextunload parse the bundle with CFBundle (libCoreFoundation,
+#      step 3p) and load through kld; kextstat is pure kld. No OSKext /
+#      codesign / personalities — faithful kext_tools port tracked in #182.
+#      Install: /usr/sbin/{kextload,kextstat,kextunload} (match macOS).
+#
+echo "==> building kext_tools (src/kext_tools)"
+mkdir -p "$WORK/rootfs/usr/sbin"
+make -C "$ROOT/src/kext_tools" \
+    DESTDIR="$WORK/rootfs" \
+    SYSROOT="$WORK/rootfs" \
+    all install
+ls -lh "$WORK/rootfs/usr/sbin/kextload" \
+       "$WORK/rootfs/usr/sbin/kextstat" \
+       "$WORK/rootfs/usr/sbin/kextunload"
+chroot "$WORK/rootfs" ldd /usr/sbin/kextload \
+    | grep -q "libCoreFoundation.so.* => /usr/lib/system/" \
+    || { echo "FAIL: kextload doesn't resolve libCoreFoundation"; exit 1; }
+echo "==> kext_tools built + installed"
+
+#
 # 3r. build hwregd (src/hwregd/hwregd.c).
 #     freebsd-launchd-mach hardware registry daemon. Phase 0 iter 1:
 #     pure libc daemon, no library deps. Reads /dev/devctl events
