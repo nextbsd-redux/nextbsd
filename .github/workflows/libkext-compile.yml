@@ -1,0 +1,71 @@
+name: libkext compile-check (OSKext port #182)
+
+# Fast iteration harness for the faithful OSKext port (#182, Phase 0): compile
+# the vendored kext.subproj against a NextBSD sysroot (the `continuous` image,
+# mounted read-only) so we surface header/type/symbol gaps in ~minutes instead
+# of a ~40-min full ISO build. The job is RED until OSKext.c compiles clean —
+# that red→green flip is the Phase-0 milestone. Not wired into the ISO build;
+# purely a developer signal. PR-triggered on the kext source/compat + manual.
+on:
+  pull_request:
+    paths:
+      - 'src/kext_tools/kext.subproj/**'
+      - 'src/kext_tools/compat/**'
+      - '.github/workflows/libkext-compile.yml'
+  workflow_dispatch:
+
+jobs:
+  compile-check:
+    name: compile-check kext.subproj against continuous sysroot
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+
+      - name: Download nextbsd continuous image (.img.zip)
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+        run: |
+          gh release download continuous -R nextbsd-redux/nextbsd \
+            --pattern '*.img.zip' --dir iso --clobber
+          mv iso/*.img.zip nextbsd.img.zip
+          rm -rf iso
+          ls -lh nextbsd.img.zip
+
+      # Unzip + mount inside the VM (sync the 400MB .zip, not the 3GB raw image),
+      # use the mounted root as the sysroot, run the compile-check.
+      - name: Mount sysroot + compile-check
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: '15.0'
+          usesh: true
+          sync: rsync
+          run: |
+            set -eu
+            MEMBER=$(unzip -Z1 nextbsd.img.zip | grep -E '\.img$' | head -1)
+            [ -n "$MEMBER" ] || { echo "no .img in zip" >&2; exit 1; }
+            unzip -p nextbsd.img.zip "$MEMBER" > disk.img
+            md=$(mdconfig -a -t vnode -f disk.img)
+            part=$(gpart show -p "$md" | awk '/freebsd-ufs/{print $3; exit}')
+            [ -n "$part" ] || { echo "no freebsd-ufs partition" >&2; exit 1; }
+            mkdir -p /mnt-root
+            mount -o ro "/dev/$part" /mnt-root
+            echo "==> sysroot /usr/include sample:"
+            ls /mnt-root/usr/include | head -20 || true
+            ls -d /mnt-root/usr/include/CoreFoundation /mnt-root/usr/include/IOKit 2>&1 || true
+            rc=0
+            SYSROOT=/mnt-root sh src/kext_tools/kext.subproj/compile-check.sh || rc=$?
+            umount /mnt-root || true
+            mdconfig -d -u "$md" || true
+            exit $rc
