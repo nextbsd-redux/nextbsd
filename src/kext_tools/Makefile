@@ -13,11 +13,11 @@
 SUBDIR=	kextload kextstat kextunload
 
 # NOTE: kext.subproj (libkext.a) and kextdeps (the OSKext dependency-resolution
-# CLI, #182 Phase 1) are deliberately NOT in SUBDIR yet. kextdeps links
-# libIOKit, which isn't installed in the rootfs at the point build.sh builds
-# kext_tools, and shipping a mid-port dev tool in the image is premature. They
-# are wired in (with the build reordered after libIOKit, + a proper test) when
-# the OSKext-backed tools graduate. To build them standalone against a sysroot:
+# CLI, #182 Phase 1) are intentionally NOT in this SUBDIR. kextdeps links
+# libIOKit, which is installed LATER than this trio in build.sh (step 3q1),
+# whereas libIOKit lands at 3r4 — so they are built by their own build.sh step
+# (3r4a, after libIOKit) + a dependency-resolution smoke (#196), not here.
+# To build them standalone against a sysroot:
 #   make -C kext.subproj SYSROOT=<root> && make -C kextdeps SYSROOT=<root>
 
 .include <bsd.subdir.mk>
