@@ -1897,6 +1897,47 @@ chroot "$WORK/rootfs" ldconfig -r | grep -q libIOKit \
     || { echo "FAIL: ldconfig hints missing libIOKit"; exit 1; }
 echo "==> libIOKit built + installed"
 
+#
+# 3r4a. build libkext + kextdeps (src/kext_tools; #182 Phase 1 / #196).
+#       Apple's OSKext engine -> static libkext.a; kextdeps is the
+#       OSKext-backed dependency-resolution CLI. Built HERE (after libIOKit)
+#       because kextdeps links libIOKit (IORegistryEntryCreateCFProperty),
+#       which isn't installed at the kext_tools step (3q1). Install:
+#       /usr/sbin/kextdeps. Then a runtime smoke proves the OSBundleLibraries
+#       dependency-graph topological sort works on the real image — possible
+#       now that CF runs (#195).
+#
+echo "==> building libkext + kextdeps (src/kext_tools)"
+make -C "$ROOT/src/kext_tools/kext.subproj" SYSROOT="$WORK/rootfs"
+make -C "$ROOT/src/kext_tools/kextdeps" \
+    DESTDIR="$WORK/rootfs" \
+    SYSROOT="$WORK/rootfs" \
+    all install
+ls -lh "$WORK/rootfs/usr/sbin/kextdeps"
+chroot "$WORK/rootfs" ldd /usr/sbin/kextdeps \
+    | grep -q "libCoreFoundation.so.* => /usr/lib/system/" \
+    || { echo "FAIL: kextdeps doesn't resolve libCoreFoundation"; exit 1; }
+
+# Runtime smoke: resolve a 2-kext graph (Leaf -> Base via OSBundleLibraries)
+# and assert kextdeps emits Base BEFORE Leaf in the load order.
+echo "==> kextdeps dependency-resolution smoke"
+mkdir -p "$WORK/rootfs/usr/tests/kext_tools"
+cp -R "$ROOT/src/kext_tools/tests/smoke" "$WORK/rootfs/usr/tests/kext_tools/smoke"
+kd_out=$(chroot "$WORK/rootfs" /usr/sbin/kextdeps \
+    -r /usr/tests/kext_tools/smoke \
+    /usr/tests/kext_tools/smoke/Leaf.kext 2>&1) \
+    || { echo "$kd_out"; echo "FAIL: kextdeps exited nonzero"; exit 1; }
+echo "$kd_out"
+echo "$kd_out" | grep -q "org.nextbsd.test.base" \
+    || { echo "FAIL: base missing from load order"; exit 1; }
+echo "$kd_out" | grep -q "org.nextbsd.test.leaf" \
+    || { echo "FAIL: leaf missing from load order"; exit 1; }
+kd_base=$(echo "$kd_out" | grep -n "org.nextbsd.test.base" | head -1 | cut -d: -f1)
+kd_leaf=$(echo "$kd_out" | grep -n "org.nextbsd.test.leaf" | head -1 | cut -d: -f1)
+[ "$kd_base" -lt "$kd_leaf" ] \
+    || { echo "FAIL: load order wrong — base ($kd_base) must precede leaf ($kd_leaf)"; exit 1; }
+echo "==> kextdeps built + installed + dependency smoke passed"
+
 # iokittest — libIOKit iter 1 walk test client. Walks the hwregd
 # registry through the IOKit facade and prints IOKIT-WALK-OK. run.sh
 # runs it and checks for the marker.

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- kextdeps smoke fixture (#182/#196): depends on org.nextbsd.test.base via
+     OSBundleLibraries. kextdeps must resolve the graph and emit base BEFORE
+     leaf in the load order. -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>org.nextbsd.test.leaf</string>
+	<key>CFBundleName</key>
+	<string>SmokeLeaf</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundlePackageType</key>
+	<string>KEXT</string>
+	<key>CFBundleVersion</key>
+	<string>1.0.0</string>
+	<key>OSBundleLibraries</key>
+	<dict>
+		<key>org.nextbsd.test.base</key>
+		<string>1.0.0</string>
+	</dict>
+</dict>
+</plist>
