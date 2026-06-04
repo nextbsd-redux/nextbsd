@@ -47,6 +47,7 @@ int
 main(int argc, char *argv[])
 {
 	const char *repo = "/System/Library/Extensions";
+	CFArrayRef  repoKexts = NULL;	/* hold repo kexts alive — see below */
 	int         ch, rc = 0, i;
 
 	while ((ch = getopt(argc, argv, "r:")) != -1) {
@@ -71,20 +72,21 @@ main(int argc, char *argv[])
 
 	/*
 	 * Populate the repository so OSBundleLibraries named by the target
-	 * kexts can be resolved. Without it only dependencies that happen to be
-	 * among the named kexts will resolve.
+	 * kexts can be resolved. OSKext's registry dicts (sKextsByIdentifier,
+	 * sKextsByURL) are NON-RETAINING — the kext objects are kept alive only
+	 * by this array — so we must hold it until after dependency resolution
+	 * below, or the dependencies vanish from the registry mid-resolve.
 	 */
 	if (access(repo, F_OK) == 0) {
 		CFURLRef repoURL = url_for_path(repo, true);
 
 		if (repoURL != NULL) {
-			CFArrayRef all = OSKextCreateKextsFromURL(
+			repoKexts = OSKextCreateKextsFromURL(
 			    kCFAllocatorDefault, repoURL);
 
-			if (all != NULL) {
+			if (repoKexts != NULL) {
 				printf("repository %s: %ld kext(s)\n", repo,
-				    (long)CFArrayGetCount(all));
-				CFRelease(all);
+				    (long)CFArrayGetCount(repoKexts));
 			}
 			CFRelease(repoURL);
 		}
@@ -130,5 +132,8 @@ main(int argc, char *argv[])
 		CFRelease(kext);
 	}
 
+	if (repoKexts != NULL) {
+		CFRelease(repoKexts);	/* safe to drop now resolution is done */
+	}
 	return (rc);
 }
