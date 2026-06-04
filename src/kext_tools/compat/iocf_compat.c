@@ -8,10 +8,35 @@
  * serialization, so back them with CoreFoundation's CFPropertyList API.
  */
 #include <CoreFoundation/CoreFoundation.h>
+#include <limits.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "IOKit/IOCFSerialize.h"
 #include "IOKit/IOCFUnserialize.h"
+
+/*
+ * CFURLResourceIsReachable — not in the NextBSD libCoreFoundation subset.
+ * OSKext uses it (OSKextIsSigned) only to test whether a file URL exists, so
+ * back it with the URL's filesystem path + access(2).
+ */
+Boolean
+CFURLResourceIsReachable(CFURLRef url, CFErrorRef *error)
+{
+	char path[PATH_MAX];
+
+	if (error != NULL) {
+		*error = NULL;
+	}
+	if (url == NULL) {
+		return (false);
+	}
+	if (!CFURLGetFileSystemRepresentation(url, true, (UInt8 *)path,
+	    sizeof(path))) {
+		return (false);
+	}
+	return (access(path, F_OK) == 0 ? true : false);
+}
 
 CFDataRef
 IOCFSerialize(CFTypeRef object, CFOptionFlags options)
