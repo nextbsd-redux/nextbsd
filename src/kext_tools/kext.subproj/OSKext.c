@@ -49,8 +49,17 @@
 #include <zlib.h>
 #include <sys/file.h>
 #include <sys/mman.h>
+#include <sys/mount.h>
 #include <sys/sysctl.h>
+#include <sys/linker.h>   /* NextBSD: kldload/kldunload/kldnext/kldstat (#182) */
+#include <errno.h>
 #include <uuid/uuid.h>
+
+/* NextBSD: kNilOptions is a CoreFoundation constant our libCoreFoundation does
+ * not export; it is simply 0. (#182) */
+#ifndef kNilOptions
+#define kNilOptions 0
+#endif
 
 #include "OSKext.h"
 #include "OSKextPrivate.h"
@@ -1457,34 +1466,10 @@ Boolean OSKextGetSimulatedSafeBoot(void)
 
 Boolean OSKextGetActualSafeBoot(void)
 {
-    static Boolean result         = false;
-    static Boolean gotIt          = false;
-    int            kern_safe_boot = 0;
-    size_t         length         = 0;
-    int            mib_name[SYSCTL_MIB_LENGTH] = { CTL_KERN, KERN_SAFEBOOT };
-
-    if (gotIt) {
-        goto finish;
-    }
-
-    /* First check the kernel sysctl. */
-    length = sizeof(kern_safe_boot);
-    if (!sysctl(mib_name, SYSCTL_MIB_LENGTH,
-        &kern_safe_boot, &length, NULL, 0)) {
-
-        result = kern_safe_boot ? true : false;
-        gotIt = true;
-    } else {
-        OSKextLog(/* kext */ NULL,
-            kOSKextLogErrorLevel |
-            kOSKextLogGeneralFlag | kOSKextLogIPCFlag,
-            "Can't determine actual safe boot mode - "
-            "sysctl() failed for KERN_SAFEBOOT - %s.",
-            strerror(errno));
-    }
-
-finish:
-    return result;
+    /* NextBSD has no safe-boot mode (the XNU kern.safeboot sysctl /
+     * KERN_SAFEBOOT MIB does not exist on FreeBSD). Always report "not safe
+     * boot"; safe-boot loadability gating is then a no-op. (#182) */
+    return false;
 }
 
 /*********************************************************************
@@ -4521,80 +4506,10 @@ CFComparisonResult __OSKextBundleIDCompare(const void *val1,
  *********************************************************************/
 CFArrayRef OSKextCopyAllRequestedIdentifiers(void)
 {
-    CFMutableArrayRef      result = NULL;
-    CFRange                resultRange;
-    CFSetRef               requestedIdentifiers = NULL;  // must release
-    OSReturn               op_result            = kOSReturnError;
-    CFMutableDictionaryRef requestDict          = NULL;  // must release
-    const void           ** values              = NULL;  // must free
-    int                    i                    = 0;
-    
-    OSKextLog(/* kext */ NULL,
-        kOSKextLogDebugLevel | kOSKextLogIPCFlag,
-        "Reading list of all kexts requested by kernel since startup.");
-    
-    /* Create the kext request to get the bundle IDs of all load requests */
-    
-    requestDict = __OSKextCreateKextRequest(
-        CFSTR(kKextRequestPredicateGetAllLoadRequests),
-        /* bundleID */ NULL, /* argsOut */ NULL);
-    
-    /* Execute the load request and validate that we got a CFSet back */
-    
-    op_result = __OSKextSendKextRequest(/* kext */ NULL, requestDict,
-        (CFTypeRef *)&requestedIdentifiers, /* rawResponseOut */ NULL, 
-        /* rawResponseLengthOut */ NULL);
-    if (op_result != kOSReturnSuccess) {
-        OSKextLog(/* kext */ NULL,
-            kOSKextLogErrorLevel | kOSKextLogIPCFlag,
-            "Failed to read kexts requested by kernel since startup - %s.",
-            safe_mach_error_string(op_result));
-        goto finish;
-    }
-    
-    if (!requestedIdentifiers || 
-        CFSetGetTypeID() != CFGetTypeID(requestedIdentifiers)) 
-    {
-        goto finish;
-    }
-    
-    /* Create a temporary array that we'll use to copy the bundle IDs from
-     * the CFSet to a CFArray.
-     */
-    
-    values = malloc(CFSetGetCount(requestedIdentifiers) * sizeof(*values));
-    if (!values) {
-        OSKextLogMemError();
-        goto finish;
-    }
-    
-    /* Create a new CFArray to return the identifiers in */
-    
-    CFSetGetValues(requestedIdentifiers, values);
-    
-    result = CFArrayCreateMutable(kCFAllocatorDefault,
-        CFSetGetCount(requestedIdentifiers), &kCFTypeArrayCallBacks);
-    if (!result) {
-        OSKextLogMemError();
-        goto finish;
-    }
-
-    for (i = 0; i < CFSetGetCount(requestedIdentifiers); ++i) {
-        CFArrayAppendValue(result, values[i]);
-    }
-
-    /* Sort the array to make the order reproducible */
-
-    resultRange.location = 0;
-    resultRange.length = CFArrayGetCount(result);
-    CFArraySortValues(result, resultRange, &__OSKextBundleIDCompare, NULL);
-
-finish:
-    SAFE_RELEASE(requestDict);
-    SAFE_RELEASE(requestedIdentifiers);
-    SAFE_FREE(values);
-        
-    return result;
+    /* NextBSD: see _OSKextCopyKernelRequests — there is no kernel-maintained
+     * queue of requested bundle IDs to read back over kext_request. kextd (#177)
+     * owns demand loading. Return an empty (mutable) list. (#182) */
+    return CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
 }
 
 /*********************************************************************
@@ -5957,42 +5872,17 @@ Boolean __OSKextReadExecutable(OSKextRef aKext)
         result = false;  // nothing to read
         goto finish;
     } else if (aKext->staticFlags.isFromMkext) {
+        /* NextBSD: kexts never come from an mkext archive — there is no mkext
+         * on NextBSD (kld loads .ko directly), so __OSKextExtractMkext2FileEntry
+         * and the mkext executable-extraction path are removed. If a kext is
+         * somehow flagged isFromMkext, it has no readable executable here. (#182)
+         */
         if (aKext->mkextInfo && aKext->mkextInfo->executable) {
             result = true;
-            goto finish;
         } else {
-            CFNumberRef executableOffsetNum = NULL;  // do not release
-
-            if (!__OSKextCreateMkextInfo(aKext)) {
-                goto finish;
-            }
-
-// xxx - log a msg on kOSKextLogArchiveFlag ?
-
-           /* Do not use OSKextGetValueForInfoDictionaryKey() here,
-            * this isn't an arch-spefic prop.
-            */
-            executableOffsetNum = CFDictionaryGetValue(aKext->infoDictionary,
-                CFSTR(kMKEXTExecutableKey));
-            if (executableOffsetNum) {
-                aKext->mkextInfo->executable = __OSKextExtractMkext2FileEntry(
-                    aKext,
-                    aKext->mkextInfo->mkextData,
-                    executableOffsetNum,
-                    /* filename */ NULL);
-                if (!aKext->mkextInfo->executable) {
-                    __OSKextAddDiagnostic(aKext, kOSKextDiagnosticsFlagValidation,
-                        kOSKextDiagnosticExecutableMissingKey,
-                        CFSTR("(executable from mkext)"), /* note */ NULL);
-                    aKext->flags.invalid = 1;
-                    aKext->flags.valid = 0;
-                    goto finish;
-                }
-            }
-
-            result = true;
-            goto finish;
+            result = false;
         }
+        goto finish;
     } else {
         if (aKext->loadInfo && aKext->loadInfo->executable) {
             result = true;
@@ -8282,6 +8172,10 @@ void OSKextLogDependencyGraph(OSKextRef aKext,
 
 /*********************************************************************
 *********************************************************************/
+#if 0 /* NextBSD #182: XNU kext_request(HOST_PRIV) MIG plumbing — removed. The
+       * kernel talks kld, not the kext_request property-list IPC, so these
+       * request/response marshalling helpers have no backend. Their callers
+       * (load/unload/query) are re-backed onto kld* directly. */
 CFMutableDictionaryRef __OSKextCreateKextRequest(
     CFStringRef              predicateIn,
     CFTypeRef                bundleIdentifierIn,
@@ -8525,37 +8419,19 @@ finish:
 
 /*********************************************************************
 *********************************************************************/
+#endif /* NextBSD #182: end XNU kext_request IPC helpers */
 OSReturn __OSKextLoadWithArgsDict(
     OSKextRef       aKext,
-    CFDictionaryRef loadArgsDict)
+    CFDictionaryRef loadArgsDict __unused)  /* NextBSD: kld ignores load args */
 {
     OSReturn           result          = kOSReturnError;
     CFArrayRef         loadList        = NULL;           // must release
     CFMutableArrayRef  kextIdentifiers = NULL;           // must release
-    kern_return_t      mig_result      = KERN_FAILURE;
-    OSReturn           op_result       = kOSReturnError;
-    host_priv_t        hostPriv        = HOST_PRIV_NULL; // xxx - need to clean up?
-    CFDataRef          mkext           = NULL;           // must release
-    const UInt8      * requestBuffer   = NULL;
-    CFIndex            requestLength   = 0;
-    vm_address_t       responseBuffer  = 0;              // must vm_deallocate
-    uint32_t           responseLength  = 0;
-    vm_address_t       logInfoBuffer   = 0;              // must vm_deallocate
-    uint32_t           logInfoLength   = 0;
-    CFStringRef        errorString     = NULL;           // must release
     char               kextPath[PATH_MAX];
     CFIndex            count = 0, i = 0;
 
-   /* If we are privileged this will work.
-    */
-    hostPriv = mach_host_self();
-    if (hostPriv == HOST_PRIV_NULL) {
-        result = kOSKextReturnNotPrivileged;
-        OSKextLog(aKext, kOSKextLogErrorLevel | kOSKextLogLoadFlag,
-             "Process must be running as root to load kexts.");
-        goto finish;
-    }
-
+    /* NextBSD: no host-priv port / kext_request — kldload enforces root
+     * itself, and the kernel's kld linker performs the load (#182). */
     __OSKextGetFileSystemPath(aKext, /* otherURL */ NULL,
         /* resolveToBase */ false, kextPath);
 
@@ -8715,65 +8591,52 @@ OSReturn __OSKextLoadWithArgsDict(
         goto finish;
     }
 
-    // construct mkext w/o compression & w/o loaded kexts in it
-    mkext = __OSKextCreateMkext(CFGetAllocator(aKext), loadList,
-        /* volumeRootURL */ NULL,
-        /* requiredFlags */ 0,
-        /* compress */ false,
-        /* skipLoaded */ true,
-        loadArgsDict);
-    if (!mkext) {
-        OSKextLog(aKext, kOSKextLogErrorLevel | kOSKextLogLoadFlag,
-             "Can't create kernel load request for %s.", kextPath);
-        goto finish;
-    }
-
-    requestBuffer = CFDataGetBytePtr(mkext);
-    requestLength = CFDataGetLength(mkext);
-
+   /* NextBSD: load the dependency-ordered list by kldload'ing each kext's
+    * executable. This replaces the XNU __OSKextCreateMkext + kext_request(
+    * HOST_PRIV) path — the kernel's kld linker resolves each .ko against the
+    * kernel and already-loaded kexts. loadList is ordered dependencies-first,
+    * so a kext's libraries are loaded before it. Codeless kexts (no
+    * CFBundleExecutable) carry only personalities and are skipped here;
+    * driver matching / personality handling is kextd's job (#177). (#182)
+    */
     OSKextLog(aKext, kOSKextLogProgressLevel | kOSKextLogLoadFlag,
          "Loading %s.", kextPath);
 
-   /* We don't actually expect a response, but try to tell MIG that
-    * by passing a NULL pointer and it throws a hissy fit and crashes
-    * your program. Fine, MIG; you has a bukkit for the response that
-    * ain't coming. Are you happy now?
-    *
-    * Also, if we don't have a log function to process the messages,
-    * don't bother sending any log flags to the kernel.
-    */
-    mig_result = kext_request(
-        hostPriv,
-        __sOSKextLogOutputFunction ? __sKernelLogFilter : kOSKextLogSilentFilter,
-        (vm_offset_t)requestBuffer,
-        (mach_msg_type_number_t)requestLength,
-        &responseBuffer,
-        &responseLength,
-        (vm_offset_t *)&logInfoBuffer,
-        &logInfoLength,
-        &op_result);
+    count = CFArrayGetCount(loadList);
+    for (i = 0; i < count; i++) {
+        OSKextRef   thisKext    = (OSKextRef)CFArrayGetValueAtIndex(loadList, i);
+        CFStringRef execNameRef = OSKextGetValueForInfoDictionaryKey(thisKext,
+            CFSTR("CFBundleExecutable"));
+        char        bundlePath[PATH_MAX];
+        char        execName[PATH_MAX];
+        char        execPath[PATH_MAX];
 
-    result = __OSKextProcessKextRequestResults(aKext,
-        mig_result, op_result,
-        (char *)logInfoBuffer, logInfoLength);
-    if (result != kOSReturnSuccess) {
-        OSKextLog(aKext, kOSKextLogErrorLevel | kOSKextLogLoadFlag,
-            "Failed to load %s - %s.",
-            kextPath, safe_mach_error_string(result));
-        goto finish;
+        if (OSKextIsLoaded(thisKext)) {
+            continue;   /* already in the kernel */
+        }
+        if (!execNameRef ||
+            !CFStringGetCString(execNameRef, execName, sizeof(execName),
+                kCFStringEncodingUTF8)) {
+            continue;   /* codeless kext: no executable to kldload */
+        }
+        __OSKextGetFileSystemPath(thisKext, /* otherURL */ NULL,
+            /* resolveToBase */ false, bundlePath);
+        snprintf(execPath, sizeof(execPath), "%s/Contents/MacOS/%s",
+            bundlePath, execName);
+
+        if (kldload(execPath) < 0 && errno != EEXIST) {
+            OSKextLog(aKext, kOSKextLogErrorLevel | kOSKextLogLoadFlag,
+                "Failed to load %s - kldload(%s): %s.",
+                kextPath, execPath, strerror(errno));
+            result = kOSKextReturnLinkError;
+            goto finish;
+        }
     }
+    result = kOSReturnSuccess;
 
 finish:
     SAFE_RELEASE(kextIdentifiers);
     SAFE_RELEASE(loadList);
-    SAFE_RELEASE(mkext);
-    SAFE_RELEASE(errorString);
-    if (responseBuffer) {
-        vm_deallocate(mach_task_self(), responseBuffer, responseLength);
-    }
-    if (logInfoBuffer) {
-        vm_deallocate(mach_task_self(), logInfoBuffer, logInfoLength);
-    }
 
     if (result == kOSReturnSuccess) {
         OSKextLog(aKext, kOSKextLogProgressLevel | kOSKextLogLoadFlag,
@@ -8806,72 +8669,25 @@ OSReturn OSKextLoadWithOptions(
     CFArrayRef          personalityNames,
     Boolean             delayAutounloadFlag)
 {
-    OSReturn               result                       = kOSReturnError;
-    CFMutableDictionaryRef loadArgs                     = NULL;  // must release
-    CFNumberRef            startExclusionNum            = NULL;  // must release
-    CFNumberRef            addPersonalitiesExclusionNum = NULL;  // must release
+    /* NextBSD: the XNU load-options — start/matching exclusion levels,
+     * personality names, delayed autounload — were arguments to the
+     * kext_request load IPC. kld has none of these: it just links the
+     * executable. Kext start, driver matching, and personality handling are
+     * kextd's responsibility (#177), and there is no autounload. So the options
+     * are dropped and the kld-backed loader is invoked directly. (#182) */
+    (void)startExclusion;
+    (void)addPersonalitiesExclusion;
+    (void)personalityNames;
+    (void)delayAutounloadFlag;
 
-   /* loadArgs will be set in the mkext under the "arguments" key, containing:
-    *     "bundle ID" = <bundle ID>
-    *     "startKext" = bool
-    *     "startMatching" = bool
-    *     "disableAutounload" = bool
-    */
-    // construct load request dict (wow this is verbose)
-    loadArgs = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
-        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-    if (!loadArgs) {
-        OSKextLogMemError();
-        goto finish;
-    }
-
-    CFDictionarySetValue(loadArgs,
-        CFSTR(kKextRequestArgumentBundleIdentifierKey),
-        OSKextGetIdentifier(aKext));
-
-    startExclusionNum = CFNumberCreate(CFGetAllocator(aKext),
-        kCFNumberSInt8Type,
-        &startExclusion);
-    if (!startExclusionNum) {
-        OSKextLogMemError();
-        goto finish;
-    }
-    CFDictionarySetValue(loadArgs, CFSTR(kKextRequestArgumentStartExcludeKey),
-        startExclusionNum);
-
-    addPersonalitiesExclusionNum = CFNumberCreate(CFGetAllocator(aKext),
-        kCFNumberSInt8Type,
-        &addPersonalitiesExclusion);
-    if (!addPersonalitiesExclusionNum) {
-        OSKextLogMemError();
-        goto finish;
-    }
-    CFDictionarySetValue(loadArgs, CFSTR(kKextRequestArgumentStartMatchingExcludeKey),
-        addPersonalitiesExclusionNum);
-
-    if (personalityNames) {
-        CFDictionarySetValue(loadArgs,
-            CFSTR(kKextRequestArgumentPersonalityNamesKey),
-            personalityNames);
-    }
-
-    if (delayAutounloadFlag) {
-        CFDictionarySetValue(loadArgs, CFSTR(kKextRequestArgumentDelayAutounloadKey),
-            kCFBooleanTrue);
-    }
-
-    result = __OSKextLoadWithArgsDict(aKext, loadArgs);
-
-finish:
-    SAFE_RELEASE(loadArgs);
-    SAFE_RELEASE(startExclusionNum);
-    SAFE_RELEASE(addPersonalitiesExclusionNum);
-    return result;
+    return __OSKextLoadWithArgsDict(aKext, /* loadArgsDict */ NULL);
 }
 
 #ifndef IOKIT_EMBEDDED
 /*********************************************************************
 *********************************************************************/
+#if 0 /* NextBSD #182: XNU kxld in-kernel linker path — removed; the kernel's
+       * kld linker links .ko in-kernel, so userland never links/relocates. */
 Boolean __OSKextInitKXLDDependency(
     KXLDDependency * dependency,
     OSKextRef        aKext,
@@ -9523,6 +9339,7 @@ finish:
 
 /*********************************************************************
 *********************************************************************/
+#endif /* NextBSD #182: end XNU kxld block */
 Boolean OSKextNeedsLoadAddressForDebugSymbols(OSKextRef aKext)
 {
     Boolean result = false;
@@ -9545,18 +9362,19 @@ OSReturn __OSKextUnload(
     CFStringRef kextIdentifier,
     Boolean     terminateServiceAndRemovePersonalities)
 {
-    OSReturn               result        = kOSReturnError;
-    char                 * kextIDCString = NULL;  // must free
-    CFDictionaryRef        kextRequest   = NULL;  // must release
-    CFMutableDictionaryRef requestArgs   = NULL;  // do not release
-    char                 * termMessage   =
-                           " (with termnation of IOServices)";
-    char                   kextPath[PATH_MAX];
+    OSReturn      result        = kOSReturnError;
+    char        * kextIDCString = NULL;  // must free
+    char          kextPath[PATH_MAX];
+    CFStringRef   execNameRef   = NULL;  // do not release
+    char          execName[PATH_MAX];
+    int           fileID;
 
     if (aKext) {
         kextIdentifier = OSKextGetIdentifier(aKext);
         __OSKextGetFileSystemPath(aKext, /* otherURL */ NULL,
             /* resolveToBase */ false, kextPath);
+        execNameRef = OSKextGetValueForInfoDictionaryKey(aKext,
+            CFSTR("CFBundleExecutable"));
     } else {
         kextIDCString = createUTF8CStringForCFString(kextIdentifier);
     }
@@ -9564,44 +9382,46 @@ OSReturn __OSKextUnload(
     OSKextLog(aKext,
         kOSKextLogProgressLevel |
         kOSKextLogIPCFlag | kOSKextLogLoadFlag,
-        "Requesting unload of %s%s.",
-        aKext ? kextPath : kextIDCString,
-        terminateServiceAndRemovePersonalities ? termMessage : "");
+        "Requesting unload of %s.",
+        aKext ? kextPath : kextIDCString);
 
-    kextRequest = __OSKextCreateKextRequest(
-        CFSTR(kKextRequestPredicateUnload),
-        kextIdentifier, /* argsOut */ &requestArgs);
-    if (!kextRequest || !requestArgs) {
+    /* NextBSD: unload via the kernel's kld linker (kldunload), replacing the
+     * XNU kext_request "Unload" IPC. The loaded kernel module's name is the
+     * kext's CFBundleExecutable (the .ko basename kldload'd), so kldfind maps
+     * the kext to its fileid. A codeless kext has no executable, so there is
+     * nothing in the kernel to unload (its personalities, if any, are kextd's
+     * concern, #177). Unload is idempotent here: a kext that isn't loaded is
+     * already "unloaded" -> success. terminateServiceAndRemovePersonalities
+     * has no kld analog (no in-kernel IOService/IOCatalogue). (#182) */
+    if (!aKext || !execNameRef ||
+        !CFStringGetCString(execNameRef, execName, sizeof(execName),
+            kCFStringEncodingUTF8)) {
+        result = kOSReturnSuccess;
         goto finish;
     }
+    (void)terminateServiceAndRemovePersonalities;
 
-    if (terminateServiceAndRemovePersonalities) {
-        CFDictionarySetValue(requestArgs,
-            CFSTR(kKextRequestArgumentTerminateIOServicesKey),
-            kCFBooleanTrue);
+    fileID = kldfind(execName);
+    if (fileID < 0) {
+        result = kOSReturnSuccess;   /* not loaded */
+        goto finish;
     }
-
-    result = __OSKextSendKextRequest(aKext, kextRequest,
-        /* cfResponseOut */ NULL,
-        /* rawResponseOut */ NULL, /* rawResponseLengthOut */ NULL);
-    if (result != kOSReturnSuccess) {
+    if (kldunloadf(fileID, LINKER_UNLOAD_NORMAL) < 0) {
         OSKextLog(aKext,
             kOSKextLogErrorLevel | kOSKextLogIPCFlag,
-            "Failed to unload %s - %s.",
-            aKext ? kextPath : kextIDCString,
-            safe_mach_error_string(result));
+            "Failed to unload %s - kldunload(%s): %s.",
+            aKext ? kextPath : kextIDCString, execName, strerror(errno));
+        result = kOSReturnError;
         goto finish;
-    } else {
-        OSKextLog(aKext,
-            kOSKextLogProgressLevel |
-            kOSKextLogIPCFlag | kOSKextLogLoadFlag,
-            "Successfully unloaded %s.",
-            aKext ? kextPath : kextIDCString);
     }
+    OSKextLog(aKext,
+        kOSKextLogProgressLevel |
+        kOSKextLogIPCFlag | kOSKextLogLoadFlag,
+        "Successfully unloaded %s.", aKext ? kextPath : kextIDCString);
+    result = kOSReturnSuccess;
 
 finish:
     SAFE_FREE(kextIDCString);
-    SAFE_RELEASE(kextRequest);
     return result;
 }
 
@@ -9649,63 +9469,34 @@ finish:
 *********************************************************************/
 kern_return_t OSKextStart(OSKextRef aKext)
 {
-    OSReturn result = kOSReturnError;
     char kextPath[PATH_MAX];
 
+    /* NextBSD: kld runs a module's MOD_LOAD handler (its DECLARE_MODULE event)
+     * as part of kldload, so a successfully loaded kext is already started.
+     * There is no separate "start" IPC as there was on XNU. (#182) */
     __OSKextGetFileSystemPath(aKext, /* otherURL */ NULL,
         /* resolveToBase */ false, kextPath);
-    // xxx - check level
     OSKextLog(aKext,
-        kOSKextLogProgressLevel |
-        kOSKextLogIPCFlag | kOSKextLogLoadFlag,
-        "Requesting start of %s.", kextPath);
-
-    result = __OSKextSimpleKextRequest(aKext,
-        CFSTR(kKextRequestPredicateStart), /* responseOut */ NULL);
-
-    if (result == kOSReturnSuccess) {
-        OSKextLog(aKext, kOSKextLogProgressLevel |
-            kOSKextLogIPCFlag | kOSKextLogLoadFlag,
-            "Started %s.", kextPath);
-    } else {
-        OSKextLog(aKext, kOSKextLogErrorLevel | kOSKextLogLoadFlag,
-            "Failed to start %s - %s.", kextPath,
-            safe_mach_error_string(result));
-    }
-
-    return result;
+        kOSKextLogProgressLevel | kOSKextLogIPCFlag | kOSKextLogLoadFlag,
+        "%s is started at load time (kld). ", kextPath);
+    return kOSReturnSuccess;
 }
 
 /*********************************************************************
 *********************************************************************/
 kern_return_t OSKextStop(OSKextRef aKext)
 {
-    OSReturn result = kOSReturnError;
     char kextPath[PATH_MAX];
 
+    /* NextBSD: a kext is stopped by unloading its module — kldunload runs the
+     * MOD_UNLOAD handler. There is no separate "stop" IPC; OSKextUnload does
+     * the work. Treat a bare stop request as a no-op success. (#182) */
     __OSKextGetFileSystemPath(aKext, /* otherURL */ NULL,
         /* resolveToBase */ false, kextPath);
-
     OSKextLog(aKext,
-        kOSKextLogProgressLevel |
-        kOSKextLogIPCFlag | kOSKextLogLoadFlag,
-        "Requesting stop of %s.", kextPath);
-
-    result = __OSKextSimpleKextRequest(aKext, CFSTR(kKextRequestPredicateStop),
-        /* responseOut */ NULL);
-
-    if (result == kOSReturnSuccess) {
-        OSKextLog(aKext,
-            kOSKextLogProgressLevel |
-            kOSKextLogIPCFlag | kOSKextLogLoadFlag,
-            "Successfully stopped %s.", kextPath);
-    } else {
-        OSKextLog(aKext, kOSKextLogErrorLevel | kOSKextLogLoadFlag,
-            "Failed to stop %s - %s.", kextPath,
-            safe_mach_error_string(result));
-    }
-
-    return result;
+        kOSKextLogProgressLevel | kOSKextLogIPCFlag | kOSKextLogLoadFlag,
+        "%s: stop is a no-op on NextBSD (use unload). ", kextPath);
+    return kOSReturnSuccess;
 }
 
 /*********************************************************************
@@ -9714,55 +9505,24 @@ OSReturn
 OSKextSendPersonalitiesToKernel(CFArrayRef personalities,
     Boolean resetFlag)
 {
-    OSReturn      result = kOSReturnError;
-    CFDataRef     serializedPersonalities = NULL;  // must release
-    void        * dataPtr;
-    CFIndex       dataLength = 0;
-    uint32_t      sendDataFlag = resetFlag ? kIOCatalogResetDrivers : kIOCatalogAddDrivers;
-
+    /* NextBSD: driver personalities are NOT pushed to the kernel via the XNU
+     * IOCatalogue Mach IPC (IOCatalogueSendData). There is no in-kernel
+     * IOCatalogue; personality matching is done in userland by kextd / the
+     * IOKit matcher (#177, which retires hwregd). kld only links code. So this
+     * is a no-op success and the load path proceeds. (#182) */
+    (void)resetFlag;
     if (!personalities) {
-        result = kOSKextReturnInvalidArgument;
-        goto finish;
+        return kOSKextReturnInvalidArgument;
     }
-
-    if (!CFArrayGetCount(personalities)) {
-        result = kOSReturnSuccess;
-        goto finish;
-    }
-
-    OSKextLog(/* kext */ NULL,
-        kOSKextLogStepLevel | kOSKextLogLoadFlag | kOSKextLogIPCFlag,
-        "Sending %d personalit%s to the kernel.",
-        (int)CFArrayGetCount(personalities),
-        (CFArrayGetCount(personalities) != 1) ? "ies" : "y");
-
-    serializedPersonalities = IOCFSerialize(personalities, kNilOptions);
-    if (!serializedPersonalities) {
+    if (CFArrayGetCount(personalities)) {
         OSKextLog(/* kext */ NULL,
-            kOSKextLogErrorLevel | kOSKextLogLoadFlag,
-            "Can't serialize personalities.");
-        result = kOSKextReturnSerialization;
-        goto finish;
+            kOSKextLogStepLevel | kOSKextLogLoadFlag | kOSKextLogIPCFlag,
+            "Skipping send of %d personalit%s to kernel "
+            "(handled in userland by kextd on NextBSD).",
+            (int)CFArrayGetCount(personalities),
+            (CFArrayGetCount(personalities) != 1) ? "ies" : "y");
     }
-
-    dataPtr = (void *)CFDataGetBytePtr(serializedPersonalities);
-    dataLength = CFDataGetLength(serializedPersonalities);
-
-    result = IOCatalogueSendData(kIOMasterPortDefault,
-        sendDataFlag, dataPtr, dataLength);
-
-    if (result != KERN_SUCCESS) {
-        OSKextLog(/* kext */ NULL,
-            kOSKextLogErrorLevel |
-            kOSKextLogLoadFlag | kOSKextLogIPCFlag,
-           "Failed to send personalities to the kernel.");
-       goto finish;
-    }
-
-finish:
-    SAFE_RELEASE(serializedPersonalities);
-
-    return result;
+    return kOSReturnSuccess;
 }
 
 /*********************************************************************
@@ -9893,55 +9653,16 @@ OSReturn __OSKextRemovePersonalities(
     OSKextRef   aKext,
     CFStringRef aBundleID)
 {
-    OSReturn        result            = kOSReturnError;
-    kern_return_t   iocatalogueResult = KERN_SUCCESS;
-    CFDictionaryRef personality       = NULL;  // must release
-    CFDataRef       data              = NULL;  // must release
-    void          * dataPointer       = NULL;  // do not free
-    CFIndex         dataLength        = 0;
-    char            kextPath[PATH_MAX];
+    char kextPath[PATH_MAX];
 
-    personality = CFDictionaryCreate(CFGetAllocator(aKext),
-        (const void **)&kCFBundleIdentifierKey,
-        (const void **)&aBundleID, 1,
-        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-    if (!personality) {
-        OSKextLogMemError();
-        goto finish;
-    }
-
+    /* NextBSD: see OSKextSendPersonalitiesToKernel — there is no in-kernel
+     * IOCatalogue Mach IPC (IOCatalogueSendData) to remove personalities from.
+     * kextd / the userland matcher owns personality lifecycle (#177). No-op
+     * success. (#182) */
+    (void)aBundleID;
     __OSKextGetFileSystemPath(aKext, /* otherURL */ NULL,
         /* resolveToBase */ FALSE, kextPath);
-
-    data = IOCFSerialize(personality, kNilOptions);
-    if (!data) {
-        OSKextLog(aKext,
-            kOSKextLogErrorLevel | kOSKextLogIPCFlag,
-            "Can't serialize personalities for %s.",
-            kextPath);
-        goto finish;
-    }
-
-    dataPointer = (void *)CFDataGetBytePtr(data);
-    dataLength = CFDataGetLength(data);
-    iocatalogueResult = IOCatalogueSendData(kIOMasterPortDefault,
-        kIOCatalogRemoveDrivers,
-        dataPointer, dataLength);
-
-    if (iocatalogueResult != KERN_SUCCESS) {
-       OSKextLog(aKext,
-           kOSKextLogErrorLevel | kOSKextLogIPCFlag,
-           "Failed to remove personalities of %s from IOCatalogue - %s.",
-           kextPath,
-           safe_mach_error_string(iocatalogueResult));
-       goto finish;
-    }
-    result = kOSReturnSuccess;
-finish:
-    SAFE_RELEASE(data);
-    SAFE_RELEASE(personality);
-
-    return result;
+    return kOSReturnSuccess;
 }
 
 /*********************************************************************
@@ -10281,20 +10002,23 @@ finish:
 *********************************************************************/
 Boolean OSKextIsLoaded(OSKextRef aKext)
 {
-    Boolean result = false;
+    CFStringRef execNameRef = NULL;  // do not release
+    char        execName[PATH_MAX];
 
-    if (!aKext->loadInfo) {
-        goto finish;
+    /* NextBSD: ask the kld linker directly. The loaded kernel module name is
+     * the kext's CFBundleExecutable (the .ko basename kldload'd), so a kext is
+     * loaded iff kldfind() resolves that name to a module. A codeless kext (no
+     * executable) is never "loaded" in the kld sense. This replaces the XNU
+     * path that lazily checked kernelLoadInfo populated from kext_request. (#182)
+     */
+    execNameRef = OSKextGetValueForInfoDictionaryKey(aKext,
+        CFSTR("CFBundleExecutable"));
+    if (!execNameRef ||
+        !CFStringGetCString(execNameRef, execName, sizeof(execName),
+            kCFStringEncodingUTF8)) {
+        return false;
     }
-    if (aKext->loadInfo->kernelLoadInfo) {
-        __OSKextCheckLoaded(aKext);
-    }
-    if (aKext->loadInfo->flags.isLoaded) {
-        result = true;
-    }
-
-finish:
-    return result;
+    return (kldfind(execName) >= 0) ? true : false;
 }
 
 /*********************************************************************
@@ -10500,41 +10224,12 @@ void OSKextFlushLoadInfo(
 *********************************************************************/
 CFArrayRef _OSKextCopyKernelRequests(void)
 {
-    CFArrayRef             result        = NULL;
-    OSReturn               op_result     = kOSReturnError;
-    CFMutableDictionaryRef requestDict   = NULL;  // must release
-
-    OSKextLog(/* kext */ NULL,
-        kOSKextLogDebugLevel | kOSKextLogIPCFlag,
-        "Reading requests from kernel.");
-
-    requestDict = __OSKextCreateKextRequest(
-        CFSTR(kKextRequestPredicateGetKernelRequests),
-        /* bundleID */ NULL, /* argsOut */ NULL);
-
-    op_result = __OSKextSendKextRequest(/* kext */ NULL, requestDict,
-        (CFTypeRef *)&result,
-        /* rawResponseOut */ NULL, /* rawResponseLengthOut */ NULL);
-    if (op_result != kOSReturnSuccess) {
-        OSKextLog(/* kext */ NULL,
-            kOSKextLogErrorLevel | kOSKextLogIPCFlag,
-            "Failed to read requests from kernel - %s.",
-            safe_mach_error_string(op_result));
-        SAFE_RELEASE_NULL(result);
-        goto finish;
-    }
-
-    if (!result || CFArrayGetTypeID() != CFGetTypeID(result)) {
-        SAFE_RELEASE_NULL(result);
-        OSKextLog(/* kext */ NULL,
-            kOSKextLogErrorLevel | kOSKextLogIPCFlag,
-            "Requests from kernel missing or of wrong type.");
-        goto finish;
-    }
-
-finish:
-    SAFE_RELEASE(requestDict);
-    return result;
+    /* NextBSD: the XNU "Get Kernel Requests" IPC drained IOKit-initiated kext
+     * load requests (the kernel asking userland to load a driver for matched
+     * hardware). On NextBSD that demand-load channel is kextd's (#177) — it
+     * watches device-match notifications directly — not a kext_request poll, so
+     * there are no requests to report here. Return an empty list. (#182) */
+    return CFArrayCreate(kCFAllocatorDefault, NULL, 0, &kCFTypeArrayCallBacks);
 }
 
 /*********************************************************************
@@ -10544,63 +10239,14 @@ OSReturn _OSKextSendResource(
     OSReturn        requestResult,
     CFDataRef       resource)
 {
-    OSReturn               result           = kOSReturnError;
-    CFDictionaryRef        requestArgs      = NULL;  // do not release
-    CFMutableDictionaryRef response         = NULL;  // must release
-    CFMutableDictionaryRef responseArgs     = NULL;  // must release
-    CFNumberRef            requestResultNum = NULL;  // must release
-    
-    requestArgs = CFDictionaryGetValue(request,
-        CFSTR(kKextRequestArgumentsKey));
-    if (!requestArgs) {
-        result = kOSKextReturnInvalidArgument;
-        goto finish;
-    }
-    
-    response = CFDictionaryCreateMutableCopy(kCFAllocatorDefault,
-        0, request);
-    if (!response) {
-        OSKextLogMemError();
-        goto finish;
-    }
-    
-    responseArgs = CFDictionaryCreateMutableCopy(kCFAllocatorDefault,
-        0, requestArgs);
-    if (!responseArgs) {
-        OSKextLogMemError();
-        goto finish;
-    }
-    
-    CFDictionarySetValue(response, CFSTR(kKextRequestPredicateKey),
-        CFSTR(kKextRequestPredicateSendResource));
-    CFDictionarySetValue(response, CFSTR(kKextRequestArgumentsKey),
-        responseArgs);
-        
-    if (resource) {
-        CFDictionarySetValue(responseArgs, CFSTR(kKextRequestArgumentValueKey),
-            resource);
-    }
-    
-    requestResultNum = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type,
-        (SInt32 *)&requestResult);
-
-   /* Let's not treat this as fatal, we'd like to get the waiting callback
-    * cleared in the kernel and it can just send an error.
-    */
-    if (requestResultNum) {
-        CFDictionarySetValue(responseArgs, CFSTR(kKextRequestArgumentResultKey),
-            requestResultNum);
-    }
-
-    result = __OSKextSendKextRequest(/* kext */ NULL, response,
-        /* cfResponseOut */ NULL,
-        /* rawResponseOut */ NULL, /* rawResponseLengthOut */ NULL);
-
-finish:
-    SAFE_RELEASE(requestResultNum);
-    SAFE_RELEASE(responseArgs);
-    SAFE_RELEASE(response);
-    return result;
+    /* NextBSD: resource-request completion was part of the kext_request IPC
+     * (the kernel asking userland for a file's bytes, then userland replying
+     * with the data). kld has no such callback channel; demand loading is
+     * kextd's (#177). Unsupported here. (#182) */
+    (void)request;
+    (void)requestResult;
+    (void)resource;
+    return kOSKextReturnInvalidArgument;
 }
 
 /*********************************************************************
@@ -10641,68 +10287,82 @@ CFDictionaryRef OSKextCopyLoadedKextInfo(
     CFArrayRef kextIdentifiers,
     CFArrayRef infoKeys)
 {
-    CFDictionaryRef        result        = NULL;
-    OSReturn               op_result     = kOSReturnError;
-    CFMutableDictionaryRef requestDict   = NULL;  // must release
-    CFMutableDictionaryRef requestArgs   = NULL;  // do not release
-    CFStringRef            infoString    = NULL;  // must release
-    char                 * infoCString   = NULL;  // must free
+    CFMutableDictionaryRef result = NULL;
+    int                    fileID;
 
-    OSKextLog(/* kext */ NULL,
-        kOSKextLogStepLevel | kOSKextLogIPCFlag,
-        "Reading loaded kext info from kernel.");
+    /* NextBSD: enumerate the kernel's loaded modules via the kld linker
+     * (kldnext/kldstat) instead of the XNU kext_request "Get Loaded" IPC. The
+     * loaded module name is the kext's CFBundleExecutable (the .ko basename
+     * kldload'd), and kld reports load address / size / id (load tag). kld does
+     * not track CFBundleVersion or UUID, so this returns what kld knows, keyed
+     * by module name; OSKextIsLoaded answers the precise "is X loaded?" question
+     * directly via kldfind on the executable name. (kextIdentifiers/infoKeys
+     * filtering is a server-side convenience we don't need: callers filter the
+     * returned dict.) (#182) */
+    (void)kextIdentifiers;
+    (void)infoKeys;
 
-    requestDict = __OSKextCreateKextRequest(CFSTR(kKextRequestPredicateGetLoaded),
-        kextIdentifiers, &requestArgs);
-        
-    if (infoKeys && CFArrayGetCount(infoKeys)) {
-        CFDictionarySetValue(requestArgs,
-            CFSTR(kKextRequestArgumentInfoKeysKey),
-            infoKeys);
-    }
+    OSKextLog(/* kext */ NULL, kOSKextLogStepLevel | kOSKextLogIPCFlag,
+        "Reading loaded kext info from kernel (kld).");
 
-    op_result = __OSKextSendKextRequest(/* kext */ NULL, requestDict,
-        (CFTypeRef *)&result,
-        /* rawResponseOut */ NULL, /* rawResponseLengthOut */ NULL);
-    if (op_result != kOSReturnSuccess) {
-        OSKextLog(/* kext */ NULL,
-            kOSKextLogErrorLevel | kOSKextLogIPCFlag,
-            "Failed to read loaded kext info from kernel - %s.",
-            safe_mach_error_string(op_result));
-        SAFE_RELEASE_NULL(result);
-        goto finish;
-    }
-
+    result = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     if (!result) {
-        OSKextLog(/* kext */ NULL,
-            kOSKextLogErrorLevel | kOSKextLogIPCFlag,
-            "Kernel request call returned no data.");
-        goto finish;
-    }
-    if (CFDictionaryGetTypeID() != CFGetTypeID(result)) {
-        SAFE_RELEASE_NULL(result);
-        // xxx - these flags don't seem quite right
-        OSKextLog(/* kext */ NULL,
-            kOSKextLogErrorLevel | kOSKextLogIPCFlag,
-            "Loaded kext info from kernel is wrong type.");
-        goto finish;
+        OSKextLogMemError();
+        return NULL;
     }
 
-    if (__OSKextShouldLog(/* kext */ NULL,
-        kOSKextLogDebugLevel | kOSKextLogLoadFlag | kOSKextLogIPCFlag)) {
+    for (fileID = kldnext(0); fileID > 0; fileID = kldnext(fileID)) {
+        struct kld_file_stat   stat;
+        CFStringRef            nameRef = NULL;   // must release
+        CFMutableDictionaryRef info    = NULL;   // must release
+        CFNumberRef            num     = NULL;   // must release
+        int64_t                addr;
+        int32_t                size, tag;
 
-        infoString = createCFStringForPlist_new(result,
-            kPListStyleClassic);
-        infoCString = createUTF8CStringForCFString(infoString);
-        OSKextLog(/* kext */ NULL,
-            kOSKextLogDebugLevel | kOSKextLogLoadFlag | kOSKextLogIPCFlag,
-            "Loaded kext info:\n%s", infoCString);
+        stat.version = sizeof(stat);
+        if (kldstat(fileID, &stat) < 0) {
+            continue;
+        }
+
+        nameRef = CFStringCreateWithCString(kCFAllocatorDefault,
+            stat.name, kCFStringEncodingUTF8);
+        info = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+            &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+        if (!nameRef || !info) {
+            SAFE_RELEASE(nameRef);
+            SAFE_RELEASE(info);
+            continue;
+        }
+
+        /* kld knows the module by name; record it as the identifier + the
+         * load facts kld can provide. */
+        CFDictionarySetValue(info, kCFBundleIdentifierKey, nameRef);
+        CFDictionarySetValue(info, CFSTR(kOSBundleStartedKey), kCFBooleanTrue);
+
+        tag = fileID;
+        num = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &tag);
+        if (num) {
+            CFDictionarySetValue(info, CFSTR(kOSBundleLoadTagKey), num);
+            SAFE_RELEASE(num);
+        }
+        addr = (int64_t)(uintptr_t)stat.address;
+        num = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt64Type, &addr);
+        if (num) {
+            CFDictionarySetValue(info, CFSTR(kOSBundleLoadAddressKey), num);
+            SAFE_RELEASE(num);
+        }
+        size = (int32_t)stat.size;
+        num = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &size);
+        if (num) {
+            CFDictionarySetValue(info, CFSTR(kOSBundleLoadSizeKey), num);
+            SAFE_RELEASE(num);
+        }
+
+        CFDictionarySetValue(result, nameRef, info);
+        SAFE_RELEASE(nameRef);
+        SAFE_RELEASE(info);
     }
-
-finish:
-    SAFE_RELEASE(requestDict);
-    SAFE_RELEASE(infoString);
-    SAFE_FREE(infoCString);
 
     return result;
 }
@@ -13091,6 +12751,12 @@ finish:
 *********************************************************************/
 #define GZIP_WINDOW_OFFSET (16)
 
+#if 0 /* NextBSD #182: XNU mkext archive + Mach-O segment manipulation +
+       * prelinked-kernel (kernelcache) builder — all removed. kld loads .ko
+       * files directly; there is no mkext, no in-userland Mach-O surgery, and
+       * no kernelcache on NextBSD. Includes the public OSKextCreateMkext /
+       * OSKextCreateKextsFromMkext* / OSKextCreatePrelinkedKernel entry points
+       * (kextcache-era; unused). */
 Boolean __OSKextAddCompressedFileToMkext(
     OSKextRef        aKext,
     CFMutableDataRef mkextData,
@@ -15310,6 +14976,7 @@ Boolean __OSKextCheckForPrelinkedKernel(
 #pragma mark Misc
 /*********************************************************************
 *********************************************************************/
+#endif /* NextBSD #182: end XNU mkext/segment/prelink block */
 CFComparisonResult __OSKextCompareIdentifiers(
     const void * val1,
     const void * val2,
