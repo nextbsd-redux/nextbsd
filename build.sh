@@ -1379,27 +1379,10 @@ chroot "$WORK/rootfs" ldd /bin/launchctl \
 echo "==> launchctl built + ldd verified"
 
 #
-# 3q1. build kext_tools (src/kext_tools) — minimal kld-backed
-#      kextload/kextstat/kextunload. NextBSD kext proof-of-concept (#183):
-#      prove a FreeBSD .ko wrapped as a .kext loads via an Apple-shaped tool.
-#      kextload/kextunload parse the bundle with CFBundle (libCoreFoundation,
-#      step 3p) and load through kld; kextstat is pure kld. No OSKext /
-#      codesign / personalities — faithful kext_tools port tracked in #182.
-#      Install: /usr/sbin/{kextload,kextstat,kextunload} (match macOS).
-#
-echo "==> building kext_tools (src/kext_tools)"
-mkdir -p "$WORK/rootfs/usr/sbin"
-make -C "$ROOT/src/kext_tools" \
-    DESTDIR="$WORK/rootfs" \
-    SYSROOT="$WORK/rootfs" \
-    all install
-ls -lh "$WORK/rootfs/usr/sbin/kextload" \
-       "$WORK/rootfs/usr/sbin/kextstat" \
-       "$WORK/rootfs/usr/sbin/kextunload"
-chroot "$WORK/rootfs" ldd /usr/sbin/kextload \
-    | grep -q "libCoreFoundation.so.* => /usr/lib/system/" \
-    || { echo "FAIL: kextload doesn't resolve libCoreFoundation"; exit 1; }
-echo "==> kext_tools built + installed"
+# 3q1. kext_tools (src/kext_tools) now builds at step 3r4a, AFTER libIOKit:
+#      kextload/kextunload graduated to the OSKext engine (#196) and link
+#      libkext.a + libIOKit, which isn't installed yet at this point. (This was
+#      previously a kld-only kextload/kextstat/kextunload trio, #183.)
 
 #
 # 3r. build hwregd (src/hwregd/hwregd.c).
@@ -1898,25 +1881,28 @@ chroot "$WORK/rootfs" ldconfig -r | grep -q libIOKit \
 echo "==> libIOKit built + installed"
 
 #
-# 3r4a. build libkext + kextdeps (src/kext_tools; #182 Phase 1 / #196).
-#       Apple's OSKext engine -> static libkext.a; kextdeps is the
-#       OSKext-backed dependency-resolution CLI. Built HERE (after libIOKit)
-#       because kextdeps links libIOKit (IORegistryEntryCreateCFProperty),
-#       which isn't installed at the kext_tools step (3q1). Install:
-#       /usr/sbin/kextdeps. Then a runtime smoke proves the OSBundleLibraries
-#       dependency-graph topological sort works on the real image — possible
-#       now that CF runs (#195).
+# 3r4a. build kext_tools (src/kext_tools; #182 / #196) — AFTER libIOKit.
+#       libkext.a is Apple's OSKext engine; kextload/kextunload/kextdeps link it
+#       (+ libIOKit, for IORegistryEntryCreateCFProperty), so the whole subdir
+#       builds here. kextload = dependency-ordered load, kextunload =
+#       bundle-aware unload, kextdeps = dependency resolution; kextstat stays
+#       kld-only. Install: /usr/sbin/{kextload,kextunload,kextstat,kextdeps}.
+#       A runtime smoke then proves the OSBundleLibraries dependency sort works
+#       on the real image (possible now that CF runs, #195).
 #
-echo "==> building libkext + kextdeps (src/kext_tools)"
-make -C "$ROOT/src/kext_tools/kext.subproj" SYSROOT="$WORK/rootfs"
-make -C "$ROOT/src/kext_tools/kextdeps" \
+echo "==> building kext_tools (libkext + OSKext-backed CLIs)"
+mkdir -p "$WORK/rootfs/usr/sbin"
+make -C "$ROOT/src/kext_tools" \
     DESTDIR="$WORK/rootfs" \
     SYSROOT="$WORK/rootfs" \
     all install
-ls -lh "$WORK/rootfs/usr/sbin/kextdeps"
-chroot "$WORK/rootfs" ldd /usr/sbin/kextdeps \
+ls -lh "$WORK/rootfs/usr/sbin/kextload" \
+       "$WORK/rootfs/usr/sbin/kextunload" \
+       "$WORK/rootfs/usr/sbin/kextstat" \
+       "$WORK/rootfs/usr/sbin/kextdeps"
+chroot "$WORK/rootfs" ldd /usr/sbin/kextload \
     | grep -q "libCoreFoundation.so.* => /usr/lib/system/" \
-    || { echo "FAIL: kextdeps doesn't resolve libCoreFoundation"; exit 1; }
+    || { echo "FAIL: kextload doesn't resolve libCoreFoundation"; exit 1; }
 
 # Runtime smoke: resolve a 2-kext graph (Leaf -> Base via OSBundleLibraries)
 # and assert kextdeps emits Base BEFORE Leaf in the load order.

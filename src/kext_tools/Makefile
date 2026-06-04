@@ -1,23 +1,19 @@
-# kext_tools — minimal kld-backed kextload / kextstat / kextunload.
+# kext_tools — OSKext-backed kextload / kextunload + kextdeps, and the
+# kld-only kextstat.
 #
-# NextBSD proof-of-concept trio (nextbsd#183): prove a FreeBSD .ko wrapped
-# as an Apple .kext bundle loads via an Apple-shaped tool. kextload/kextunload
-# parse the bundle with CFBundle (libCoreFoundation, built at build.sh step
-# 3p) and drive the load through the FreeBSD kld syscalls; kextstat is pure
-# kld. No OSKext, no codesign, no IOKitPersonalities — the faithful
-# kext_tools/OSKext port is tracked in nextbsd#182.
+# kextload/kextunload/kextdeps link libkext.a (Apple's OSKext engine, #182):
+# dependency-ordered load, bundle-aware unload, dependency resolution. kextstat
+# stays pure kld (kldnext/kldstat) — its data comes from kld either way, so the
+# OSKext query would add no fidelity. No codesign; personalities are kextd (#177).
 #
-# Build:   cd src/kext_tools && make
-# Install: make DESTDIR=/path/to/rootfs SYSROOT=/path/to/rootfs install
+# Because libkext consumers link libIOKit, the whole subdir is built by build.sh
+# AFTER libIOKit is installed (step 3r4a), not at the old pre-libIOKit point.
+# kext.subproj (libkext.a, INTERNALLIB) is listed first so it builds before its
+# consumers.
+#
+# Build:   cd src/kext_tools && make SYSROOT=/path/to/rootfs
+# Install: make DESTDIR=/path/to/rootfs SYSROOT=/path/to/rootfs all install
 
-SUBDIR=	kextload kextstat kextunload
-
-# NOTE: kext.subproj (libkext.a) and kextdeps (the OSKext dependency-resolution
-# CLI, #182 Phase 1) are intentionally NOT in this SUBDIR. kextdeps links
-# libIOKit, which is installed LATER than this trio in build.sh (step 3q1),
-# whereas libIOKit lands at 3r4 — so they are built by their own build.sh step
-# (3r4a, after libIOKit) + a dependency-resolution smoke (#196), not here.
-# To build them standalone against a sysroot:
-#   make -C kext.subproj SYSROOT=<root> && make -C kextdeps SYSROOT=<root>
+SUBDIR=	kext.subproj kextload kextstat kextunload kextdeps
 
 .include <bsd.subdir.mk>
