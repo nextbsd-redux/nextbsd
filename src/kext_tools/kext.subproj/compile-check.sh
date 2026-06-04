@@ -27,6 +27,7 @@ INCS="-I$KT/compat -I$HERE -I$ROOT/src/libIOKit -isystem $SYSROOT/usr/include"
 
 # Apple-ish dialect the CF/OSKext sources expect (mirrors launchctl's flags).
 CFLAGS="-fsyntax-only -ferror-limit=0 -fblocks -fconstant-cfstrings \
+  -include $KT/compat/apple-availability-shim.h \
   -Wno-error -Wno-everything \
   -D__FreeBSD__=15 -DPRIVATE=1 -D__APPLE_API_PRIVATE \
   -DTARGET_OS_OSX=1 -DTARGET_OS_MAC=1"
