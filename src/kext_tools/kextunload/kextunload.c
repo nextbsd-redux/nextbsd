@@ -1,9 +1,11 @@
 /*
  * kextunload — unload a .kext bundle's module (NextBSD proof-of-concept).
  *
- * Resolves the bundle's executable basename, finds the matching loaded
- * kld file, and kldunload(2)s it. kld-backed; proof-of-concept trio
- * (nextbsd#183), faithful kext_tools/OSKext port tracked in nextbsd#182.
+ * Reads CFBundleExecutable from the bundle's Info.plist (the .ko registers
+ * under that name when kextload kldload's Contents/MacOS/<executable>), finds
+ * the matching loaded kld file, and kldunload(2)s it. kld-backed; proof-of-
+ * concept trio (nextbsd#183), faithful kext_tools/OSKext port tracked in
+ * nextbsd#182.
  */
 #include <CoreFoundation/CoreFoundation.h>
 
@@ -19,9 +21,10 @@ int
 main(int argc, char **argv)
 {
 	const char *bundlePath;
-	CFURLRef bundleURL, execURL;
+	CFURLRef bundleURL;
 	CFBundleRef bundle;
-	char execPath[MAXPATHLEN], want[MAXPATHLEN];
+	CFStringRef execName;
+	char want[MAXPATHLEN];
 	int fileid;
 
 	if (argc != 2)
@@ -38,23 +41,18 @@ main(int argc, char **argv)
 	if (bundle == NULL)
 		errx(1, "%s: not a bundle", bundlePath);
 
-	execURL = CFBundleCopyExecutableURL(bundle);
-	if (execURL == NULL) {
+	execName = CFBundleGetValueForInfoDictionaryKey(bundle,
+	    CFSTR("CFBundleExecutable"));
+	if (execName == NULL ||
+	    CFGetTypeID(execName) != CFStringGetTypeID() ||
+	    !CFStringGetCString(execName, want, sizeof(want),
+	    kCFStringEncodingUTF8)) {
 		CFRelease(bundle);
-		errx(1, "%s: no executable (check CFBundleExecutable)", bundlePath);
+		errx(1, "%s: no CFBundleExecutable in Info.plist", bundlePath);
 	}
-	if (!CFURLGetFileSystemRepresentation(execURL, true,
-	    (UInt8 *)execPath, sizeof(execPath))) {
-		CFRelease(execURL);
-		CFRelease(bundle);
-		errx(1, "%s: cannot resolve executable path", bundlePath);
-	}
-	CFRelease(execURL);
 	CFRelease(bundle);
 
 	/* The kld file registers under the executable's basename. */
-	strlcpy(want, basename(execPath), sizeof(want));
-
 	for (fileid = kldnext(0); fileid > 0; fileid = kldnext(fileid)) {
 		struct kld_file_stat stat;
 		char name[MAXPATHLEN];

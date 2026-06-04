@@ -1,12 +1,19 @@
 /*
  * kextload — load a .kext bundle (NextBSD proof-of-concept).
  *
- * Opens the bundle with CFBundle, resolves Contents/MacOS/<executable>,
- * and kldload(2)s it. Apple's kextload drives OSKext/KXKextManager; for
- * NextBSD a .kext is packaging over the unmodified FreeBSD .ko, so kld
- * does the actual load. No codesign, no dependency resolution, no
- * IOKitPersonalities in this phase — proof-of-concept trio (nextbsd#183);
- * the faithful kext_tools/OSKext port is tracked in nextbsd#182.
+ * Reads CFBundleExecutable from the bundle's Info.plist (via CFBundle) and
+ * kldload(2)s Contents/MacOS/<executable> by full path. Apple's kextload
+ * drives OSKext/KXKextManager; for NextBSD a .kext is packaging over the
+ * unmodified FreeBSD .ko, so kld does the actual load. No codesign, no
+ * dependency resolution, no IOKitPersonalities in this phase — proof-of-
+ * concept trio (nextbsd#183); the faithful kext_tools/OSKext port is tracked
+ * in nextbsd#182.
+ *
+ * We construct the executable path from the known .kext layout rather than
+ * CFBundleCopyExecutableURL: swift-corelibs CFBundle on FreeBSD does not
+ * resolve the macOS Contents/MacOS/ executable location, but it does parse
+ * the Info.plist — so reading the key + building the path is both robust and
+ * faithful to the fixed bundle layout.
  */
 #include <CoreFoundation/CoreFoundation.h>
 
@@ -22,9 +29,10 @@ int
 main(int argc, char **argv)
 {
 	const char *bundlePath;
-	CFURLRef bundleURL, execURL;
+	CFURLRef bundleURL;
 	CFBundleRef bundle;
-	char execPath[MAXPATHLEN];
+	CFStringRef execName;
+	char exec[MAXPATHLEN], execPath[MAXPATHLEN];
 	int fileid;
 
 	if (argc != 2)
@@ -41,19 +49,19 @@ main(int argc, char **argv)
 	if (bundle == NULL)
 		errx(1, "%s: not a bundle", bundlePath);
 
-	execURL = CFBundleCopyExecutableURL(bundle);
-	if (execURL == NULL) {
+	execName = CFBundleGetValueForInfoDictionaryKey(bundle,
+	    CFSTR("CFBundleExecutable"));
+	if (execName == NULL ||
+	    CFGetTypeID(execName) != CFStringGetTypeID() ||
+	    !CFStringGetCString(execName, exec, sizeof(exec),
+	    kCFStringEncodingUTF8)) {
 		CFRelease(bundle);
-		errx(1, "%s: no executable (check CFBundleExecutable)", bundlePath);
+		errx(1, "%s: no CFBundleExecutable in Info.plist", bundlePath);
 	}
-	if (!CFURLGetFileSystemRepresentation(execURL, true,
-	    (UInt8 *)execPath, sizeof(execPath))) {
-		CFRelease(execURL);
-		CFRelease(bundle);
-		errx(1, "%s: cannot resolve executable path", bundlePath);
-	}
-	CFRelease(execURL);
 	CFRelease(bundle);
+
+	snprintf(execPath, sizeof(execPath), "%s/Contents/MacOS/%s",
+	    bundlePath, exec);
 
 	/* A full path bypasses kern.module_path; the .ko loads by content. */
 	fileid = kldload(execPath);
