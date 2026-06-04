@@ -74,6 +74,17 @@ jobs:
             echo "==> built binaries:"
             ls -l src/kext_tools/kextdeps/kextdeps \
                   src/kext_tools/kext.subproj/libkext.a 2>&1 || true
+            # Runtime smoke: run kextdeps against fixture kexts. The NextBSD
+            # runtime libs (libCoreFoundation/libIOKit/ICU/...) live in the
+            # mounted image, so put them on LD_LIBRARY_PATH. Turns "links" into
+            # "resolves a real dependency graph".
+            if [ -x src/kext_tools/kextdeps/kextdeps ]; then
+              echo "==> smoke: kextdeps dependency resolution"
+              LD_LIBRARY_PATH=/mnt-root/usr/lib/system \
+                sh src/kext_tools/tests/smoke.sh \
+                   src/kext_tools/kextdeps/kextdeps \
+                   src/kext_tools/tests/smoke || rc=$?
+            fi
             umount /mnt-root || true
             mdconfig -d -u "$md" || true
             exit $rc
