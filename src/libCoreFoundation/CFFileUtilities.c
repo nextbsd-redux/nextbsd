@@ -87,6 +87,15 @@ CF_PRIVATE Boolean _CFDeleteFile(const char *path) {
     return ret;
 }
 
+// NextBSD (#195): _CFGetCurrentDirectory is declared in CFInternal.h and used by
+// CFURL.c, but the POSIX definition was missing from this port — leaving the
+// symbol undefined in libCoreFoundation.so. Because CF resolves it eagerly
+// during library init, every CF-linked tool failed to start with
+// 'Undefined symbol "_CFGetCurrentDirectory"'. Back it with getcwd(3).
+CF_EXPORT Boolean _CFGetCurrentDirectory(char *path, int maxlen) {
+    return getcwd(path, maxlen) != NULL;
+}
+
 static Boolean _CFReadBytesFromPathAndGetFD(CFAllocatorRef alloc, const char *path, void **bytes, CFIndex *length, CFIndex maxLength, int extraOpenFlags, int *fd) {    // maxLength is the number of bytes desired, or 0 if the whole file is desired regardless of length.
     struct statinfo statBuf;
     

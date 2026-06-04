@@ -1307,7 +1307,14 @@ cc -fblocks \
 chroot "$WORK/rootfs" ldd /usr/tests/freebsd-launchd-mach/test_corefoundation \
     | grep -q "libCoreFoundation.so.* => /usr/lib/system/" \
     || { echo "FAIL: ldd doesn't resolve test_corefoundation to /usr/lib/system/libCoreFoundation.so"; exit 1; }
-echo "==> test_corefoundation built + ldd verified"
+# Actually RUN it (nextbsd#195): CF resolves _CFGetCurrentDirectory /
+# _CFThreadSetName eagerly during library init, so a CF-linked binary that only
+# ldd-resolves can still fail to *start*. Running the smoke proves CF
+# initializes + the CFDictionary/CFString/plist paths work — the runtime gate
+# this step was missing.
+chroot "$WORK/rootfs" /usr/tests/freebsd-launchd-mach/test_corefoundation \
+    || { echo "FAIL: test_corefoundation did not run cleanly (CF runtime broken)"; exit 1; }
+echo "==> test_corefoundation built + ldd verified + ran"
 
 #
 # 3p1. Phase I1c (moved): build the launchd daemon (src/launchd/src).
