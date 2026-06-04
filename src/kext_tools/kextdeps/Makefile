@@ -20,11 +20,11 @@ CFLAGS+=	-DPRIVATE=1 -D__APPLE_API_PRIVATE
 WARNS=		0
 CFLAGS+=	-Wno-everything
 
-# libkext + CoreFoundation + zlib only. No -lIOKit: libkext's iocf_compat.c
-# provides the IOCFSerialize/IOCFUnserialize symbols OSKext needs, so nothing
-# is pulled from libIOKit — and it isn't installed in the rootfs at this build
-# step anyway. (-lz: OSKext's cache paths use inflate*/gz*.)
-LDADD+=	${KT}/kext.subproj/libkext.a -lCoreFoundation -lz
+# libkext + CoreFoundation + IOKit + zlib. -lIOKit is required: OSKext calls
+# IORegistryEntryCreateCFProperty (__OSKextReadRegistryNumberProperty). It is
+# available because build.sh builds kextdeps (step 3r4a) AFTER libIOKit (3r4).
+# (-lz: OSKext's cache paths use inflate*/gz*.)
+LDADD+=	${KT}/kext.subproj/libkext.a -lCoreFoundation -lIOKit -lz
 DPADD+=	${KT}/kext.subproj/libkext.a
 
 .include <bsd.prog.mk>
