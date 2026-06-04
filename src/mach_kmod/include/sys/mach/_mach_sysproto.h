@@ -201,6 +201,15 @@ struct register_event_bell_trap_args {
 struct unregister_event_bell_trap_args {
 	char port_l_[PADL_(mach_port_name_t)]; mach_port_name_t port; char port_r_[PADR_(mach_port_name_t)];
 };
+/*
+ * mach_wait_quiet — block until the device tree quiesces (mach.bus.busy
+ * reaches 0). `timeout` is a nanosecond budget; 0 means wait
+ * indefinitely. Backs Apple's IOKitWaitQuiet / IOServiceWaitQuiet. See
+ * src/mach_kmod/src/mach_busystate.c.
+ */
+struct mach_wait_quiet_args {
+	char timeout_l_[PADL_(uint64_t)]; uint64_t timeout; char timeout_r_[PADR_(uint64_t)];
+};
 struct mach_msg_trap_args {
 	char msg_l_[PADL_(mach_msg_header_t *)]; mach_msg_header_t * msg; char msg_r_[PADR_(mach_msg_header_t *)];
 	char option_l_[PADL_(mach_msg_option_t)]; mach_msg_option_t option; char option_r_[PADR_(mach_msg_option_t)];

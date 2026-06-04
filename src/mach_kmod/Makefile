@@ -90,6 +90,12 @@ SRCS+=	mach_syscall_wire.c
 # mach.stats.kmsgs_in_use. Phase B / Tier 1 task C.
 SRCS+=	mach_stats.c
 
+# Out-of-tree bus-quiescence busy counter + mach_wait_quiet syscall,
+# built on the NEXTBSD kernel's device_match_start/device_match_end
+# eventhandler pair. Exposes mach.bus.busy / mach.bus.quiesce_gen and
+# the mach_wait_quiet syscall (backs IOKitWaitQuiet / IOServiceWaitQuiet).
+SRCS+=	mach_busystate.c
+
 # Include paths:
 #   include/apple/  — Apple-ism headers (proc_info.h, kern_event.h, ...)
 #   include/       — top-level so '#include <sys/mach/...>' resolves to

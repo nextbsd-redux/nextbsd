@@ -103,6 +103,20 @@ else
     exit 1
 fi
 
+# 2c''. bus quiescence (device_match_start/end → mach.bus.busy +
+# mach_wait_quiet). By the time run.sh executes, the cold-boot device
+# probe has finished and hwregd has flipped to live mode, so the
+# kernel's in-flight probe->attach count (mach.bus.busy, maintained by
+# mach.ko's device_match_start/device_match_end eventhandler consumer)
+# must read 0, and mach_wait_quiet must return promptly. test_busystate
+# emits BUSYSTATE-OK + WAITQUIET-OK (or *-FAIL).
+if [ -x /usr/tests/freebsd-launchd-mach/test_busystate ]; then
+    /usr/tests/freebsd-launchd-mach/test_busystate || true  # markers gate in boot-test.sh
+else
+    echo "BUSYSTATE-FAIL: test_busystate binary not installed"
+    echo "WAITQUIET-FAIL: test_busystate binary not installed"
+fi
+
 # 2d. userland: bootstrap protocol round-trip (Phase G1). Hand-rolled
 # message-ID server loop dispatching CHECK_IN / LOOK_UP requests over
 # Mach IPC. The test spawns a pthread that runs bootstrap_server_run,

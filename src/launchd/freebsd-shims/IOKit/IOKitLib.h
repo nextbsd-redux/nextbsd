@@ -6,7 +6,12 @@
  * (load/unload/list/start/stop/etc.):
  *
  *   1. IOKitWaitQuiet — waits for kexts to settle before reboot.
- *      We don't have kexts. Stub returns kIOReturnSuccess.
+ *      We don't have kexts, but the NEXTBSD kernel + mach.ko track
+ *      in-flight device probe->attach (device_match_start/end) and
+ *      expose a mach_wait_quiet syscall; this shim resolves + calls it
+ *      so launchctl reboot waits for real bus quiescence. Returns
+ *      kIOReturnSuccess on quiesce / timeout (or if the syscall is
+ *      absent — nothing to wait for).
  *
  *   2. IORegistryEntry{FromPath,CreateCFProperty} + IOObjectRelease
  *      — looks up "IODeviceTree:/chosen" to read kBootRootActiveKey
@@ -22,6 +27,15 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <mach/mach_port.h>
+
+#include <sys/syscall.h>	/* NO_SYSCALL */
+#ifndef NO_SYSCALL
+#define NO_SYSCALL (-1)	/* kernel sentinel; sysctl reports -1 when a trap is unwired */
+#endif
+#include <sys/sysctl.h>		/* sysctlbyname */
+#include <stdint.h>
+#include <stdio.h>		/* snprintf */
+#include <unistd.h>		/* syscall(2) */
 
 #ifdef __cplusplus
 extern "C" {
@@ -41,9 +55,10 @@ typedef int32_t IOReturn;
 #define kIOReturnSuccess        0
 
 /* Wait-time spec used by IOKitWaitQuiet. macOS struct mach_timespec_t.
- * launchctl only ever passes a pointer to a stack value; the kext-quiet
- * stub doesn't consume it, so an opaque struct is fine. Use plain int
- * to avoid pulling in <mach/clock_types.h> (clock_res_t lives there). */
+ * launchctl only ever passes a pointer to a stack value (or NULL).
+ * IOKitWaitQuiet below sums tv_sec/tv_nsec into a nanosecond budget for
+ * the mach_wait_quiet syscall. Use plain int fields to avoid pulling in
+ * <mach/clock_types.h> (clock_res_t lives there). */
 typedef struct {
         unsigned int    tv_sec;
         int             tv_nsec;
@@ -52,10 +67,31 @@ typedef struct {
 #define mach_timespec_t freebsd_mach_timespec_t
 #endif
 
-/* Stub: kexts don't exist on FreeBSD; nothing to wait for. */
+/*
+ * IOKitWaitQuiet — wait for the host's device tree to quiesce before
+ * launchctl reboot proceeds. On FreeBSD there are no kexts, but the
+ * NEXTBSD kernel + mach.ko track in-flight device probe->attach via the
+ * device_match_start/device_match_end eventhandlers and expose a
+ * `mach_wait_quiet` syscall (resolved by number via `sysctl
+ * mach.syscall.mach_wait_quiet`). Resolve + call it here, self-contained
+ * (no libIOKit / libmach link dependency for launchctl). `wt` is summed
+ * to a nanosecond budget (NULL == wait indefinitely). Returns
+ * kIOReturnSuccess on quiesce, deadline, or if the syscall is
+ * unavailable (mach.ko not loaded — nothing to wait for, as before).
+ */
 static inline IOReturn
-IOKitWaitQuiet(mach_port_t mp __unused, mach_timespec_t *wt __unused)
+IOKitWaitQuiet(mach_port_t mp __unused, mach_timespec_t *wt)
 {
+        int num;
+        size_t len = sizeof(num);
+        uint64_t timeout_ns;
+
+        if (sysctlbyname("mach.syscall.mach_wait_quiet", &num, &len,
+            NULL, 0) != 0 || num < 0 || num == NO_SYSCALL)
+                return kIOReturnSuccess;	/* syscall absent — nothing to wait for */
+        timeout_ns = (wt == NULL) ? 0
+            : ((uint64_t)wt->tv_sec * 1000000000ULL + (uint64_t)wt->tv_nsec);
+        (void)syscall(num, timeout_ns);
         return kIOReturnSuccess;
 }
 

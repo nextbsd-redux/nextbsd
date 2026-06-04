@@ -16,10 +16,18 @@
 #include <mach/mach.h>
 #include <servers/bootstrap.h>
 
+#include <sys/syscall.h>	/* NO_SYSCALL */
+#ifndef NO_SYSCALL
+#define NO_SYSCALL (-1)	/* kernel sentinel; sysctl reports -1 when a trap is unwired */
+#endif
+#include <sys/sysctl.h>		/* sysctlbyname (mach.bus.busy / mach.syscall.*) */
+
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>		/* syscall(2) */
 
 /* hwregd send right — cached after the first bootstrap_look_up. */
 static pthread_once_t	hwregd_once = PTHREAD_ONCE_INIT;
@@ -199,4 +207,92 @@ IOObjectRelease(io_object_t object)
 		free(object->ids);
 	free(object);
 	return (KERN_SUCCESS);
+}
+
+/*
+ * iter 5 — bus quiescence.
+ *
+ * These do NOT use hwregd's MIG RPC: bus-busy state lives in the kernel
+ * (mach.ko's device_match_start/device_match_end consumer), so we read
+ * `sysctl mach.bus.busy` and resolve+call the `mach_wait_quiet` syscall
+ * directly — the same lazy "resolve via sysctl mach.syscall.<name>,
+ * cache the number" pattern libmach uses. See the header for the
+ * GLOBAL-APPROXIMATION divergence from Apple (per-entry busy state is
+ * reported host-wide).
+ */
+
+/* resolve_mach_syscall — read sysctl mach.syscall.<name> -> syscall #. */
+static int
+resolve_mach_syscall(const char *name)
+{
+	char oid[64];
+	int num;
+	size_t len = sizeof(num);
+
+	if (snprintf(oid, sizeof(oid), "mach.syscall.%s", name) >=
+	    (int)sizeof(oid))
+		return (NO_SYSCALL);
+	if (sysctlbyname(oid, &num, &len, NULL, 0) != 0)
+		return (NO_SYSCALL);
+	if (num < 0)
+		return (NO_SYSCALL);
+	return (num);
+}
+
+kern_return_t
+IORegistryEntryGetBusyState(mach_port_t mainPort __unused,
+    io_registry_entry_t entry __unused, uint32_t *busyState)
+{
+	int busy = 0;
+	size_t len = sizeof(busy);
+
+	if (busyState == NULL)
+		return (KERN_INVALID_ARGUMENT);
+	/* `entry` ignored — host-wide approximation (see header). */
+	if (sysctlbyname("mach.bus.busy", &busy, &len, NULL, 0) != 0)
+		return (kIOReturnError);
+	*busyState = (uint32_t)busy;
+	return (kIOReturnSuccess);
+}
+
+/*
+ * __io_wait_quiet_ns — resolve+invoke mach_wait_quiet with a nanosecond
+ * budget (0 == wait indefinitely). Returns kIOReturnSuccess on quiesce
+ * or deadline; kIOReturnError if the syscall can't be resolved.
+ */
+static IOReturn
+__io_wait_quiet_ns(uint64_t timeout_ns)
+{
+	static int num = NO_SYSCALL;
+
+	if (num == NO_SYSCALL) {
+		num = resolve_mach_syscall("mach_wait_quiet");
+		if (num == NO_SYSCALL)
+			return (kIOReturnError);
+	}
+	if (syscall(num, timeout_ns) != 0)
+		return (kIOReturnError);
+	return (kIOReturnSuccess);
+}
+
+/* mach_timespec_t -> nanoseconds; NULL == 0 == wait indefinitely. */
+static uint64_t
+__io_timespec_to_ns(mach_timespec_t *ts)
+{
+	if (ts == NULL)
+		return (0);
+	return ((uint64_t)ts->tv_sec * 1000000000ULL + (uint64_t)ts->tv_nsec);
+}
+
+IOReturn
+IOKitWaitQuiet(mach_port_t mainPort __unused, mach_timespec_t *timeout)
+{
+	return (__io_wait_quiet_ns(__io_timespec_to_ns(timeout)));
+}
+
+kern_return_t
+IOServiceWaitQuiet(io_service_t service __unused, mach_timespec_t *timeout)
+{
+	/* `service` ignored — host-wide approximation (see header). */
+	return (__io_wait_quiet_ns(__io_timespec_to_ns(timeout)));
 }

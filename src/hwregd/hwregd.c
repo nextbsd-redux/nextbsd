@@ -102,18 +102,18 @@
 #define EVENT_LINE_MAX		1024
 
 /*
- * Initial-backlog drain quiet window. After reading the devctl
- * backlog hwregd waits this many milliseconds of no further nomatch
- * traffic before flipping to live mode + calling devctl_freeze /
- * kldload / devctl_thaw on the queued modules. 250 ms is empirically
- * comfortable: long enough that a slow CI VM's per-event read+match
- * cycle doesn't false-trigger the flip mid-backlog, short enough
- * that boot delay is bounded. The kernel's freeze/thaw is the real
- * safety primitive — see file header. This window only times the
- * "we've drained what the kernel queued" handoff, not how long the
- * kernel's probe takes.
+ * Pre-live quiescence poll cadence. After the devctl backlog has
+ * drained through us, the flip to live mode is gated on KERNEL
+ * bus-quiescence (mach.bus.busy == 0) rather than on a fixed devctl-
+ * silence timer: the NEXTBSD kernel's device_match_start/end
+ * eventhandlers (consumed by mach.ko's mach.bus.busy sysctl) tell us
+ * exactly when the device tree has stopped probing/attaching. We use
+ * this short select(2) timeout in pre-live mode purely to wake up and
+ * re-poll mach.bus.busy when no devctl traffic is pending. The kernel's
+ * devctl_freeze/thaw remains the real batching primitive — see the
+ * file header.
  */
-#define HWREGD_BACKLOG_QUIET_MS	250
+#define HWREGD_QUIESCE_POLL_MS	250
 
 /* Mach service name hwregd checks in with launchd for its pub/sub bus. */
 #define HWREGD_SERVICE_NAME	"org.freebsd.hwregd"
@@ -513,6 +513,30 @@ drain_deferred_loads(void)
 	xlog("HWREG-AUTOLOAD-OK: drained queue "
 	    "(loaded=%d already=%d failed=%d)",
 	    loaded, existing, failed);
+}
+
+/*
+ * Kernel bus-quiescence probe. Reads mach.bus.busy — the in-flight
+ * device_probe_and_attach() count maintained by mach.ko's
+ * device_match_start/device_match_end eventhandler consumer. Returns
+ * true when the device tree is quiescent (busy == 0).
+ *
+ * If the sysctl is unavailable (mach.ko not loaded, or an older kernel
+ * without the device_match_* hook), we treat the bus as quiescent so
+ * hwregd still flips to live mode after the devctl backlog drains —
+ * degrading to the pre-quiescence behavior rather than wedging boot.
+ */
+static bool
+bus_is_quiescent(void)
+{
+	int busy = 0;
+	size_t len = sizeof(busy);
+
+	if (sysctlbyname("mach.bus.busy", &busy, &len, NULL, 0) < 0) {
+		/* sysctl missing — assume quiescent (see comment). */
+		return (true);
+	}
+	return (busy == 0);
 }
 
 /* --- linker.hints reader (ported from devmatch.c) ----------------- */
@@ -1650,17 +1674,19 @@ main(int argc, char **argv)
 		FD_SET(fd, &rfds);
 
 		/*
-		 * Pre-live (initial backlog drain): use the short
-		 * HWREGD_BACKLOG_QUIET_MS select timeout. When select(2)
-		 * returns 0 (no more events queued), we've drained what the
-		 * kernel had buffered — flip to live mode + freeze/thaw the
-		 * kldload batch. Live mode uses a 5s timeout (idle ticking,
+		 * Pre-live (initial backlog drain): poll on a short
+		 * HWREGD_QUIESCE_POLL_MS select timeout. When select(2)
+		 * returns 0 (no more events queued) we've drained what the
+		 * kernel had buffered — but we now gate the flip to live mode
+		 * on KERNEL bus-quiescence (mach.bus.busy == 0) rather than on
+		 * the timer alone, so we never flip while a probe->attach is
+		 * still in flight. Live mode uses a 5s timeout (idle ticking,
 		 * no urgency).
 		 */
 		struct timeval tv = live_mode
 		    ? (struct timeval){ .tv_sec = 5, .tv_usec = 0 }
 		    : (struct timeval){ .tv_sec = 0,
-		      .tv_usec = HWREGD_BACKLOG_QUIET_MS * 1000 };
+		      .tv_usec = HWREGD_QUIESCE_POLL_MS * 1000 };
 		int r = select(fd + 1, &rfds, NULL, NULL, &tv);
 		if (r < 0) {
 			if (errno == EINTR)
@@ -1671,17 +1697,20 @@ main(int argc, char **argv)
 		if (r == 0) {
 			/*
 			 * Select timed out with no devctl events ready. In
-			 * pre-live mode that's the signal that the kernel's
-			 * boot-time backlog has fully drained through us —
-			 * flip to live mode + freeze/kldload/thaw the queued
-			 * modules. In live mode this is just an idle tick;
-			 * loop back and wait for the next event.
+			 * pre-live mode this is a poll tick: the devctl backlog
+			 * has drained through us, so flip to live mode IFF the
+			 * kernel reports the device tree quiescent — otherwise
+			 * keep polling until device_match_end has balanced the
+			 * last in-flight probe. In live mode this is just an
+			 * idle tick; loop back and wait for the next event.
 			 */
 			if (!live_mode) {
+				if (!bus_is_quiescent())
+					continue;	/* still probing — keep polling */
 				live_mode = true;
-				xlog("devctl backlog quiet for %dms — live mode: "
-				    "freeze + drain queued kldloads + thaw",
-				    HWREGD_BACKLOG_QUIET_MS);
+				xlog("devctl backlog drained + kernel bus "
+				    "quiescent (mach.bus.busy==0) — live mode: "
+				    "freeze + drain queued kldloads + thaw");
 				drain_deferred_loads();
 			}
 			continue;
