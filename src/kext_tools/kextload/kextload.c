@@ -1,77 +1,94 @@
 /*
- * kextload — load a .kext bundle (NextBSD proof-of-concept).
+ * kextload — load a kext and its dependencies, in order (NextBSD #182/#196).
  *
- * Reads CFBundleExecutable from the bundle's Info.plist (via CFBundle) and
- * kldload(2)s Contents/MacOS/<executable> by full path. Apple's kextload
- * drives OSKext/KXKextManager; for NextBSD a .kext is packaging over the
- * unmodified FreeBSD .ko, so kld does the actual load. No codesign, no
- * dependency resolution, no IOKitPersonalities in this phase — proof-of-
- * concept trio (nextbsd#183); the faithful kext_tools/OSKext port is tracked
- * in nextbsd#182.
+ * Graduated from the minimal #183 kld loader to Apple's OSKext engine: it
+ * resolves the kext's OSBundleLibraries dependency graph and kldload(2)s the
+ * dependency-ordered load list (OSKextLoad). A repository (default
+ * /System/Library/Extensions) supplies the libraries the kext names. kld
+ * performs each load; there is no codesign and personalities are kextd's job
+ * (#177). For a self-contained kext with no dependencies this is equivalent to
+ * the old single kldload, but it now loads libraries first, correctly.
  *
- * We construct the executable path from the known .kext layout rather than
- * CFBundleCopyExecutableURL: swift-corelibs CFBundle on FreeBSD does not
- * resolve the macOS Contents/MacOS/ executable location, but it does parse
- * the Info.plist — so reading the key + building the path is both robust and
- * faithful to the fixed bundle layout.
+ * Usage:  kextload [-r repo_dir] <bundle.kext> [<bundle.kext> ...]
  */
 #include <CoreFoundation/CoreFoundation.h>
-
-#include <sys/param.h>
-#include <sys/linker.h>
+#include <mach/mach_types.h>	/* kern_return_t, before OSKext.h -> OSReturn.h */
 
 #include <err.h>
-#include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
+
+#include "OSKext.h"
+
+static CFURLRef
+url_for_path(const char *path)
+{
+	return CFURLCreateFromFileSystemRepresentation(kCFAllocatorDefault,
+	    (const UInt8 *)path, (CFIndex)strlen(path), true);
+}
 
 int
-main(int argc, char **argv)
+main(int argc, char *argv[])
 {
-	const char *bundlePath;
-	CFURLRef bundleURL;
-	CFBundleRef bundle;
-	CFStringRef execName;
-	char exec[MAXPATHLEN], execPath[MAXPATHLEN];
-	int fileid;
+	const char *repo = "/System/Library/Extensions";
+	CFArrayRef  repoKexts = NULL;	/* non-retaining registry: hold alive */
+	int         ch, rc = 0, i;
 
-	if (argc != 2)
-		errx(1, "usage: kextload <bundle.kext>");
-	bundlePath = argv[1];
-
-	bundleURL = CFURLCreateFromFileSystemRepresentation(kCFAllocatorDefault,
-	    (const UInt8 *)bundlePath, (CFIndex)strlen(bundlePath), true);
-	if (bundleURL == NULL)
-		errx(1, "cannot make URL for %s", bundlePath);
-
-	bundle = CFBundleCreate(kCFAllocatorDefault, bundleURL);
-	CFRelease(bundleURL);
-	if (bundle == NULL)
-		errx(1, "%s: not a bundle", bundlePath);
-
-	execName = CFBundleGetValueForInfoDictionaryKey(bundle,
-	    CFSTR("CFBundleExecutable"));
-	if (execName == NULL ||
-	    CFGetTypeID(execName) != CFStringGetTypeID() ||
-	    !CFStringGetCString(execName, exec, sizeof(exec),
-	    kCFStringEncodingUTF8)) {
-		CFRelease(bundle);
-		errx(1, "%s: no CFBundleExecutable in Info.plist", bundlePath);
-	}
-	CFRelease(bundle);
-
-	snprintf(execPath, sizeof(execPath), "%s/Contents/MacOS/%s",
-	    bundlePath, exec);
-
-	/* A full path bypasses kern.module_path; the .ko loads by content. */
-	fileid = kldload(execPath);
-	if (fileid < 0) {
-		if (errno == EEXIST) {
-			printf("kextload: %s already loaded\n", bundlePath);
-			return (0);
+	while ((ch = getopt(argc, argv, "r:")) != -1) {
+		switch (ch) {
+		case 'r':
+			repo = optarg;
+			break;
+		default:
+			errx(2, "usage: kextload [-r repo_dir] bundle.kext ...");
 		}
-		err(1, "kldload(%s)", execPath);
 	}
-	printf("kextload: loaded %s (id %d)\n", bundlePath, fileid);
-	return (0);
+	argc -= optind;
+	argv += optind;
+	if (argc < 1)
+		errx(2, "usage: kextload [-r repo_dir] bundle.kext ...");
+
+	/*
+	 * Populate the repository so OSBundleLibraries resolve. OSKext's
+	 * registry is non-retaining, so the array must outlive the loads.
+	 */
+	if (access(repo, F_OK) == 0) {
+		CFURLRef u = url_for_path(repo);
+
+		if (u != NULL) {
+			repoKexts = OSKextCreateKextsFromURL(kCFAllocatorDefault, u);
+			CFRelease(u);
+		}
+	}
+
+	for (i = 0; i < argc; i++) {
+		CFURLRef  u = url_for_path(argv[i]);
+		OSKextRef k = (u != NULL)
+		    ? OSKextCreate(kCFAllocatorDefault, u) : NULL;
+		OSReturn  r;
+
+		if (u != NULL)
+			CFRelease(u);
+		if (k == NULL) {
+			warnx("%s: cannot open kext bundle", argv[i]);
+			rc = 1;
+			continue;
+		}
+
+		r = OSKextLoad(k);
+		if (r == kOSReturnSuccess) {
+			printf("kextload: loaded %s (dependency-ordered)\n",
+			    argv[i]);
+		} else {
+			warnx("%s: load failed (OSReturn 0x%x)", argv[i],
+			    (unsigned)r);
+			rc = 1;
+		}
+		CFRelease(k);
+	}
+
+	if (repoKexts != NULL)
+		CFRelease(repoKexts);
+	return (rc);
 }
