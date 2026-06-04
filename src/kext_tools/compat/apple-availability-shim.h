@@ -5,7 +5,7 @@
  * availability macros on Apple declarations are undefined and clang
  * mis-parses every declarator. Define them as no-op variadic macros; the
  * version-constant arguments are swallowed, so they need no values.
- * Force-included via compile-check.sh.
+ * Force-included by the kext_tools build (via the Makefiles).
  */
 #ifndef _NEXTBSD_APPLE_AVAILABILITY_SHIM_H
 #define _NEXTBSD_APPLE_AVAILABILITY_SHIM_H

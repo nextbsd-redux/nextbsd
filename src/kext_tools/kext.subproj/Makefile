@@ -2,8 +2,7 @@
 #
 # Static library linked by the kext_tools CLIs (kextdeps, and eventually the
 # OSKext-backed kextload/kextstat/kextunload). Built against a NextBSD sysroot
-# (SYSROOT=...) for the libCoreFoundation / libIOKit headers; the matching
-# syntax-only iteration harness is compile-check.sh.
+# (SYSROOT=...) for the libCoreFoundation / libIOKit headers.
 #
 # The XNU load/unload/query paths are re-backed onto kld; kxld/mkext/prelink/
 # kext_request are removed; personalities are kextd's job (#177). macho_util.c /
