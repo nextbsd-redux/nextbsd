@@ -1466,34 +1466,10 @@ Boolean OSKextGetSimulatedSafeBoot(void)
 
 Boolean OSKextGetActualSafeBoot(void)
 {
-    static Boolean result         = false;
-    static Boolean gotIt          = false;
-    int            kern_safe_boot = 0;
-    size_t         length         = 0;
-    int            mib_name[SYSCTL_MIB_LENGTH] = { CTL_KERN, KERN_SAFEBOOT };
-
-    if (gotIt) {
-        goto finish;
-    }
-
-    /* First check the kernel sysctl. */
-    length = sizeof(kern_safe_boot);
-    if (!sysctl(mib_name, SYSCTL_MIB_LENGTH,
-        &kern_safe_boot, &length, NULL, 0)) {
-
-        result = kern_safe_boot ? true : false;
-        gotIt = true;
-    } else {
-        OSKextLog(/* kext */ NULL,
-            kOSKextLogErrorLevel |
-            kOSKextLogGeneralFlag | kOSKextLogIPCFlag,
-            "Can't determine actual safe boot mode - "
-            "sysctl() failed for KERN_SAFEBOOT - %s.",
-            strerror(errno));
-    }
-
-finish:
-    return result;
+    /* NextBSD has no safe-boot mode (the XNU kern.safeboot sysctl /
+     * KERN_SAFEBOOT MIB does not exist on FreeBSD). Always report "not safe
+     * boot"; safe-boot loadability gating is then a no-op. (#182) */
+    return false;
 }
 
 /*********************************************************************
@@ -8291,6 +8267,10 @@ void OSKextLogDependencyGraph(OSKextRef aKext,
 
 /*********************************************************************
 *********************************************************************/
+#if 0 /* NextBSD #182: XNU kext_request(HOST_PRIV) MIG plumbing — removed. The
+       * kernel talks kld, not the kext_request property-list IPC, so these
+       * request/response marshalling helpers have no backend. Their callers
+       * (load/unload/query) are re-backed onto kld* directly. */
 CFMutableDictionaryRef __OSKextCreateKextRequest(
     CFStringRef              predicateIn,
     CFTypeRef                bundleIdentifierIn,
@@ -8534,24 +8514,14 @@ finish:
 
 /*********************************************************************
 *********************************************************************/
+#endif /* NextBSD #182: end XNU kext_request IPC helpers */
 OSReturn __OSKextLoadWithArgsDict(
     OSKextRef       aKext,
-    CFDictionaryRef loadArgsDict)
+    CFDictionaryRef loadArgsDict __unused)  /* NextBSD: kld ignores load args */
 {
     OSReturn           result          = kOSReturnError;
     CFArrayRef         loadList        = NULL;           // must release
     CFMutableArrayRef  kextIdentifiers = NULL;           // must release
-    kern_return_t      mig_result      = KERN_FAILURE;
-    OSReturn           op_result       = kOSReturnError;
-    host_priv_t        hostPriv        = HOST_PRIV_NULL; // xxx - need to clean up?
-    CFDataRef          mkext           = NULL;           // must release
-    const UInt8      * requestBuffer   = NULL;
-    CFIndex            requestLength   = 0;
-    vm_address_t       responseBuffer  = 0;              // must vm_deallocate
-    uint32_t           responseLength  = 0;
-    vm_address_t       logInfoBuffer   = 0;              // must vm_deallocate
-    uint32_t           logInfoLength   = 0;
-    CFStringRef        errorString     = NULL;           // must release
     char               kextPath[PATH_MAX];
     CFIndex            count = 0, i = 0;
 
@@ -8762,14 +8732,6 @@ OSReturn __OSKextLoadWithArgsDict(
 finish:
     SAFE_RELEASE(kextIdentifiers);
     SAFE_RELEASE(loadList);
-    SAFE_RELEASE(mkext);
-    SAFE_RELEASE(errorString);
-    if (responseBuffer) {
-        vm_deallocate(mach_task_self(), responseBuffer, responseLength);
-    }
-    if (logInfoBuffer) {
-        vm_deallocate(mach_task_self(), logInfoBuffer, logInfoLength);
-    }
 
     if (result == kOSReturnSuccess) {
         OSKextLog(aKext, kOSKextLogProgressLevel | kOSKextLogLoadFlag,

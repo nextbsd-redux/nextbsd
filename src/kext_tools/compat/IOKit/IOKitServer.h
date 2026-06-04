@@ -7,4 +7,12 @@
  */
 #ifndef _NEXTBSD_COMPAT_IOKITSERVER_H
 #define _NEXTBSD_COMPAT_IOKITSERVER_H
+
+/* Standard IOKit personality / matching dictionary keys (IOKitKeys.h on XNU).
+ * OSKext references these when building/serializing driver personalities; the
+ * values are the real IOKit property names the matching machinery uses. */
+#define kIOKitDebugKey       "IOKitDebug"
+#define kIOProbeScoreKey     "IOProbeScore"
+#define kIOMatchCategoryKey  "IOMatchCategory"
+
 #endif
