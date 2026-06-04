@@ -11,7 +11,14 @@ KT=	${.CURDIR}/..
 
 CFLAGS+=	-I${KT}/kext.subproj -I${KT}/compat -I${KT}/../libIOKit
 CFLAGS+=	-include ${KT}/compat/apple-availability-shim.h
-CFLAGS+=	-DPRIVATE=1 -D__APPLE_API_PRIVATE -DTARGET_OS_OSX=1 -DTARGET_OS_MAC=1
+CFLAGS+=	-DPRIVATE=1 -D__APPLE_API_PRIVATE
+
+# Vendored Apple headers (OSKext.h + CoreFoundation) redefine TARGET_OS_* /
+# SYNC_POLICY_* macros; at WARNS>0 the FreeBSD warning machinery -Werror's
+# -Wmacro-redefined. Match the libkext build posture (WARNS=0 + -Wno-everything),
+# same as libIOKit / libxpc / libCoreFoundation consumers.
+WARNS=		0
+CFLAGS+=	-Wno-everything
 
 LDADD+=	${KT}/kext.subproj/libkext.a -lCoreFoundation -lIOKit
 DPADD+=	${KT}/kext.subproj/libkext.a

@@ -13,6 +13,7 @@
  *         (default /System/Library/Extensions)
  */
 #include <CoreFoundation/CoreFoundation.h>
+#include <mach/mach_types.h>	/* kern_return_t, before OSKext.h -> OSReturn.h */
 
 #include <err.h>
 #include <stdio.h>
