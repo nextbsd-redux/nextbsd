@@ -5,6 +5,7 @@
 # the CF link (it sets no LDADD); the CFLAGS are harmless to it.
 
 BINDIR?=	/usr/sbin
+MAN=			# no man pages — bsd.prog.mk otherwise defaults MAN=${PROG}.1
 NO_MAN=		yes
 WARNS?=		3
 
