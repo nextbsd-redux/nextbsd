@@ -1,6 +1,16 @@
-# mach_kmod
+# mach_kmod (historical — source moved)
 
-Out-of-tree FreeBSD kernel module providing Mach IPC primitives
+> **The Mach kernel source has MOVED.** mach is now compiled **into** the
+> NEXTBSD kernel (`options COMPAT_MACH`, #181); the canonical source lives in
+> the **`nextbsd-kernel`** repo at `src-overlay/sys/compat/mach/`. The
+> out-of-tree `.ko` build and its duplicated source here were removed (#189,
+> #190). **Do not edit mach kernel code here — there is none anymore.**
+>
+> What remains in this directory: `tests/` (userland mach syscall tests, built
+> and run by the boot smoke test), `smoke-sysctls.sh` (a runtime sysctl
+> regression script), and the historical notes below.
+
+Originally: an out-of-tree FreeBSD kernel module providing Mach IPC primitives
 (`mach_msg`, `mach_port_*`, port-rights transfer, no-senders /
 dead-name notifications) — the foundation that lets Apple-source
 daemons like configd, notifyd, asl, and (eventually) Apple's launchd
