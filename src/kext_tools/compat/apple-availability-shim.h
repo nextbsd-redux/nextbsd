@@ -1,8 +1,12 @@
-/* apple-availability-shim.h — NextBSD: neutralize Apple <Availability.h>
- * decorations (#182). FreeBSD has no <Availability.h>, so trailing
- * __OSX_AVAILABLE_*/API_* macros on Apple decls are undefined and clang
- * mis-parses every declarator. Define them as no-op variadics; the
- * __MAC_*/__IPHONE_* version args are swallowed. Force-included via compile-check. */
+/*
+ * apple-availability-shim.h (NextBSD, nextbsd#182)
+ *
+ * FreeBSD has no Availability.h, so the trailing OSX-availability and API
+ * availability macros on Apple declarations are undefined and clang
+ * mis-parses every declarator. Define them as no-op variadic macros; the
+ * version-constant arguments are swallowed, so they need no values.
+ * Force-included via compile-check.sh.
+ */
 #ifndef _NEXTBSD_APPLE_AVAILABILITY_SHIM_H
 #define _NEXTBSD_APPLE_AVAILABILITY_SHIM_H
 #define __OSX_AVAILABLE_STARTING(...)
