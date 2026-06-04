@@ -14,5 +14,6 @@
 #define kIOKitDebugKey       "IOKitDebug"
 #define kIOProbeScoreKey     "IOProbeScore"
 #define kIOMatchCategoryKey  "IOMatchCategory"
+#define kIOResourcesClass    "IOResources"
 
 #endif
