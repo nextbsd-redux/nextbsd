@@ -1,10 +1,19 @@
 /*
- * kxld.h — NextBSD compat stub for the OSKext port (#182, Phase 0).
- * XNU in-kernel linker — DELETED (kld links in-kernel).
- * Minimal placeholder so the #include resolves; populated per the
- * compile-check error surface, or the consuming code path is #ifdef-ed
- * out when it is XNU-only (kxld / mkext / prelink / kext_request).
+ * kxld.h (NextBSD compat, nextbsd#182)
+ * XNU's in-kernel linker (kxld) is NOT used on NextBSD: the kernel's kld
+ * linker links .ko files in-kernel. The kxld function BODIES in OSKext.c are
+ * removed (#if 0); these minimal type stubs only let the leftover forward
+ * declarations / signatures parse.
  */
 #ifndef _NEXTBSD_COMPAT_KXLD_H
 #define _NEXTBSD_COMPAT_KXLD_H
+#include <stdint.h>
+typedef uint64_t kxld_addr_t;
+typedef uint64_t kxld_size_t;
+typedef struct kxld_context     KXLDContext;
+typedef struct kxld_dependency  KXLDDependency;
+typedef int  KXLDFlags;
+typedef int  KXLDAllocateFlags;
+typedef int  KXLDLogLevel;
+typedef int  KXLDLogSubsystem;
 #endif

@@ -8868,6 +8868,8 @@ finish:
 #ifndef IOKIT_EMBEDDED
 /*********************************************************************
 *********************************************************************/
+#if 0 /* NextBSD #182: XNU kxld in-kernel linker path — removed; the kernel's
+       * kld linker links .ko in-kernel, so userland never links/relocates. */
 Boolean __OSKextInitKXLDDependency(
     KXLDDependency * dependency,
     OSKextRef        aKext,
@@ -9519,6 +9521,7 @@ finish:
 
 /*********************************************************************
 *********************************************************************/
+#endif /* NextBSD #182: end XNU kxld block */
 Boolean OSKextNeedsLoadAddressForDebugSymbols(OSKextRef aKext)
 {
     Boolean result = false;
@@ -13087,6 +13090,12 @@ finish:
 *********************************************************************/
 #define GZIP_WINDOW_OFFSET (16)
 
+#if 0 /* NextBSD #182: XNU mkext archive + Mach-O segment manipulation +
+       * prelinked-kernel (kernelcache) builder — all removed. kld loads .ko
+       * files directly; there is no mkext, no in-userland Mach-O surgery, and
+       * no kernelcache on NextBSD. Includes the public OSKextCreateMkext /
+       * OSKextCreateKextsFromMkext* / OSKextCreatePrelinkedKernel entry points
+       * (kextcache-era; unused). */
 Boolean __OSKextAddCompressedFileToMkext(
     OSKextRef        aKext,
     CFMutableDataRef mkextData,
@@ -15306,6 +15315,7 @@ Boolean __OSKextCheckForPrelinkedKernel(
 #pragma mark Misc
 /*********************************************************************
 *********************************************************************/
+#endif /* NextBSD #182: end XNU mkext/segment/prelink block */
 CFComparisonResult __OSKextCompareIdentifiers(
     const void * val1,
     const void * val2,
