@@ -10,9 +10,25 @@
 #ifndef _NEXTBSD_MACH_TYPES_H
 #define _NEXTBSD_MACH_TYPES_H
 
+#include <stdint.h>
+
 #ifndef _MACH_BOOLEAN_H_
 #define _MACH_BOOLEAN_H_
 typedef int boolean_t;
+#endif
+
+/* <mach-o/reloc.h>'s relocation_info — referenced by macho_util.c's linkedit
+ * trim path. Absent on FreeBSD; the Mach-O bitfield layout is ABI-fixed. */
+#ifndef _NEXTBSD_RELOCATION_INFO
+#define _NEXTBSD_RELOCATION_INFO
+struct relocation_info {
+    int32_t  r_address;
+    uint32_t r_symbolnum:24,
+             r_pcrel:1,
+             r_length:2,
+             r_extern:1,
+             r_type:4;
+};
 #endif
 
 #ifndef TRUE
