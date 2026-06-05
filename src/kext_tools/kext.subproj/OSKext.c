@@ -10952,11 +10952,15 @@ Boolean __OSKextValidate(OSKextRef aKext, CFMutableArrayRef propPath)
         /* diagnosticValue */ propPath,
         /* expectedType */ CFDictionaryGetTypeID(),
         /* legalValues */ NULL,
-        /* required */ (OSKextDeclaresExecutable(aKext) &&
-                       !OSKextIsKernelComponent(aKext)),
+       /* NextBSD: OSBundleLibraries lists other *kexts* that must be loaded
+        * first. A kext with no kext-on-kext dependencies links directly against
+        * the kernel via kld, so it legitimately has none — don't require it.
+        * (Apple required it because every Mach-O kext links at least a kpi
+        * library; NextBSD ELF .ko resolve kernel symbols directly.) (#182)
+        */
+        /* required */ false,
         /* typeRequired */ true,
-        /* nonnilRequired */ (OSKextDeclaresExecutable(aKext) &&
-                       !OSKextIsKernelComponent(aKext)),
+        /* nonnilRequired */ false,
         /* valueOut */ (CFTypeRef *)&dictValue,
         /* valueIsNonnil */ NULL);
     result = result && checkResult;
@@ -10965,13 +10969,9 @@ Boolean __OSKextValidate(OSKextRef aKext, CFMutableArrayRef propPath)
     * All following "else if" mean the kext has at least one.
     */
     if (!dictValue || !CFDictionaryGetCount(dictValue)) {
-        if (OSKextDeclaresExecutable(aKext) &&
-            !OSKextIsKernelComponent(aKext)) {
-
-            __OSKextAddDiagnostic(aKext, kOSKextDiagnosticsFlagValidation,
-                kOSKextDiagnosticMissingPropertyKey,
-                propPath, /* note */ NULL);
-        }
+       /* NextBSD: no OSBundleLibraries is not a validation problem — a kext
+        * with no kext dependencies links against the kernel directly. (#182)
+        */
     } else if (OSKextIsKernelComponent(aKext)) {
         // xxx - should I catch kernel components that declare dependencies
         // xxx - in case somebody screws up the System.kexts? :-P
