@@ -653,6 +653,11 @@ else
     chroot "$WORK/rootfs" kldxref /boot/kernel 2>/dev/null || true
 fi
 
+# Reclaim the modules obj tree now its *.ko are installed — frees several GB of
+# *.ko.full/*.ko.debug byproducts before the kext extraction below, so a large
+# bundled-firmware kext has room to stage.
+rm -rf "$NEXTBSD_MODULES_ARTIFACT"
+
 #
 # 3b3. install bundled driver kexts (IntelWiFi.kext, ...) from the
 #      nextbsd-kernel-modules `continuous` asset into /System/Library/Extensions.
@@ -670,12 +675,18 @@ if [ -d "$NEXTBSD_KEXT_DL" ] && \
    [ -n "$(find "$NEXTBSD_KEXT_DL" -maxdepth 1 -name '*.tar.gz' 2>/dev/null | head -1)" ]; then
     echo "==> installing driver kexts into /System/Library/Extensions"
     mkdir -p "$WORK/rootfs/System/Library/Extensions"
-    kextstage=$(mktemp -d)
+    # Stage on the build work filesystem, NOT mktemp's /tmp (which on a FreeBSD
+    # VM is often a small tmpfs that would silently truncate the ~268MB extract).
+    kextstage="$WORK/kext-stage"
+    rm -rf "$kextstage"; mkdir -p "$kextstage"
+    echo "    work fs: $(df -h "$WORK" | tail -1)"
     for tb in "$NEXTBSD_KEXT_DL"/*.tar.gz; do
         [ -e "$tb" ] || continue
-        echo "    extracting $(basename "$tb")"
+        echo "    extracting $(basename "$tb") ($(ls -lh "$tb" | awk '{print $5}'))"
         tar -C "$kextstage" -xzf "$tb"
     done
+    echo "    staged: $(du -sh "$kextstage" | cut -f1)"
+    ls -la "$kextstage"/*.kext/Contents/Resources/firmware/ 2>/dev/null | head -4
     find "$kextstage" -maxdepth 1 -type d -name '*.kext' | while IFS= read -r kext; do
         b=$(basename "$kext")
         rm -rf "$WORK/rootfs/System/Library/Extensions/$b"
