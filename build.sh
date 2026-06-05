@@ -661,22 +661,33 @@ fi
 #      a Tier-0 stopgap until kextload registers it dynamically, nextbsd#205).
 #      OSKext authenticates kexts, so every bundle component must be root:wheel
 #      and non-group/other-writable. Optional: absent artifact => none shipped.
+#      The kext tarballs are extracted HERE (in the VM), not on the host: the
+#      ~268MB IntelWiFi.kext would risk exhausting the runner disk after the
+#      multi-GB modules obj tree, so only the ~100MB tarball is synced in.
 #
-NEXTBSD_KEXT_ARTIFACT="${NEXTBSD_KEXT_ARTIFACT:-$ROOT/kext-artifact}"
-if [ -d "$NEXTBSD_KEXT_ARTIFACT" ] && \
-   [ -n "$(find "$NEXTBSD_KEXT_ARTIFACT" -maxdepth 1 -type d -name '*.kext' 2>/dev/null | head -1)" ]; then
+NEXTBSD_KEXT_DL="${NEXTBSD_KEXT_DL:-$ROOT/kext-dl}"
+if [ -d "$NEXTBSD_KEXT_DL" ] && \
+   [ -n "$(find "$NEXTBSD_KEXT_DL" -maxdepth 1 -name '*.tar.gz' 2>/dev/null | head -1)" ]; then
     echo "==> installing driver kexts into /System/Library/Extensions"
     mkdir -p "$WORK/rootfs/System/Library/Extensions"
-    find "$NEXTBSD_KEXT_ARTIFACT" -maxdepth 1 -type d -name '*.kext' | while IFS= read -r kext; do
+    kextstage=$(mktemp -d)
+    for tb in "$NEXTBSD_KEXT_DL"/*.tar.gz; do
+        [ -e "$tb" ] || continue
+        echo "    extracting $(basename "$tb")"
+        tar -C "$kextstage" -xzf "$tb"
+    done
+    find "$kextstage" -maxdepth 1 -type d -name '*.kext' | while IFS= read -r kext; do
         b=$(basename "$kext")
         rm -rf "$WORK/rootfs/System/Library/Extensions/$b"
         cp -R "$kext" "$WORK/rootfs/System/Library/Extensions/"
         chown -R 0:0 "$WORK/rootfs/System/Library/Extensions/$b"
         chmod -R go-w "$WORK/rootfs/System/Library/Extensions/$b"
-        echo "    installed $b ($(du -sh "$WORK/rootfs/System/Library/Extensions/$b" | cut -f1))"
+        nfw=$(find "$WORK/rootfs/System/Library/Extensions/$b/Contents/Resources/firmware" -type f 2>/dev/null | wc -l | tr -d ' ')
+        echo "    installed $b ($(du -sh "$WORK/rootfs/System/Library/Extensions/$b" | cut -f1), $nfw firmware files)"
     done
+    rm -rf "$kextstage"
 else
-    echo "==> NOTE: no driver kext artifact — /System/Library/Extensions not populated"
+    echo "==> NOTE: no driver kext tarball — /System/Library/Extensions not populated"
 fi
 
 #
