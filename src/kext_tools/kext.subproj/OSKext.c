@@ -10362,6 +10362,7 @@ CFDictionaryRef OSKextCopyLoadedKextInfo(
     for (fileID = kldnext(0); fileID > 0; fileID = kldnext(fileID)) {
         struct kld_file_stat   stat;
         CFStringRef            nameRef = NULL;   // must release
+        CFStringRef            idRef   = NULL;   // alias (nameRef or const); don't release
         CFMutableDictionaryRef info    = NULL;   // must release
         CFNumberRef            num     = NULL;   // must release
         int64_t                addr;
@@ -10383,8 +10384,18 @@ CFDictionaryRef OSKextCopyLoadedKextInfo(
         }
 
         /* kld knows the module by name; record it as the identifier + the
-         * load facts kld can provide. */
-        CFDictionarySetValue(info, kCFBundleIdentifierKey, nameRef);
+         * load facts kld can provide. The first kld file (id 1, name "kernel")
+         * is the kernel itself, not a kext: present it as Apple's kernel
+         * pseudo-identifier (__kernel__) with a CFBundleVersion, so callers
+         * don't warn that the "kernel" load info lacks a version or that no
+         * opened kext matches it. The version is a placeholder — kld doesn't
+         * track one and nothing matches __kernel__. */
+        idRef = nameRef;
+        if (strcmp(stat.name, "kernel") == 0) {
+            idRef = CFSTR(kOSKextKernelIdentifier);
+            CFDictionarySetValue(info, kCFBundleVersionKey, CFSTR("1.0"));
+        }
+        CFDictionarySetValue(info, kCFBundleIdentifierKey, idRef);
         CFDictionarySetValue(info, CFSTR(kOSBundleStartedKey), kCFBooleanTrue);
 
         tag = fileID;
@@ -10406,7 +10417,7 @@ CFDictionaryRef OSKextCopyLoadedKextInfo(
             SAFE_RELEASE(num);
         }
 
-        CFDictionarySetValue(result, nameRef, info);
+        CFDictionarySetValue(result, idRef, info);
         SAFE_RELEASE(nameRef);
         SAFE_RELEASE(info);
     }
