@@ -8659,8 +8659,15 @@ OSReturn __OSKextLoadWithArgsDict(
                 kCFStringEncodingUTF8)) {
             continue;   /* codeless kext: no executable to kldload */
         }
+        /*
+         * NextBSD: resolve to an absolute path. A kext discovered via a
+         * repository scan (OSKextCreateKextsFromURL) carries a URL relative to
+         * the repo dir, so resolveToBase=false yields e.g. "Nmdm.kext/..." —
+         * kldload(2) would then fail to find it from the caller's CWD. Resolve
+         * to base so we always hand kldload a full path. (#182)
+         */
         __OSKextGetFileSystemPath(thisKext, /* otherURL */ NULL,
-            /* resolveToBase */ false, bundlePath);
+            /* resolveToBase */ true, bundlePath);
         snprintf(execPath, sizeof(execPath), "%s/Contents/MacOS/%s",
             bundlePath, execName);
 
