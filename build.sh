@@ -117,6 +117,10 @@ chmod 644 "$WORK/rootfs/var/run/utx.active" \
 cp "$ROOT/overlays/etc/master.passwd" "$WORK/rootfs/etc/master.passwd"
 cp "$ROOT/overlays/etc/group"         "$WORK/rootfs/etc/group"
 pwd_mkdb -p -d "$WORK/rootfs/etc" "$WORK/rootfs/etc/master.passwd"
+# root's home dir. master.passwd points root at /root; without the directory
+# login falls back with "No home directory. Logging in with home = /".
+mkdir -p "$WORK/rootfs/root"
+chmod 0700 "$WORK/rootfs/root"
 # CA bundle for pkg's https fetch — concatenate our caroot trusted certs.
 cat "$WORK/rootfs/usr/share/certs/trusted/"*.pem \
     > "$WORK/rootfs/etc/ssl/cert.pem" 2>/dev/null
@@ -619,44 +623,20 @@ fi
 #     vestigial; left in place, safe to remove in a follow-up.)
 
 #
-# 3b2. install the NEXTBSD module tree (nextbsd-kernel-modules artifact) into
-#      /boot/kernel — the GENERIC modules (cd9660, zfs, drm, sound, NICs, ...)
-#      that FreeBSD-kernel-generic used to ship but aren't compiled into the
-#      kernel. The artifact is the cross-build obj modules subtree; the final
-#      loadable files are the *.ko (the *.ko.full / *.ko.debug are build
-#      byproducts). After copying, regenerate /boot/kernel/linker.hints with
-#      kldxref so the loader can resolve modules by name (the loader.conf
-#      ahci/virtio/* preloads then stop being "can't find module" warnings).
-#      Optional: if the artifact is absent the kernel still boots on built-ins.
+# 3b2. /boot/kernel holds ONLY the kernel — the legacy GENERIC .ko module tree
+#      (cd9660, zfs, drm, sound, NICs, ...) is no longer shipped. NextBSD's
+#      model is drivers-as-kexts in /System/Library/Extensions (see 3b3); the
+#      kernel boots on its built-in drivers. Index /boot/kernel so the loader
+#      still has a linker.hints (mach is built into the kernel, not a module).
 #
-NEXTBSD_MODULES_ARTIFACT="${NEXTBSD_MODULES_ARTIFACT:-$ROOT/modules-artifact}"
-if [ -d "$NEXTBSD_MODULES_ARTIFACT" ] && \
-   [ -n "$(find "$NEXTBSD_MODULES_ARTIFACT" -name '*.ko' 2>/dev/null | head -1)" ]; then
-    echo "==> installing NEXTBSD module tree into /boot/kernel"
-    find "$NEXTBSD_MODULES_ARTIFACT" -type f -name '*.ko' | while IFS= read -r ko; do
-        install -o root -g wheel -m 555 "$ko" \
-            "$WORK/rootfs/boot/kernel/$(basename "$ko")"
-    done
-    NMODS=$(find "$WORK/rootfs/boot/kernel" -name '*.ko' | wc -l | tr -d ' ')
-    echo "    installed module count: $NMODS"
-    # linker.hints: name->module index kldload uses to resolve on-demand
-    # loads by name (the GENERIC modules: cd9660/zfs/drm/...). mach is in
-    # the kernel, not a module, so there is nothing mach-related to index.
-    chroot "$WORK/rootfs" kldxref /boot/kernel || \
-        kldxref "$WORK/rootfs/boot/kernel" || true
-    ls -lh "$WORK/rootfs/boot/kernel/linker.hints" 2>&1 || \
-        echo "    NOTE: linker.hints not generated (kldxref unavailable)"
+echo "==> /boot/kernel: kernel only (no .ko module tree)"
+chroot "$WORK/rootfs" kldxref /boot/kernel 2>/dev/null || true
+if ls "$WORK/rootfs/boot/kernel"/*.ko >/dev/null 2>&1; then
+    echo "    WARN: unexpected .ko present in /boot/kernel:"
+    ls "$WORK/rootfs/boot/kernel"/*.ko
 else
-    echo "==> NOTE: no NEXTBSD module tree artifact — shipping kernel built-ins only"
-    echo "    (boots fine; cd9660/zfs/drm/sound/etc. modules just won't be present)"
-    # no modules present (mach is built into the kernel); kldxref is a no-op
-    chroot "$WORK/rootfs" kldxref /boot/kernel 2>/dev/null || true
+    echo "    confirmed: no .ko modules in /boot/kernel"
 fi
-
-# Reclaim the modules obj tree now its *.ko are installed — frees several GB of
-# *.ko.full/*.ko.debug byproducts before the kext extraction below, so a large
-# bundled-firmware kext has room to stage.
-rm -rf "$NEXTBSD_MODULES_ARTIFACT"
 
 #
 # 3b3. install bundled driver kexts (IntelWiFi.kext, ...) from the
@@ -2786,6 +2766,22 @@ echo "==> regenerating /etc/{pwd,spwd,login.conf}.db from overlays"
 chroot "$WORK/rootfs" /usr/sbin/pwd_mkdb -p /etc/master.passwd
 chroot "$WORK/rootfs" /usr/bin/cap_mkdb /etc/login.conf
 
+# termcap database — STOPGAP. FreeBSD-runtime's /usr/bin/login (still used until
+# Apple's login.c is ported; see nextbsd#207) calls cgetent() on the termcap
+# db; without it root's login prints "Cannot read termcap database: using dumb
+# terminal settings." Ship the BSD termcap + build its .db with cap_mkdb. There
+# is no Apple termcap source (macOS uses terminfo, which FreeBSD login doesn't
+# consume), so this is BSD-sourced by necessity — remove it once Apple login,
+# which doesn't use termcap, lands.
+if [ -f /usr/share/misc/termcap ]; then
+    mkdir -p "$WORK/rootfs/usr/share/misc"
+    cp /usr/share/misc/termcap "$WORK/rootfs/usr/share/misc/termcap"
+    chroot "$WORK/rootfs" /usr/bin/cap_mkdb /usr/share/misc/termcap || true
+    echo "    termcap stopgap installed ($(ls -lh "$WORK/rootfs/usr/share/misc/termcap" | awk '{print $5}'))"
+else
+    echo "    WARN: VM has no /usr/share/misc/termcap to ship as stopgap"
+fi
+
 #
 # 6. assemble the bootable GPT disk image (BIOS + UEFI, rw UFS root).
 #    No /etc/fstab heredoc — overlays/etc/fstab carries the real root
@@ -2828,6 +2824,13 @@ echo "==> [libscan] end"
 # 6a. root UFS — content plus ~1.5 GB read-write headroom. UFS label
 #     "ROOTFS" matches loader.conf.d's vfs.root.mountfrom and the
 #     overlays/etc/fstab entry. softupdates for crash resilience.
+# Ensure the root directory (and the SLE chain) is root:wheel so it bakes into
+# the image as uid/gid 0. Otherwise / inherits the build user's id and OSKext's
+# cache-dir walk warns "Can't create kext cache under / - owner not root."
+chown 0:0 "$WORK/rootfs"
+[ -d "$WORK/rootfs/System/Library/Extensions" ] && \
+    chown 0:0 "$WORK/rootfs/System" "$WORK/rootfs/System/Library" \
+              "$WORK/rootfs/System/Library/Extensions"
 echo "==> makefs ffs (rw root, +1.5G headroom)"
 makefs -t ffs -B little \
     -o version=2,label=ROOTFS,softupdates=1 \
