@@ -5679,13 +5679,42 @@ CFDataRef __OSKextMapExecutable(
             _CFBundleCopyExecutableURLInDirectory(OSKextGetURL(aKext));
     }
 
+   /* NextBSD: _CFBundleCopyExecutableURLInDirectory() does not resolve a
+    * kext's deep-bundle executable in this CoreFoundation port. Every NextBSD
+    * kext uses the canonical Contents/MacOS/<CFBundleExecutable> layout that
+    * ko2kext produces, so fall back to constructing that path directly and
+    * checking it exists. (#182)
+    */
+    if (!aKext->loadInfo->executableURL) {
+        executableName = OSKextGetValueForInfoDictionaryKey(aKext,
+            kCFBundleExecutableKey);
+
+        if (executableName) {
+            char nameCString[PATH_MAX];
+            char candidatePath[PATH_MAX];
+
+            if (CFStringGetCString(executableName, nameCString,
+                    sizeof(nameCString), kCFStringEncodingUTF8) &&
+                snprintf(candidatePath, sizeof(candidatePath),
+                    "%s/Contents/MacOS/%s", kextPath, nameCString) <
+                    (int)sizeof(candidatePath) &&
+                access(candidatePath, F_OK) == 0) {
+
+                aKext->loadInfo->executableURL =
+                    CFURLCreateFromFileSystemRepresentation(kCFAllocatorDefault,
+                        (const UInt8 *)candidatePath, strlen(candidatePath),
+                        /* isDirectory */ false);
+            }
+        }
+    }
+
    /* Did we fail to get an executable URL, even though the kext has a
     * CFBundleExecutable? Tag the kext with a diagnostic.
     */
     if (!aKext->loadInfo->executableURL) {
         executableName = OSKextGetValueForInfoDictionaryKey(aKext,
             kCFBundleExecutableKey);
-            
+
         if (executableName) {
             __OSKextAddDiagnostic(aKext,
                 kOSKextDiagnosticsFlagValidation,
