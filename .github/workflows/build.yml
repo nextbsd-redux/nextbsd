@@ -134,6 +134,18 @@ jobs:
           else
             echo "WARN: no modules continuous asset; shipping kernel built-ins only"
           fi
+          # Driver kexts (IntelWiFi.kext, ...) with bundled firmware. build.sh
+          # installs *.kext into /System/Library/Extensions. Non-fatal if absent.
+          mkdir -p kext-artifact
+          if gh release download continuous \
+               -R nextbsd-redux/nextbsd-kernel-modules \
+               --pattern "intelwifi-kext.tar.gz" \
+               --output /tmp/intelwifi-kext.tar.gz --clobber; then
+            tar -C kext-artifact -xzf /tmp/intelwifi-kext.tar.gz
+            echo "kext bundles: $(find kext-artifact -maxdepth 1 -type d -name '*.kext' 2>/dev/null | wc -l)"
+          else
+            echo "WARN: no intelwifi-kext asset; ISO ships without IntelWiFi.kext"
+          fi
 
       - name: build ISO inside FreeBSD VM
         uses: vmactions/freebsd-vm@v1

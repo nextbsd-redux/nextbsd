@@ -654,6 +654,32 @@ else
 fi
 
 #
+# 3b3. install bundled driver kexts (IntelWiFi.kext, ...) from the
+#      nextbsd-kernel-modules `continuous` asset into /System/Library/Extensions.
+#      Each kext ships its firmware under Contents/Resources/firmware; firmware(9)
+#      locates it via the firmware_path kenv (see overlays/boot/loader.conf.d —
+#      a Tier-0 stopgap until kextload registers it dynamically, nextbsd#205).
+#      OSKext authenticates kexts, so every bundle component must be root:wheel
+#      and non-group/other-writable. Optional: absent artifact => none shipped.
+#
+NEXTBSD_KEXT_ARTIFACT="${NEXTBSD_KEXT_ARTIFACT:-$ROOT/kext-artifact}"
+if [ -d "$NEXTBSD_KEXT_ARTIFACT" ] && \
+   [ -n "$(find "$NEXTBSD_KEXT_ARTIFACT" -maxdepth 1 -type d -name '*.kext' 2>/dev/null | head -1)" ]; then
+    echo "==> installing driver kexts into /System/Library/Extensions"
+    mkdir -p "$WORK/rootfs/System/Library/Extensions"
+    find "$NEXTBSD_KEXT_ARTIFACT" -maxdepth 1 -type d -name '*.kext' | while IFS= read -r kext; do
+        b=$(basename "$kext")
+        rm -rf "$WORK/rootfs/System/Library/Extensions/$b"
+        cp -R "$kext" "$WORK/rootfs/System/Library/Extensions/"
+        chown -R 0:0 "$WORK/rootfs/System/Library/Extensions/$b"
+        chmod -R go-w "$WORK/rootfs/System/Library/Extensions/$b"
+        echo "    installed $b ($(du -sh "$WORK/rootfs/System/Library/Extensions/$b" | cut -f1))"
+    done
+else
+    echo "==> NOTE: no driver kext artifact — /System/Library/Extensions not populated"
+fi
+
+#
 # 3c. build libsystem_kernel (formerly libmach) on the host and install
 #     it into the chroot under the spike's chosen Apple-Libsystem layout:
 #       /usr/lib/system/libsystem_kernel.so + .so.0 sonname symlink
