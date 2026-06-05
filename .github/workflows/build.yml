@@ -113,33 +113,18 @@ jobs:
           echo "kernel artifact tree (sys/NEXTBSD):"
           find kernel-artifact -name kernel -path '*sys/NEXTBSD*' -o -name 'opt_global.h' 2>/dev/null | head
 
-      # Pull the NEXTBSD module tree (cd9660, zfs, drm, sound, NICs, ...) from
-      # nextbsd-kernel-modules — these are the GENERIC modules that were shipped
-      # by FreeBSD-kernel-generic but aren't built into the kernel. build.sh
-      # installs the *.ko into /boot/kernel and regenerates linker.hints.
-      # Non-fatal if absent: the kernel boots on built-in drivers regardless.
-      - name: download NEXTBSD modules from modules continuous release
+      # Pull driver kexts (IntelWiFi.kext, ... with bundled firmware) from the
+      # nextbsd-kernel-modules continuous release; build.sh installs them into
+      # /System/Library/Extensions. The legacy GENERIC .ko module tree is no
+      # longer shipped — /boot/kernel holds only the kernel, and drivers come as
+      # kexts (the kernel boots on its built-in drivers regardless).
+      - name: download NEXTBSD driver kexts from modules continuous release
         if: matrix.arch == 'amd64'
         env:
           GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
         run: |
-          mkdir -p modules-artifact
-          # Non-fatal: the kernel boots on its built-in drivers if absent.
-          if gh release download continuous \
-               -R nextbsd-redux/nextbsd-kernel-modules \
-               --pattern "nextbsd-modules-${{ matrix.arch }}.tar.gz" \
-               --output /tmp/nextbsd-modules.tar.gz --clobber; then
-            tar -C modules-artifact -xzf /tmp/nextbsd-modules.tar.gz
-            echo "module .ko count: $(find modules-artifact -name '*.ko' 2>/dev/null | wc -l)"
-          else
-            echo "WARN: no modules continuous asset; shipping kernel built-ins only"
-          fi
-          # Driver-kext tarballs (IntelWiFi.kext, ... with bundled firmware).
-          # Downloaded as-is; build.sh extracts + installs them INSIDE the VM.
-          # We deliberately do NOT extract the ~268MB kext here: after the
-          # multi-GB modules obj tree, host-side extraction risked exhausting
-          # the runner disk (left a partial 99K kext). Syncing the ~100MB
-          # tarball is cheap. Non-fatal if absent.
+          # ~100MB tarball, extracted + installed inside the VM by build.sh.
+          # Non-fatal if absent (ISO just ships without the driver kexts).
           mkdir -p kext-dl
           if gh release download continuous \
                -R nextbsd-redux/nextbsd-kernel-modules \
