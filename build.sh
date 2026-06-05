@@ -674,29 +674,24 @@ NEXTBSD_KEXT_DL="${NEXTBSD_KEXT_DL:-$ROOT/kext-dl}"
 if [ -d "$NEXTBSD_KEXT_DL" ] && \
    [ -n "$(find "$NEXTBSD_KEXT_DL" -maxdepth 1 -name '*.tar.gz' 2>/dev/null | head -1)" ]; then
     echo "==> installing driver kexts into /System/Library/Extensions"
-    mkdir -p "$WORK/rootfs/System/Library/Extensions"
-    # Stage on the build work filesystem, NOT mktemp's /tmp (which on a FreeBSD
-    # VM is often a small tmpfs that would silently truncate the ~268MB extract).
-    kextstage="$WORK/kext-stage"
-    rm -rf "$kextstage"; mkdir -p "$kextstage"
-    echo "    work fs: $(df -h "$WORK" | tail -1)"
+    sle="$WORK/rootfs/System/Library/Extensions"
+    mkdir -p "$sle"
+    echo "    rootfs fs: $(df -h "$WORK/rootfs" | tail -1)"
+    # Extract the kext tarball DIRECTLY into the rootfs (no intermediate cp -R,
+    # which was silently producing truncated files). tar restores the bundle in
+    # place; we then fix ownership/perms for OSKext authentication.
     for tb in "$NEXTBSD_KEXT_DL"/*.tar.gz; do
         [ -e "$tb" ] || continue
-        echo "    extracting $(basename "$tb") ($(ls -lh "$tb" | awk '{print $5}'))"
-        tar -C "$kextstage" -xzf "$tb"
+        echo "    extracting $(basename "$tb") ($(ls -lh "$tb" | awk '{print $5}')) into SLE"
+        tar -C "$sle" -xzf "$tb"
     done
-    echo "    staged: $(du -sh "$kextstage" | cut -f1)"
-    ls -la "$kextstage"/*.kext/Contents/Resources/firmware/ 2>/dev/null | head -4
-    find "$kextstage" -maxdepth 1 -type d -name '*.kext' | while IFS= read -r kext; do
-        b=$(basename "$kext")
-        rm -rf "$WORK/rootfs/System/Library/Extensions/$b"
-        cp -R "$kext" "$WORK/rootfs/System/Library/Extensions/"
-        chown -R 0:0 "$WORK/rootfs/System/Library/Extensions/$b"
-        chmod -R go-w "$WORK/rootfs/System/Library/Extensions/$b"
-        nfw=$(find "$WORK/rootfs/System/Library/Extensions/$b/Contents/Resources/firmware" -type f 2>/dev/null | wc -l | tr -d ' ')
-        echo "    installed $b ($(du -sh "$WORK/rootfs/System/Library/Extensions/$b" | cut -f1), $nfw firmware files)"
+    find "$sle" -maxdepth 1 -type d -name '*.kext' | while IFS= read -r kext; do
+        chown -R 0:0 "$kext"
+        chmod -R go-w "$kext"
+        nfw=$(find "$kext/Contents/Resources/firmware" -type f 2>/dev/null | wc -l | tr -d ' ')
+        echo "    installed $(basename "$kext") ($(du -sh "$kext" | cut -f1), $nfw firmware files)"
+        ls -la "$kext/Contents/Resources/firmware/" 2>/dev/null | sed -n '2,4p'
     done
-    rm -rf "$kextstage"
 else
     echo "==> NOTE: no driver kext tarball — /System/Library/Extensions not populated"
 fi
