@@ -5196,6 +5196,17 @@ Boolean OSKextSupportsArchitecture(OSKextRef aKext,
     }
 
     exec = CFDataGetBytePtr(executable);
+
+   /* NextBSD: an ELF .ko is a thin object built for one architecture (the
+    * kernel's), and kld validates it at load. The Mach-O/fat inspection below
+    * can't parse it, so treat any ELF as supporting the running arch. (#182)
+    */
+    if (CFDataGetLength(executable) >= 4 && exec[0] == 0x7f &&
+        exec[1] == 'E' && exec[2] == 'L' && exec[3] == 'F') {
+        result = true;
+        goto finish;
+    }
+
     fatIterator = fat_iterator_for_data(exec,
         exec + CFDataGetLength(executable), 1 /* mach-o only */);
     if (!fatIterator) {
@@ -11178,6 +11189,19 @@ Boolean __OSKextValidateExecutable(OSKextRef aKext)
 
     mach_header = (const struct mach_header *)CFDataGetBytePtr(executable);
     file_end = (((const char *)mach_header) + CFDataGetLength(executable));
+
+   /* NextBSD: kext executables are ELF .ko, not Mach-O. The kmod_info symbol
+    * inspection below is Mach-O-specific (macho_find_symbol) and would mark a
+    * perfectly good ELF kext "executable bad". The kernel's kld linker fully
+    * validates the ELF at load, so accept any ELF object here. (#182)
+    */
+    if (CFDataGetLength(executable) >= 4) {
+        const unsigned char *elf = (const unsigned char *)mach_header;
+        if (elf[0] == 0x7f && elf[1] == 'E' && elf[2] == 'L' && elf[3] == 'F') {
+            result = true;
+            goto finish;
+        }
+    }
 
     seek_result = macho_find_symbol(
             mach_header, file_end, __kOSKextKmodInfoSymbol, &nlist_type,
