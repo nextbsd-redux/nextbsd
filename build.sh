@@ -653,6 +653,49 @@ else
     chroot "$WORK/rootfs" kldxref /boot/kernel 2>/dev/null || true
 fi
 
+# Reclaim the modules obj tree now its *.ko are installed — frees several GB of
+# *.ko.full/*.ko.debug byproducts before the kext extraction below, so a large
+# bundled-firmware kext has room to stage.
+rm -rf "$NEXTBSD_MODULES_ARTIFACT"
+
+#
+# 3b3. install bundled driver kexts (IntelWiFi.kext, ...) from the
+#      nextbsd-kernel-modules `continuous` asset into /System/Library/Extensions.
+#      Each kext ships its firmware under Contents/Resources/firmware; firmware(9)
+#      locates it via the firmware_path kenv (see overlays/boot/loader.conf.d —
+#      a Tier-0 stopgap until kextload registers it dynamically, nextbsd#205).
+#      OSKext authenticates kexts, so every bundle component must be root:wheel
+#      and non-group/other-writable. Optional: absent artifact => none shipped.
+#      The kext tarballs are extracted HERE (in the VM), not on the host: the
+#      ~268MB IntelWiFi.kext would risk exhausting the runner disk after the
+#      multi-GB modules obj tree, so only the ~100MB tarball is synced in.
+#
+NEXTBSD_KEXT_DL="${NEXTBSD_KEXT_DL:-$ROOT/kext-dl}"
+if [ -d "$NEXTBSD_KEXT_DL" ] && \
+   [ -n "$(find "$NEXTBSD_KEXT_DL" -maxdepth 1 -name '*.tar.gz' 2>/dev/null | head -1)" ]; then
+    echo "==> installing driver kexts into /System/Library/Extensions"
+    sle="$WORK/rootfs/System/Library/Extensions"
+    mkdir -p "$sle"
+    echo "    rootfs fs: $(df -h "$WORK/rootfs" | tail -1)"
+    # Extract the kext tarball DIRECTLY into the rootfs (no intermediate cp -R,
+    # which was silently producing truncated files). tar restores the bundle in
+    # place; we then fix ownership/perms for OSKext authentication.
+    for tb in "$NEXTBSD_KEXT_DL"/*.tar.gz; do
+        [ -e "$tb" ] || continue
+        echo "    extracting $(basename "$tb") ($(ls -lh "$tb" | awk '{print $5}')) into SLE"
+        tar -C "$sle" -xzf "$tb"
+    done
+    find "$sle" -maxdepth 1 -type d -name '*.kext' | while IFS= read -r kext; do
+        chown -R 0:0 "$kext"
+        chmod -R go-w "$kext"
+        nfw=$(find "$kext/Contents/Resources/firmware" -type f 2>/dev/null | wc -l | tr -d ' ')
+        echo "    installed $(basename "$kext") ($(du -sh "$kext" | cut -f1), $nfw firmware files)"
+        ls -la "$kext/Contents/Resources/firmware/" 2>/dev/null | sed -n '2,4p'
+    done
+else
+    echo "==> NOTE: no driver kext tarball — /System/Library/Extensions not populated"
+fi
+
 #
 # 3c. build libsystem_kernel (formerly libmach) on the host and install
 #     it into the chroot under the spike's chosen Apple-Libsystem layout:
