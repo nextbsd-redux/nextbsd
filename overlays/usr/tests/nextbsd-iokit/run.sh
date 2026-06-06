@@ -99,6 +99,7 @@ if [ -x /usr/libexec/kextd ]; then
 		   kldstat -v 2>/dev/null | grep -qi iwlwifi; then loaded=yes; break; fi
 		sleep 1; i=$((i + 1))
 	done
+	echo "=== /var/log/kextd.log (daemon) ==="; cat /var/log/kextd.log 2>/dev/null; echo "==="
 	if [ "$loaded" = yes ]; then
 		echo "KEXTD-LOAD-OK: auto-started kextd loaded IntelWiFi on a kernel request"
 	elif ! pgrep -f "kextd -w" >/dev/null 2>&1; then

@@ -23,13 +23,14 @@
 	<true/>
 	<key>KeepAlive</key>
 	<true/>
-	<!-- DIAGNOSTIC: route to /dev/console so kextd's startup markers reach
-	     the serial log even if boot wedges (pinpoints any blocking call).
-	     Production should log to a file / syslog — see #211 cleanup. -->
+	<!-- Quiet by default (no -v): logs only meaningful events (loaded
+	     <bundle>, errors) to a file, like other System daemons. The full
+	     startup trace is available by adding -v. (Routing to syslog is a
+	     later refinement — #211.) -->
 	<key>StandardErrorPath</key>
-	<string>/dev/console</string>
+	<string>/var/log/kextd.log</string>
 	<key>StandardOutPath</key>
-	<string>/dev/console</string>
+	<string>/var/log/kextd.log</string>
 	<key>LimitLoadToSessionType</key>
 	<string>System</string>
 </dict>

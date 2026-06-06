@@ -272,13 +272,14 @@ do_watch(int fd, const char *repo)
 	kr = host_set_special_port(host, HOST_KEXTD_PORT, port);
 	if (kr != KERN_SUCCESS)
 		errx(1, "host_set_special_port(HOST_KEXTD_PORT): 0x%x", (unsigned)kr);
-	printf("kextd: listening on HOST_KEXTD_PORT (port 0x%x)\n", port);
+	/* Startup step markers are verbose-only — under -v they bracket each
+	 * call so a hang's last line pinpoints the blocker; at default the
+	 * daemon is quiet and logs only meaningful events (loaded, errors). */
+	if (verbose)
+		printf("kextd: listening on HOST_KEXTD_PORT (port 0x%x)\n", port);
 
-	/* Open the repo (keeps kexts available for load-by-identifier) + push.
-	 * The step markers below bracket each startup call so that, if kextd
-	 * hangs at early boot, the last line printed pinpoints the blocking
-	 * call instead of leaving us with silence. */
-	printf("kextd: opening repo %s\n", repo);
+	if (verbose)
+		printf("kextd: opening repo %s\n", repo);
 	u = url_for_path(repo);
 	repoKexts = (u != NULL) ?
 	    OSKextCreateKextsFromURL(kCFAllocatorDefault, u) : NULL;
@@ -286,7 +287,8 @@ do_watch(int fd, const char *repo)
 		CFRelease(u);
 	if (repoKexts == NULL)
 		errx(1, "%s: no kexts found", repo);
-	printf("kextd: repo opened; copying personalities\n");
+	if (verbose)
+		printf("kextd: repo opened; copying personalities\n");
 	(void) ioctl(fd, IOCATIOCFLUSH);
 	personalities = OSKextCopyPersonalitiesOfKexts(NULL);
 	if (personalities != NULL) {
@@ -299,11 +301,13 @@ do_watch(int fd, const char *repo)
 			    push_personality(fd, p) > 0)
 				pushed++;
 		}
-		printf("kextd: pushed %d personalities\n", pushed);
+		if (verbose)
+			printf("kextd: pushed %d personalities\n", pushed);
 		CFRelease(personalities);
 	}
 
-	printf("kextd: ready\n");
+	if (verbose)
+		printf("kextd: ready\n");
 	for (;;) {
 		mach_msg_return_t mr;
 
@@ -317,8 +321,9 @@ do_watch(int fd, const char *repo)
 		if (buf.body.hdr.msgh_id != IOKIT_KEXTD_LOAD_MSGID)
 			continue;
 		buf.body.bundle_id[sizeof(buf.body.bundle_id) - 1] = '\0';
-		printf("kextd: load request bundle=%s device=%s match=0x%08x\n",
-		    buf.body.bundle_id, buf.body.device, buf.body.match_word);
+		if (verbose)
+			printf("kextd: load request bundle=%s device=%s match=0x%08x\n",
+			    buf.body.bundle_id, buf.body.device, buf.body.match_word);
 		load_bundle(buf.body.bundle_id);
 	}
 	/* NOTREACHED */
