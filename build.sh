@@ -1927,6 +1927,26 @@ chroot "$WORK/rootfs" ldd /usr/sbin/kextload \
     | grep -q "libCoreFoundation.so.* => /usr/lib/system/" \
     || { echo "FAIL: kextload doesn't resolve libCoreFoundation"; exit 1; }
 
+# kextd (#217): the SUBDIR build above also built /usr/libexec/kextd, which
+# pushes each kext's IOKitPersonalities into the in-kernel IOCatalogue (#215)
+# via /dev/iocatalogue. It is invoked by the on-image test (and on demand) for
+# now; the launchd boot-time auto-push lands with K3 (#216), when kextd becomes
+# a persistent daemon and its boot ordering is designed (a RunAtLoad CF/OSKext
+# job this early wedges launchd's boot dispatch). Verify it built + links CF,
+# and install the IOCatalogue ABI header (sys/iocatalogue.h) into the image's
+# /usr/include for any other userland consumer (kextd itself uses its vendored
+# copy at build time).
+test -x "$WORK/rootfs/usr/libexec/kextd" \
+    || { echo "FAIL: kextd not built/installed to /usr/libexec"; exit 1; }
+ls -lh "$WORK/rootfs/usr/libexec/kextd"
+chroot "$WORK/rootfs" ldd /usr/libexec/kextd \
+    | grep -q "libCoreFoundation.so.* => /usr/lib/system/" \
+    || { echo "FAIL: kextd doesn't resolve libCoreFoundation"; exit 1; }
+install -d "$WORK/rootfs/usr/include/sys"
+install -m 0644 "$ROOT/src/kext_tools/kextd/iocatalogue.h" \
+    "$WORK/rootfs/usr/include/sys/iocatalogue.h"
+echo "==> kextd built + installed; sys/iocatalogue.h installed"
+
 # Runtime smoke: resolve a 2-kext graph (Leaf -> Base via OSBundleLibraries)
 # and assert kextdeps emits Base BEFORE Leaf in the load order.
 echo "==> kextdeps dependency-resolution smoke"
