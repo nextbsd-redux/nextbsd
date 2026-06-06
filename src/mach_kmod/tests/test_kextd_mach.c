@@ -89,43 +89,51 @@ main(void)
 	}
 	printf("registered HOST_KEXTD_PORT = 0x%x\n", port);
 
-	/* Ask the kernel to match the 8260 and send the load request to us. */
+	/* Ask the kernel to match the 8260 and send the load request to us.
+	 * NOTE: the serial console splits long lines and the boot test matches
+	 * the marker token as soon as it appears, so always print the diagnostic
+	 * on its OWN line first, then a bare KEXTD-MACH-{OK,FAIL,SKIP} marker. */
 	rc = ioctl(fd, IOCATIOCTESTSEND, &mw);
+	printf("IOCATIOCTESTSEND rc=%d errno=%d\n", rc, rc != 0 ? errno : 0);
 	if (rc != 0) {
+		(void) host_set_special_port(host, HOST_KEXTD_PORT, MACH_PORT_NULL);
 		if (errno == ENOTTY) {
-			printf("KEXTD-MACH-SKIP: no IOCATIOCTESTSEND (pre-K3b kernel)\n");
-			(void) host_set_special_port(host, HOST_KEXTD_PORT, MACH_PORT_NULL);
+			printf("(no IOCATIOCTESTSEND — pre-K3b kernel)\n");
+			printf("KEXTD-MACH-SKIP\n");
 			return (0);
 		}
-		printf("KEXTD-MACH-FAIL: IOCATIOCTESTSEND errno=%d (%s)\n",
-		    errno, errno == ENOENT ? "8260 not in catalogue — kextd push first" :
+		printf("(errno %d: %s)\n", errno,
+		    errno == ENOENT ? "8260 not in catalogue" :
 		    errno == ENXIO ? "kernel saw no kextd port" : "?");
-		(void) host_set_special_port(host, HOST_KEXTD_PORT, MACH_PORT_NULL);
+		printf("KEXTD-MACH-FAIL\n");
 		return (1);
 	}
 
 	/* The send is synchronous in the ioctl, so the message is already
-	 * queued; receive it (short timeout as a guard). */
+	 * queued; receive it (timeout as a guard). */
 	memset(&buf, 0, sizeof(buf));
 	mr = mach_msg(&buf.body.hdr, MACH_RCV_MSG | MACH_RCV_TIMEOUT,
 	    0, sizeof(buf), port, 5000 /* ms */, MACH_PORT_NULL);
 	(void) host_set_special_port(host, HOST_KEXTD_PORT, MACH_PORT_NULL);
+	printf("mach_msg(RCV) = 0x%x\n", (unsigned)mr);
 
 	if (mr != MACH_MSG_SUCCESS) {
-		printf("KEXTD-MACH-FAIL: mach_msg(RCV) 0x%x\n", (unsigned)mr);
+		printf("(receive failed)\n");
+		printf("KEXTD-MACH-FAIL\n");
 		return (1);
 	}
 
 	buf.body.bundle_id[sizeof(buf.body.bundle_id) - 1] = '\0';
-	printf("received: id=0x%x bundle='%s' match=0x%08x\n",
-	    buf.body.hdr.msgh_id, buf.body.bundle_id, buf.body.match_word);
+	printf("received: msgid=0x%x size=%u bundle='%s' match=0x%08x\n",
+	    buf.body.hdr.msgh_id, (unsigned)buf.body.hdr.msgh_size,
+	    buf.body.bundle_id, buf.body.match_word);
 
 	if (strcmp(buf.body.bundle_id, WANT_BUNDLE) == 0 &&
 	    buf.body.match_word == IWL_8260_MATCH) {
-		printf("KEXTD-MACH-OK: kernel->kextd Mach load request delivered "
-		    "(%s for 0x%08x)\n", WANT_BUNDLE, IWL_8260_MATCH);
+		printf("KEXTD-MACH-OK\n");
 		return (0);
 	}
-	printf("KEXTD-MACH-FAIL: message contents mismatch\n");
+	printf("(contents mismatch — want '%s'/0x%08x)\n", WANT_BUNDLE, IWL_8260_MATCH);
+	printf("KEXTD-MACH-FAIL\n");
 	return (1);
 }
