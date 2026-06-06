@@ -40,8 +40,22 @@ struct iocat_add {
 	uint64_t	match;			/* user ptr to uint32_t[nmatch] */
 };
 
-#define	IOCATIOCADD	_IOW('K', 1, struct iocat_add)	/* add one personality */
-#define	IOCATIOCFLUSH	_IO('K', 2)			/* drop all (re-push) */
+/*
+ * Look up the best driver bundle for a PCI match word (0x<device><vendor>).
+ * Userland sets `match`; the kernel fills `bundle_id` + `score` and returns 0,
+ * or ENOENT if nothing matches. This is the same lookup the in-kernel
+ * device_nomatch matcher (K3) uses — exposed so userland can verify it
+ * deterministically (e.g. is the 8260 bound to IntelWiFi?).
+ */
+struct iocat_lookup {
+	uint32_t	match;				/* in: 0x<device><vendor> */
+	int32_t		score;				/* out: winning IOProbeScore */
+	char		bundle_id[IOCAT_BUNDLE_ID_MAX];	/* out: winning bundle */
+};
+
+#define	IOCATIOCADD	_IOW('K', 1, struct iocat_add)		/* add a personality */
+#define	IOCATIOCFLUSH	_IO('K', 2)				/* drop all (re-push) */
+#define	IOCATIOCLOOKUP	_IOWR('K', 3, struct iocat_lookup)	/* match a PCI word */
 
 #ifdef _KERNEL
 #include <sys/queue.h>

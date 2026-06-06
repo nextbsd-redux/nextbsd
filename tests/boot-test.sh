@@ -1189,6 +1189,27 @@ expect {
     }
 }
 
+# IOKIT-LOOKUP — K3 (#216) matcher gate. The same on-image script asks the
+# kernel (IOCATIOCLOOKUP) which bundle claims the 8260 (0x24f38086); it must
+# resolve to IntelWiFi. Proves the in-kernel matcher's lookup without the
+# physical NIC. SKIP on a kernel predating IOCATIOCLOOKUP; non-fatal on timeout
+# (older images whose run.sh lacks this step); only IOKIT-LOOKUP-FAIL gates.
+expect {
+    timeout {
+        puts "\nWARN: IOKIT-LOOKUP marker not seen (pre-K3a image — informational)"
+    }
+    "IOKIT-LOOKUP-FAIL" {
+        puts "\nFAIL: in-kernel matcher did not resolve the 8260 to IntelWiFi"
+        exit 1
+    }
+    "IOKIT-LOOKUP-SKIP" {
+        puts "\nWARN: IOKIT-LOOKUP-SKIP — kernel without IOCATIOCLOOKUP (pre-K3a)"
+    }
+    "IOKIT-LOOKUP-OK" {
+        puts "\nOK: in-kernel matcher resolves 0x24f38086 -> IntelWiFi"
+    }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"
