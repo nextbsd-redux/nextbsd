@@ -56,6 +56,14 @@ struct iocat_lookup {
 #define	IOCATIOCADD	_IOW('K', 1, struct iocat_add)		/* add a personality */
 #define	IOCATIOCFLUSH	_IO('K', 2)				/* drop all (re-push) */
 #define	IOCATIOCLOOKUP	_IOWR('K', 3, struct iocat_lookup)	/* match a PCI word */
+/*
+ * K3b PoC (#216): look up a PCI match word and, on a hit, fire the kernel->kextd
+ * Mach load request (HOST_KEXTD_PORT) for the winning bundle — the de-risk test
+ * for the matcher's real send. Throwaway: the production matcher sends from its
+ * device_nomatch taskqueue, not via an ioctl. Returns 0 / ENOENT (no match) /
+ * ENXIO (no kextd registered) / ENOSYS (kernel built without COMPAT_MACH).
+ */
+#define	IOCATIOCTESTSEND	_IOW('K', 4, uint32_t)
 
 #ifdef _KERNEL
 #include <sys/queue.h>
