@@ -1231,6 +1231,29 @@ expect {
     }
 }
 
+# KEXTD-LOAD — K3b step 3 (#217) gate. The kextd daemon (`kextd -w`) receives a
+# kernel load request and actually kldloads the bundle (if_iwlwifi). This is the
+# auto-load path minus the physical 8260 (that bind is the t420 test). Non-fatal
+# on timeout + self-SKIP so it stays green on images/kernels predating step 3;
+# only KEXTD-LOAD-FAIL gates. Longer timeout — it starts a daemon + polls a load.
+set kextd_load_timeout 120
+expect {
+    timeout {
+        puts "\nWARN: KEXTD-LOAD marker not seen (pre-step-3 image — informational)"
+    }
+    "KEXTD-LOAD-FAIL" {
+        puts "\nFAIL: kextd daemon did not load the kext on a kernel load request"
+        exit 1
+    }
+    "KEXTD-LOAD-SKIP" {
+        puts "\nWARN: KEXTD-LOAD-SKIP — kextd -w unsupported (pre-step-3)"
+    }
+    "KEXTD-LOAD-OK" {
+        puts "\nOK: kextd daemon loaded if_iwlwifi on a kernel load request"
+    }
+}
+set timeout 60
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"

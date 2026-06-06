@@ -88,4 +88,33 @@ if [ -x "$KM" ]; then
 else
 	echo "KEXTD-MACH-SKIP: test_kextd_mach not present"
 fi
+
+# K3b step 3 (#217): the kextd DAEMON receives a kernel load request and actually
+# loads the bundle. Start `kextd -w` (registers HOST_KEXTD_PORT, pushes, listens),
+# inject a request with `kextd -t` (IOCATIOCTESTSEND — kernel sends to the running
+# daemon), and confirm if_iwlwifi got kldload'd. This is the auto-load path minus
+# the physical device (the 8260 bind is the t420 test). SKIP if kextd lacks -w.
+if [ -x /usr/libexec/kextd ]; then
+	/usr/libexec/kextd -w >/tmp/kextd-w.log 2>&1 &
+	wpid=$!
+	sleep 4					# register + push + enter receive loop
+	/usr/libexec/kextd -t 0x24f38086 || true	# inject a load request
+	loaded=no
+	i=0
+	while [ "$i" -lt 12 ]; do
+		if kldstat 2>/dev/null | grep -q if_iwlwifi; then loaded=yes; break; fi
+		sleep 1; i=$((i + 1))
+	done
+	echo "=== kextd -w log ==="; cat /tmp/kextd-w.log 2>/dev/null; echo "==="
+	kill "$wpid" 2>/dev/null
+	if [ "$loaded" = yes ]; then
+		echo "KEXTD-LOAD-OK: kextd loaded if_iwlwifi on a kernel load request"
+	elif ! grep -q "listening on HOST_KEXTD_PORT" /tmp/kextd-w.log 2>/dev/null; then
+		echo "KEXTD-LOAD-SKIP: kextd -w unsupported / didn't start (pre-step-3)"
+	else
+		echo "KEXTD-LOAD-FAIL: if_iwlwifi not loaded after a kernel load request"
+	fi
+else
+	echo "KEXTD-LOAD-SKIP: kextd not present"
+fi
 exit 0
