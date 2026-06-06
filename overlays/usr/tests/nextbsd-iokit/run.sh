@@ -102,17 +102,21 @@ if [ -x /usr/libexec/kextd ]; then
 	loaded=no
 	i=0
 	while [ "$i" -lt 12 ]; do
-		if kldstat 2>/dev/null | grep -q if_iwlwifi; then loaded=yes; break; fi
+		# The loaded kld file is named after the bundle executable
+		# (IntelWiFi); plain `kldstat` shows that, while the driver
+		# module (if_iwlwifi) only appears under `kldstat -v`. Check both.
+		if kldstat 2>/dev/null | grep -qi intelwifi ||
+		   kldstat -v 2>/dev/null | grep -qi iwlwifi; then loaded=yes; break; fi
 		sleep 1; i=$((i + 1))
 	done
 	echo "=== kextd -w log ==="; cat /tmp/kextd-w.log 2>/dev/null; echo "==="
 	kill "$wpid" 2>/dev/null
 	if [ "$loaded" = yes ]; then
-		echo "KEXTD-LOAD-OK: kextd loaded if_iwlwifi on a kernel load request"
+		echo "KEXTD-LOAD-OK: kextd loaded IntelWiFi on a kernel load request"
 	elif ! grep -q "listening on HOST_KEXTD_PORT" /tmp/kextd-w.log 2>/dev/null; then
 		echo "KEXTD-LOAD-SKIP: kextd -w unsupported / didn't start (pre-step-3)"
 	else
-		echo "KEXTD-LOAD-FAIL: if_iwlwifi not loaded after a kernel load request"
+		echo "KEXTD-LOAD-FAIL: IntelWiFi not in kldstat after a kernel load request"
 	fi
 else
 	echo "KEXTD-LOAD-SKIP: kextd not present"
