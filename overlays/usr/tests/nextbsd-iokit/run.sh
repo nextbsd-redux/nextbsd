@@ -50,8 +50,29 @@ fi
 if echo "${dump}" | grep -q "org.nextbsd.kext.intelwifi" &&
    echo "${dump}" | grep -qi "24f38086"; then
 	echo "IOCATALOGUE-OK: IntelWiFi personalities (incl. 8260) in the catalogue"
-	exit 0
+else
+	echo "IOCATALOGUE-FAIL: IntelWiFi match table not found in the catalogue"
+	exit 1
 fi
 
-echo "IOCATALOGUE-FAIL: IntelWiFi match table not found in the catalogue"
-exit 1
+# K3 matcher (#216): ask the kernel which bundle claims the 8260 (0x24f38086),
+# via IOCATIOCLOOKUP — the same lookup the in-kernel device_nomatch matcher uses.
+# Proves the matcher resolves a real PCI id to its driver bundle without the
+# physical NIC. SKIP on a kernel that predates IOCATIOCLOOKUP (K3a).
+if [ -x /usr/libexec/kextd ]; then
+	lk=$(/usr/libexec/kextd -l 0x24f38086 2>/dev/null || true)
+	echo "matcher lookup: ${lk}"
+	case "${lk}" in
+	*org.nextbsd.kext.intelwifi*)
+		echo "IOKIT-LOOKUP-OK: kernel matcher resolves 0x24f38086 -> IntelWiFi"
+		;;
+	*unsupported*)
+		echo "IOKIT-LOOKUP-SKIP: kernel without IOCATIOCLOOKUP (pre-K3a)"
+		;;
+	*)
+		echo "IOKIT-LOOKUP-FAIL: matcher did not resolve the 8260 (catalogue has it)"
+		exit 1
+		;;
+	esac
+fi
+exit 0

@@ -30,6 +30,7 @@
 #include <mach/mach_types.h>	/* kern_return_t, before OSKext.h -> OSReturn.h */
 
 #include <err.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -165,10 +166,40 @@ push_personality(int fd, CFDictionaryRef p)
 	return (1);
 }
 
+/*
+ * -l <matchword>: ask the kernel which driver bundle claims a PCI id
+ * (0x<device><vendor>) via IOCATIOCLOOKUP — the same lookup the in-kernel
+ * device_nomatch matcher (K3) uses. Lets the matcher be verified deterministically
+ * (e.g. 0x24f38086 -> org.nextbsd.kext.intelwifi) without the physical device.
+ */
+static int
+do_lookup(const char *word)
+{
+	struct iocat_lookup lu;
+	int fd, rc;
+
+	memset(&lu, 0, sizeof(lu));
+	lu.match = (uint32_t)strtoul(word, NULL, 0);
+	fd = open("/dev/iocatalogue", O_RDWR);
+	if (fd < 0)
+		err(1, "open /dev/iocatalogue (is the K2 kernel loaded?)");
+	rc = ioctl(fd, IOCATIOCLOOKUP, &lu);
+	close(fd);
+	if (rc == 0)
+		printf("LOOKUP 0x%08x -> %s score %d\n", lu.match,
+		    lu.bundle_id, lu.score);
+	else if (errno == ENOTTY)	/* kernel without K3a's IOCATIOCLOOKUP */
+		printf("LOOKUP 0x%08x -> unsupported\n", lu.match);
+	else
+		printf("LOOKUP 0x%08x -> (none)\n", lu.match);
+	return (rc == 0 ? 0 : 1);
+}
+
 int
 main(int argc, char *argv[])
 {
 	const char *repo = "/System/Library/Extensions";
+	const char *lookup = NULL;
 	CFArrayRef repoKexts = NULL;	/* non-retaining registry: hold alive */
 	CFArrayRef personalities = NULL;
 	CFURLRef u;
@@ -176,7 +207,7 @@ main(int argc, char *argv[])
 	int pushed = 0, skipped = 0, failed = 0;
 	CFIndex i, count;
 
-	while ((ch = getopt(argc, argv, "r:v")) != -1) {
+	while ((ch = getopt(argc, argv, "r:vl:")) != -1) {
 		switch (ch) {
 		case 'r':
 			repo = optarg;
@@ -184,10 +215,17 @@ main(int argc, char *argv[])
 		case 'v':
 			verbose = true;
 			break;
+		case 'l':
+			lookup = optarg;
+			break;
 		default:
-			errx(2, "usage: kextd [-r repo_dir] [-v]");
+			errx(2, "usage: kextd [-r repo_dir] [-v] | kextd -l matchword");
 		}
 	}
+
+	/* Query mode: just resolve one PCI id against the catalogue and exit. */
+	if (lookup != NULL)
+		return (do_lookup(lookup));
 
 	OSKextSetLogOutputFunction(&tool_log);
 	if (verbose)
