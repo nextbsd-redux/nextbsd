@@ -123,36 +123,43 @@ expect {
 #      ate `boot_multicons=YES`). Mitigation: match the echoed command
 #      BEFORE matching "OK ".
 #   2. Dropped characters: qemu's stdio serial + the loader's line
-#      discipline drop chars when expect blasts a whole line at once (send
-#      is effectively instantaneous). A dropped char means the echo never
-#      matches and expect hangs to the global 480s timeout. This grew worse
-#      as the handshake gained `set`s — #226 added boot_verbose, a 7th, and
-#      CI started hanging here. Mitigation: type one char at a time
-#      (send -s / send_slow).
+#      discipline occasionally drop a char even when we type slowly (send -s
+#      / send_slow) — it's probabilistic, not rate-fixable. A dropped char
+#      means the echo never matches. Typing slowly alone was not enough (a
+#      drop on `set boot_multicons=YES` still reddened main after the
+#      send-slow fix), so loader_set RETRIES: if the echo doesn't come back,
+#      flush the partial line and re-send, up to 5 tries. A dropped char then
+#      costs a retry, not the build.
 #
 # Also dropped vidconsole from the console var: QEMU CI runs with
 # -display none, so vidconsole never binds and the loader prints "console
 # vidconsole is unavailable" on every boot. comconsole alone suffices for
 # serial-only capture.
-set send_slow {1 .03}
+set send_slow {1 .05}
 
-# loader_set — type one command at the OK prompt robustly, failing FAST
-# with the exact stuck command rather than hanging the whole global timeout.
+# loader_set — type one command at the OK prompt robustly. Retries on a
+# dropped char (echo mismatch / no OK) instead of failing; a brief settle
+# before each send lets the loader be ready to receive after printing "OK ".
 proc loader_set {cmd} {
-    send -s -- "$cmd\r"
-    expect {
-        timeout { puts "\nFAIL: loader did not echo '$cmd' (dropped char on serial?)"; exit 1 }
-        -ex $cmd
+    for {set try 1} {$try <= 5} {incr try} {
+        sleep 0.1
+        send -s -- "$cmd\r"
+        expect {
+            -ex $cmd { expect { "OK " { return } timeout { } } }
+            timeout { }
+        }
+        puts "\nWARN: loader handshake retry $try/5 for '$cmd' (serial drop)"
+        send -- "\r"                              ;# flush any partial line -> error+OK
+        expect { "OK " { } timeout { } }
     }
-    expect {
-        timeout { puts "\nFAIL: loader did not return to OK after '$cmd'"; exit 1 }
-        "OK "
-    }
+    puts "\nFAIL: loader did not accept '$cmd' after 5 tries (serial drops)"
+    exit 1
 }
 
-# Each handshake step is sub-second; use a short timeout so a stuck step
-# reports in seconds. Restore the long boot timeout before kernel hand-off.
-set timeout 30
+# Per-try timeout: the echo normally lands sub-second, so 12s only bites on
+# a dropped char (then we retry). Restore the long boot timeout before the
+# kernel hand-off.
+set timeout 12
 loader_set "set console=comconsole"
 loader_set "set boot_serial=YES"
 loader_set "set comconsole_speed=115200"
