@@ -35,6 +35,7 @@ extern "C" {
 #define HOST_PRIV_PORT			2
 #define HOST_IO_MASTER_PORT		3
 #define HOST_BOOTSTRAP_PORT		13	/* freebsd-launchd-mach */
+#define HOST_KEXTD_PORT			15	/* kextd load-request port (K3b, #216) */
 
 /*
  * Upper bound on a host-special-port `which` value. launchd uses it

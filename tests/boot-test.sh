@@ -1210,6 +1210,27 @@ expect {
     }
 }
 
+# KEXTD-MACH — K3b (#216) round-trip gate. test_kextd_mach registers
+# HOST_KEXTD_PORT, drives the kernel matcher's send via IOCATIOCTESTSEND, and
+# receives the Mach load request — proving the kernel->kextd hand-off over the
+# faithful channel (no devd/devctl). Non-fatal on timeout + self-SKIP so it
+# stays green on images/kernels predating K3b; only KEXTD-MACH-FAIL gates.
+expect {
+    timeout {
+        puts "\nWARN: KEXTD-MACH marker not seen (pre-K3b image — informational)"
+    }
+    "KEXTD-MACH-FAIL" {
+        puts "\nFAIL: kernel->kextd Mach load request did not round-trip"
+        exit 1
+    }
+    "KEXTD-MACH-SKIP" {
+        puts "\nWARN: KEXTD-MACH-SKIP — kernel/image without K3b plumbing"
+    }
+    "KEXTD-MACH-OK" {
+        puts "\nOK: kernel->kextd Mach load request delivered (HOST_KEXTD_PORT)"
+    }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"

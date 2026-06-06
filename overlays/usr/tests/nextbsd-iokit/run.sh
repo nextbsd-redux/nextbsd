@@ -75,4 +75,17 @@ if [ -x /usr/libexec/kextd ]; then
 		;;
 	esac
 fi
+
+# K3b round-trip (#216): the kernel->kextd Mach load request. test_kextd_mach
+# registers HOST_KEXTD_PORT, drives the matcher's send via IOCATIOCTESTSEND, and
+# receives the Mach message — proving the kernel can hand a load request to
+# userland over the faithful channel (no devd/devctl). The catalogue was just
+# populated by the kextd push above, so the 8260 lookup inside the ioctl hits.
+# Emits KEXTD-MACH-OK / -FAIL / -SKIP (SKIP on a kernel predating K3b).
+KM=/usr/tests/freebsd-launchd-mach/test_kextd_mach
+if [ -x "$KM" ]; then
+	"$KM" || true		# the marker (not the exit code) is the signal
+else
+	echo "KEXTD-MACH-SKIP: test_kextd_mach not present"
+fi
 exit 0

@@ -1947,6 +1947,19 @@ install -m 0644 "$ROOT/src/kext_tools/kextd/iocatalogue.h" \
     "$WORK/rootfs/usr/include/sys/iocatalogue.h"
 echo "==> kextd built + installed; sys/iocatalogue.h installed"
 
+# test_kextd_mach — K3b round-trip (#216): register HOST_KEXTD_PORT, drive the
+# kernel matcher's send via IOCATIOCTESTSEND, and receive the Mach load request.
+# Built here (not with the other mach tests at ~3p) because it needs
+# <sys/iocatalogue.h>, installed just above by the kext_tools step.
+echo "==> building test_kextd_mach"
+cc -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/test_kextd_mach" \
+   "$ROOT/src/mach_kmod/tests/test_kextd_mach.c" \
+   -lsystem_kernel
+ls -lh "$WORK/rootfs/usr/tests/freebsd-launchd-mach/test_kextd_mach"
+
 # Runtime smoke: resolve a 2-kext graph (Leaf -> Base via OSBundleLibraries)
 # and assert kextdeps emits Base BEFORE Leaf in the load order.
 echo "==> kextdeps dependency-resolution smoke"
