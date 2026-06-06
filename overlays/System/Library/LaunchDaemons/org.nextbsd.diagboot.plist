@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- DIAGNOSTIC ONLY (do not merge): a trivial persistent RunAtLoad
+	     System daemon (/bin/sleep), to isolate the U1 boot-wedge. If boot
+	     wedges with THIS present, the conflict is launchd bringing up an
+	     extra early System daemon (a launchd-port bug) — independent of
+	     kextd's code. If boot is fine, kextd's own startup is the culprit.
+	     Mirrors the launchd shape kextd -w needs (early, System, persistent). -->
+	<key>Label</key>
+	<string>org.nextbsd.diagboot</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/sleep</string>
+		<string>100000</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/var/log/diagboot.stderr</string>
+	<key>StandardOutPath</key>
+	<string>/var/log/diagboot.stderr</string>
+	<key>LimitLoadToSessionType</key>
+	<string>System</string>
+</dict>
+</plist>

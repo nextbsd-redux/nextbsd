@@ -149,6 +149,11 @@ expect "OK "
 send "set launchd_trace=1\r"
 expect "set launchd_trace=1"
 expect "OK "
+# DIAGNOSTIC (diag-runatload): verbose kernel boot so a hang shows its last
+# subsystem instead of silence — root-causing the early-daemon boot wedge.
+send "set boot_verbose=YES\r"
+expect "set boot_verbose=YES"
+expect "OK "
 send "boot\r"
 
 # Stage 1a: capture getty's boot banner. PAM port iter 4 (issue #99)
