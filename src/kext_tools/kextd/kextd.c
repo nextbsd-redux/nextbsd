@@ -347,6 +347,11 @@ main(int argc, char *argv[])
 	int pushed = 0, skipped = 0, failed = 0;
 	CFIndex i, count;
 
+	/* Line-buffer stdout: in -w (daemon) mode our output is redirected to a
+	 * file (fully buffered), and the test kill()s us — buffered diagnostics
+	 * would be lost. Line buffering flushes each message as it's printed. */
+	setlinebuf(stdout);
+
 	while ((ch = getopt(argc, argv, "r:vl:wt:")) != -1) {
 		switch (ch) {
 		case 'r':
