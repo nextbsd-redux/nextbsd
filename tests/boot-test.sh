@@ -116,46 +116,61 @@ expect {
     "OK " { puts "\n==> at loader prompt; setting serial console vars" }
 }
 
-# Match the echoed command BEFORE matching "OK " to avoid expect races
-# where a stale OK from a prior `set` is matched before the loader has
-# consumed the current send. Without this, run 26070245676 ate
-# `boot_multicons=YES` and merged the next `set` into the partial line.
+# The loader OK-prompt handshake is serial-console-fragile in two ways,
+# both of which have wedged CI:
+#   1. Stale-OK race: a bare `expect "OK "` can match the OK from the
+#      PRIOR command before the loader consumes this send (run 26070245676
+#      ate `boot_multicons=YES`). Mitigation: match the echoed command
+#      BEFORE matching "OK ".
+#   2. Dropped characters: qemu's stdio serial + the loader's line
+#      discipline drop chars when expect blasts a whole line at once (send
+#      is effectively instantaneous). A dropped char means the echo never
+#      matches and expect hangs to the global 480s timeout. This grew worse
+#      as the handshake gained `set`s — #226 added boot_verbose, a 7th, and
+#      CI started hanging here. Mitigation: type one char at a time
+#      (send -s / send_slow).
 #
-# Also dropped vidconsole from console var: QEMU CI runs with
-# -display none, so vidconsole always fails to bind and the loader
-# prints "console vidconsole is unavailable" on every boot. comconsole
-# alone is sufficient for serial-only capture.
-send "set console=comconsole\r"
-expect "set console=comconsole"
-expect "OK "
-send "set boot_serial=YES\r"
-expect "set boot_serial=YES"
-expect "OK "
-send "set comconsole_speed=115200\r"
-expect "set comconsole_speed=115200"
-expect "OK "
-send "set boot_multicons=YES\r"
-expect "set boot_multicons=YES"
-expect "OK "
+# Also dropped vidconsole from the console var: QEMU CI runs with
+# -display none, so vidconsole never binds and the loader prints "console
+# vidconsole is unavailable" on every boot. comconsole alone suffices for
+# serial-only capture.
+set send_slow {1 .03}
+
+# loader_set — type one command at the OK prompt robustly, failing FAST
+# with the exact stuck command rather than hanging the whole global timeout.
+proc loader_set {cmd} {
+    send -s -- "$cmd\r"
+    expect {
+        timeout { puts "\nFAIL: loader did not echo '$cmd' (dropped char on serial?)"; exit 1 }
+        -ex $cmd
+    }
+    expect {
+        timeout { puts "\nFAIL: loader did not return to OK after '$cmd'"; exit 1 }
+        "OK "
+    }
+}
+
+# Each handshake step is sub-second; use a short timeout so a stuck step
+# reports in seconds. Restore the long boot timeout before kernel hand-off.
+set timeout 30
+loader_set "set console=comconsole"
+loader_set "set boot_serial=YES"
+loader_set "set comconsole_speed=115200"
+loader_set "set boot_multicons=YES"
 # Verbose diagnostic trace toggles. CI-only — the shipped ISO is
 # silent by default. The kernel reads mach.debug_enable as a tunable
 # (CTLFLAG_RWTUN) at boot; launchd PID 1 and libxpc both read kenv
 # "launchd_trace=1" once at startup. Together these gate the [T41-*]
 # / [T39-*] trace points; keeping them on for CI gives a paper trail
 # for the next regression.
-send "set mach.debug_enable=1\r"
-expect "set mach.debug_enable=1"
-expect "OK "
-send "set launchd_trace=1\r"
-expect "set launchd_trace=1"
-expect "OK "
+loader_set "set mach.debug_enable=1"
+loader_set "set launchd_trace=1"
 # Verbose boot so an early-boot hang shows its last subsystem on the serial
 # console instead of silence (root-causing kextd's early-start — #227). The
 # shipped image is unaffected; this is a CI-only loader var.
-send "set boot_verbose=YES\r"
-expect "set boot_verbose=YES"
-expect "OK "
-send "boot\r"
+loader_set "set boot_verbose=YES"
+set timeout 480
+send -s -- "boot\r"
 
 # Stage 1a: capture getty's boot banner. PAM port iter 4 (issue #99)
 # restored RunAtLoad on com.apple.hostnamed.plist so hostnamed runs
