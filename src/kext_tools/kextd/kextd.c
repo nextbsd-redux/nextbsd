@@ -28,6 +28,10 @@
  */
 #include <CoreFoundation/CoreFoundation.h>
 #include <mach/mach_types.h>	/* kern_return_t, before OSKext.h -> OSReturn.h */
+#include <mach/mach_traps.h>	/* mach_task_self, mach_host_self, mach_msg */
+#include <mach/mach_port.h>	/* mach_port_allocate, mach_port_insert_right */
+#include <mach/host_special_ports.h>	/* host_set_special_port, HOST_KEXTD_PORT */
+#include <mach/message.h>
 
 #include <err.h>
 #include <errno.h>
@@ -42,6 +46,21 @@
 
 #include "OSKext.h"
 #include "iocatalogue.h"	/* vendored ABI; canonical copy in nextbsd-kernel */
+
+#ifndef HOST_KEXTD_PORT
+#define HOST_KEXTD_PORT 15
+#endif
+
+/* kernel->kextd load request wire format (mirror of the kernel's
+ * iokit_kextd_load_msg_t in sys/mach/iokit_kextd.h; NDR_record_t is 8 bytes). */
+#define	IOKIT_KEXTD_LOAD_MSGID	0x494f4b54
+typedef struct {
+	mach_msg_header_t	hdr;
+	unsigned char		ndr[8];
+	char			bundle_id[128];
+	char			device[64];
+	uint32_t		match_word;
+} kextd_load_body_t;
 
 static bool verbose;
 
@@ -195,11 +214,142 @@ do_lookup(const char *word)
 	return (rc == 0 ? 0 : 1);
 }
 
+/* Load a kext by CFBundleIdentifier from the already-open repo set. */
+static void
+load_bundle(const char *bundle_id)
+{
+	CFStringRef idstr;
+	OSKextRef k;
+	OSReturn r;
+
+	idstr = CFStringCreateWithCString(kCFAllocatorDefault, bundle_id,
+	    kCFStringEncodingUTF8);
+	if (idstr == NULL)
+		return;
+	k = OSKextGetKextWithIdentifier(idstr);	/* from the open repo set */
+	CFRelease(idstr);
+	if (k == NULL) {
+		printf("kextd: no kext with identifier %s\n", bundle_id);
+		return;
+	}
+	r = OSKextLoad(k);
+	if (r == kOSReturnSuccess)
+		printf("kextd: loaded %s\n", bundle_id);
+	else {
+		printf("kextd: load %s failed (OSReturn 0x%x)\n", bundle_id,
+		    (unsigned)r);
+		OSKextLogDiagnostics(k, kOSKextDiagnosticsFlagAll);
+	}
+}
+
+/*
+ * Watch mode (the real daemon, U1/K3b): register HOST_KEXTD_PORT so the kernel
+ * matcher can reach us, push the repo's personalities into the IOCatalogue
+ * (which, with push-triggers-match, fires load requests for already-unmatched
+ * devices), then serve kernel load requests forever — loading each named bundle
+ * via OSKext (kldload re-probes and the device attaches). No matching here.
+ */
+static int
+do_watch(int fd, const char *repo)
+{
+	mach_port_name_t task = mach_task_self();
+	mach_port_name_t host = mach_host_self();
+	mach_port_name_t port = MACH_PORT_NULL;
+	CFArrayRef repoKexts, personalities;
+	CFURLRef u;
+	kern_return_t kr;
+	union {
+		kextd_load_body_t body;
+		unsigned char raw[sizeof(kextd_load_body_t) + 64];
+	} buf;
+
+	kr = mach_port_allocate(task, MACH_PORT_RIGHT_RECEIVE, &port);
+	if (kr != KERN_SUCCESS)
+		errx(1, "mach_port_allocate: 0x%x", (unsigned)kr);
+	kr = mach_port_insert_right(task, port, port, MACH_MSG_TYPE_MAKE_SEND);
+	if (kr != KERN_SUCCESS)
+		errx(1, "mach_port_insert_right: 0x%x", (unsigned)kr);
+	kr = host_set_special_port(host, HOST_KEXTD_PORT, port);
+	if (kr != KERN_SUCCESS)
+		errx(1, "host_set_special_port(HOST_KEXTD_PORT): 0x%x", (unsigned)kr);
+	/* Startup step markers are verbose-only — under -v they bracket each
+	 * call so a hang's last line pinpoints the blocker; at default the
+	 * daemon is quiet and logs only meaningful events (loaded, errors). */
+	if (verbose)
+		printf("kextd: listening on HOST_KEXTD_PORT (port 0x%x)\n", port);
+
+	if (verbose)
+		printf("kextd: opening repo %s\n", repo);
+	u = url_for_path(repo);
+	repoKexts = (u != NULL) ?
+	    OSKextCreateKextsFromURL(kCFAllocatorDefault, u) : NULL;
+	if (u != NULL)
+		CFRelease(u);
+	if (repoKexts == NULL)
+		errx(1, "%s: no kexts found", repo);
+	if (verbose)
+		printf("kextd: repo opened; copying personalities\n");
+	(void) ioctl(fd, IOCATIOCFLUSH);
+	personalities = OSKextCopyPersonalitiesOfKexts(NULL);
+	if (personalities != NULL) {
+		CFIndex n = CFArrayGetCount(personalities), i;
+		int pushed = 0;
+
+		for (i = 0; i < n; i++) {
+			CFDictionaryRef p = CFArrayGetValueAtIndex(personalities, i);
+			if (p != NULL && CFGetTypeID(p) == CFDictionaryGetTypeID() &&
+			    push_personality(fd, p) > 0)
+				pushed++;
+		}
+		if (verbose)
+			printf("kextd: pushed %d personalities\n", pushed);
+		CFRelease(personalities);
+	}
+
+	if (verbose)
+		printf("kextd: ready\n");
+	for (;;) {
+		mach_msg_return_t mr;
+
+		memset(&buf, 0, sizeof(buf));
+		mr = mach_msg(&buf.body.hdr, MACH_RCV_MSG, 0, sizeof(buf), port,
+		    MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
+		if (mr != MACH_MSG_SUCCESS) {
+			fprintf(stderr, "kextd: mach_msg(RCV) 0x%x\n", (unsigned)mr);
+			continue;
+		}
+		if (buf.body.hdr.msgh_id != IOKIT_KEXTD_LOAD_MSGID)
+			continue;
+		buf.body.bundle_id[sizeof(buf.body.bundle_id) - 1] = '\0';
+		if (verbose)
+			printf("kextd: load request bundle=%s device=%s match=0x%08x\n",
+			    buf.body.bundle_id, buf.body.device, buf.body.match_word);
+		load_bundle(buf.body.bundle_id);
+	}
+	/* NOTREACHED */
+}
+
+/* -t <word>: drive the kernel matcher's send for a PCI id (IOCATIOCTESTSEND),
+ * WITHOUT registering HOST_KEXTD_PORT — so it injects a request to a separately
+ * running `kextd -w`. CI uses this to exercise the daemon's receive+load. */
+static int
+do_test_send(int fd, const char *word)
+{
+	uint32_t mw = (uint32_t)strtoul(word, NULL, 0);
+	int rc = ioctl(fd, IOCATIOCTESTSEND, &mw);
+
+	printf("kextd: test-send 0x%08x rc=%d errno=%d\n", mw, rc,
+	    rc != 0 ? errno : 0);
+	return (rc == 0 ? 0 : 1);
+}
+
 int
 main(int argc, char *argv[])
 {
 	const char *repo = "/System/Library/Extensions";
 	const char *lookup = NULL;
+	const char *testsend = NULL;
+	bool watch = false;
 	CFArrayRef repoKexts = NULL;	/* non-retaining registry: hold alive */
 	CFArrayRef personalities = NULL;
 	CFURLRef u;
@@ -207,7 +357,12 @@ main(int argc, char *argv[])
 	int pushed = 0, skipped = 0, failed = 0;
 	CFIndex i, count;
 
-	while ((ch = getopt(argc, argv, "r:vl:")) != -1) {
+	/* Line-buffer stdout: in -w (daemon) mode our output is redirected to a
+	 * file (fully buffered), and the test kill()s us — buffered diagnostics
+	 * would be lost. Line buffering flushes each message as it's printed. */
+	setlinebuf(stdout);
+
+	while ((ch = getopt(argc, argv, "r:vl:wt:")) != -1) {
 		switch (ch) {
 		case 'r':
 			repo = optarg;
@@ -218,8 +373,14 @@ main(int argc, char *argv[])
 		case 'l':
 			lookup = optarg;
 			break;
+		case 'w':
+			watch = true;
+			break;
+		case 't':
+			testsend = optarg;
+			break;
 		default:
-			errx(2, "usage: kextd [-r repo_dir] [-v] | kextd -l matchword");
+			errx(2, "usage: kextd [-r repo] [-v] | -l word | -w | -t word");
 		}
 	}
 
@@ -235,6 +396,17 @@ main(int argc, char *argv[])
 	fd = open("/dev/iocatalogue", O_RDWR);
 	if (fd < 0)
 		err(1, "open /dev/iocatalogue (is the K2 kernel loaded?)");
+
+	/* Trigger a synthetic load request to a running `kextd -w` (CI helper). */
+	if (testsend != NULL) {
+		int rc = do_test_send(fd, testsend);
+		close(fd);
+		return (rc);
+	}
+
+	/* Watch mode: register HOST_KEXTD_PORT, push, then serve load requests. */
+	if (watch)
+		return (do_watch(fd, repo));	/* does not return */
 
 	/* Idempotent: drop the prior set, then re-push the current repo. */
 	if (ioctl(fd, IOCATIOCFLUSH) != 0)
