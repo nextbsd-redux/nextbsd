@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>org.nextbsd.kextd</string>
+
+	<!-- kextd boot-push (U1, nextbsd#217). One-shot at boot: parse every
+	     kext under /System/Library/Extensions and push its IOKitPersonalities
+	     (device-id match tables) into the in-kernel IOCatalogue (#215) via
+	     /dev/iocatalogue. This is the data the in-kernel matcher (K3, #216)
+	     reads to bind an unmatched device to its driver bundle — the
+	     Apple-faithful split (userland parses plists; the kernel matches).
+
+	     KeepAlive=false: it pushes and exits (idempotent — it flushes then
+	     re-pushes). When K3 lands, kextd grows a /dev/devctl listener for the
+	     kernel's "load <bundle-id>" requests and becomes persistent. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/libexec/kextd</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<false/>
+
+	<key>StandardErrorPath</key>
+	<string>/var/log/kextd.stderr</string>
+	<key>StandardOutPath</key>
+	<string>/var/log/kextd.stderr</string>
+
+	<!-- System session — runs as root before any user logs in, like
+	     configd / hwregd / notifyd. /dev/iocatalogue is root-only. -->
+	<key>LimitLoadToSessionType</key>
+	<string>System</string>
+</dict>
+</plist>

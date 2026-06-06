@@ -1163,6 +1163,32 @@ expect {
     }
 }
 
+# IOCATALOGUE — umbrella #211 (in-kernel IOKit matcher) U1 gate. Runs kextd
+# (#217), which pushes every shipped kext's IOKitPersonalities into the
+# in-kernel IOCatalogue (#215) via /dev/iocatalogue, then checks the catalogue
+# carries IntelWiFi's match table (incl. the 8260, 0x24f38086) — proving the
+# kext-plist -> kextd -> kernel path end to end (no Intel NIC needed). The
+# on-image script self-skips on a pre-K2 kernel, and the timeout here is
+# non-fatal so this stays green on older continuous images (e.g. when
+# nextbsd-kernel's smoke test boots an image built before kextd/K2 shipped);
+# only an explicit IOCATALOGUE-FAIL gates.
+send "/usr/tests/nextbsd-iokit/run.sh\r"
+expect {
+    timeout {
+        puts "\nWARN: IOCATALOGUE marker not seen (pre-kextd/K2 image — informational)"
+    }
+    "IOCATALOGUE-FAIL" {
+        puts "\nFAIL: kextd did not populate the in-kernel IOCatalogue"
+        exit 1
+    }
+    "IOCATALOGUE-SKIP" {
+        puts "\nWARN: IOCATALOGUE-SKIP — no /dev/iocatalogue (kernel without K2)"
+    }
+    "IOCATALOGUE-OK" {
+        puts "\nOK: kextd populated the in-kernel IOCatalogue (IntelWiFi, incl. 8260)"
+    }
+}
+
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
 # halt -p into a clean shutdown rather than a reset loop).
 send "halt -p\r"
