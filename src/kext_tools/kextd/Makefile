@@ -9,8 +9,8 @@ MAN=
 # (canonical copy lives in nextbsd-kernel's src-overlay) and included locally,
 # so the build doesn't depend on it being installed into the sysroot first.
 #
-# Installs to /usr/libexec/kextd (Apple's location), launched at boot by
-# overlays/System/Library/LaunchDaemons/org.nextbsd.kextd.plist.
+# Installs to /usr/libexec/kextd (Apple's location). Invoked on demand for now
+# (on-image IOKit test); the launchd boot-time auto-push lands with K3 (#216).
 BINDIR=	/usr/libexec
 
 KT=	${.CURDIR}/..

@@ -17,12 +17,21 @@ if [ ! -c /dev/iocatalogue ]; then
 	exit 0
 fi
 
-# Deterministic + idempotent: run kextd ourselves (it flushes then re-pushes),
-# rather than rely on the boot-time launchd one-shot having finished.
+# Run kextd ourselves (it flushes then re-pushes, so it's idempotent). kextd is
+# NOT a boot-time launchd daemon yet — running a CF/OSKext-heavy job before the
+# system is up wedges launchd's boot dispatch; the launchd boot-push integration
+# lands with K3 (#216) when kextd becomes persistent and its ordering is
+# designed. Bound it with a watchdog so a hang surfaces as an empty catalogue
+# (-> IOCATALOGUE-FAIL) instead of stalling the whole boot test.
 if [ -x /usr/libexec/kextd ]; then
-	/usr/libexec/kextd -v || echo "WARN: kextd exited nonzero"
+	/usr/libexec/kextd -v &
+	kpid=$!
+	( sleep 90; kill "$kpid" 2>/dev/null ) &
+	wpid=$!
+	wait "$kpid" || echo "WARN: kextd exited nonzero or was killed (watchdog)"
+	kill "$wpid" 2>/dev/null
 else
-	echo "WARN: /usr/libexec/kextd missing; relying on boot-time push"
+	echo "WARN: /usr/libexec/kextd missing"
 fi
 
 count=$(sysctl -n hw.iokit.catalogue_count 2>/dev/null || echo 0)

@@ -8,12 +8,17 @@
  * K3 #216 matcher) owns matching. This is the analog of Apple kextd's boot-time
  * IOCatalogueSendData.
  *
- * What it does now (boot-push): open every kext under a repository (default
+ * What it does now (push): open every kext under a repository (default
  * /System/Library/Extensions) with the OSKext engine, take each personality's
  * device-id match table (IOProviderClass / IOProbeScore / IOPCIPrimaryMatch),
  * and submit one flat record per personality to /dev/iocatalogue via
  * IOCATIOCADD. It first IOCATIOCFLUSHes, so running it again simply re-pushes
  * the current set (idempotent). The kernel never parses XML — kextd does.
+ *
+ * Invoked on demand for now (e.g. by the on-image IOKit test). The launchd
+ * boot-time auto-push is deferred to K3 (#216): a RunAtLoad CF/OSKext job this
+ * early wedges launchd's boot dispatch, so kextd grows its boot integration
+ * once it is a persistent daemon whose ordering is designed.
  *
  * Not yet (lands with K3, #216): listening on /dev/devctl for the kernel's
  * "IOKIT load <bundle-id>" requests and kextload-ing the named bundle. For now

@@ -1928,9 +1928,12 @@ chroot "$WORK/rootfs" ldd /usr/sbin/kextload \
     || { echo "FAIL: kextload doesn't resolve libCoreFoundation"; exit 1; }
 
 # kextd (#217): the SUBDIR build above also built /usr/libexec/kextd, which
-# pushes each kext's IOKitPersonalities into the in-kernel IOCatalogue (#215) at
-# boot (launchd: org.nextbsd.kextd.plist). Verify it built + links CF, and
-# install the IOCatalogue ABI header (sys/iocatalogue.h) into the image's
+# pushes each kext's IOKitPersonalities into the in-kernel IOCatalogue (#215)
+# via /dev/iocatalogue. It is invoked by the on-image test (and on demand) for
+# now; the launchd boot-time auto-push lands with K3 (#216), when kextd becomes
+# a persistent daemon and its boot ordering is designed (a RunAtLoad CF/OSKext
+# job this early wedges launchd's boot dispatch). Verify it built + links CF,
+# and install the IOCatalogue ABI header (sys/iocatalogue.h) into the image's
 # /usr/include for any other userland consumer (kextd itself uses its vendored
 # copy at build time).
 test -x "$WORK/rootfs/usr/libexec/kextd" \
