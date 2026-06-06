@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- kextd, the in-kernel IOKit matcher's loader daemon (K3b, #217).
+	     Early, persistent System daemon — Apple's shape (kextd was the
+	     HOST_KEXTD_PORT server). It registers HOST_KEXTD_PORT so the kernel
+	     matcher can reach it, pushes the IOKitPersonalities (push-triggers-
+	     match #216 then fires load requests for already-unmatched devices),
+	     and serves load requests forever (OSKextLoad -> kldload -> attach).
+
+	     Ordering is irrelevant: launchd has none, and push-triggers-match
+	     makes the kernel re-fire requests when kextd pushes, so kextd may
+	     start at any time without losing loads. -->
+	<key>Label</key>
+	<string>org.nextbsd.kextd</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/libexec/kextd</string>
+		<string>-w</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<!-- DIAGNOSTIC: route to /dev/console so kextd's startup markers reach
+	     the serial log even if boot wedges (pinpoints any blocking call).
+	     Production should log to a file / syslog — see #211 cleanup. -->
+	<key>StandardErrorPath</key>
+	<string>/dev/console</string>
+	<key>StandardOutPath</key>
+	<string>/dev/console</string>
+	<key>LimitLoadToSessionType</key>
+	<string>System</string>
+</dict>
+</plist>

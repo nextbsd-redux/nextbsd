@@ -149,6 +149,12 @@ expect "OK "
 send "set launchd_trace=1\r"
 expect "set launchd_trace=1"
 expect "OK "
+# Verbose boot so an early-boot hang shows its last subsystem on the serial
+# console instead of silence (root-causing kextd's early-start — #227). The
+# shipped image is unaffected; this is a CI-only loader var.
+send "set boot_verbose=YES\r"
+expect "set boot_verbose=YES"
+expect "OK "
 send "boot\r"
 
 # Stage 1a: capture getty's boot banner. PAM port iter 4 (issue #99)
@@ -1210,26 +1216,9 @@ expect {
     }
 }
 
-# KEXTD-MACH — K3b (#216) round-trip gate. test_kextd_mach registers
-# HOST_KEXTD_PORT, drives the kernel matcher's send via IOCATIOCTESTSEND, and
-# receives the Mach load request — proving the kernel->kextd hand-off over the
-# faithful channel (no devd/devctl). Non-fatal on timeout + self-SKIP so it
-# stays green on images/kernels predating K3b; only KEXTD-MACH-FAIL gates.
-expect {
-    timeout {
-        puts "\nWARN: KEXTD-MACH marker not seen (pre-K3b image — informational)"
-    }
-    "KEXTD-MACH-FAIL" {
-        puts "\nFAIL: kernel->kextd Mach load request did not round-trip"
-        exit 1
-    }
-    "KEXTD-MACH-SKIP" {
-        puts "\nWARN: KEXTD-MACH-SKIP — kernel/image without K3b plumbing"
-    }
-    "KEXTD-MACH-OK" {
-        puts "\nOK: kernel->kextd Mach load request delivered (HOST_KEXTD_PORT)"
-    }
-}
+# (The raw kernel->kextd Mach round-trip — formerly the KEXTD-MACH gate via
+# test_kextd_mach — is now subsumed by KEXTD-LOAD below: the auto-started daemon
+# exercises the same HOST_KEXTD_PORT delivery and then actually loads the kext.)
 
 # KEXTD-LOAD — K3b step 3 (#217) gate. The kextd daemon (`kextd -w`) receives a
 # kernel load request and actually kldloads the bundle (if_iwlwifi). This is the

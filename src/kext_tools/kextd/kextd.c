@@ -274,7 +274,11 @@ do_watch(int fd, const char *repo)
 		errx(1, "host_set_special_port(HOST_KEXTD_PORT): 0x%x", (unsigned)kr);
 	printf("kextd: listening on HOST_KEXTD_PORT (port 0x%x)\n", port);
 
-	/* Open the repo (keeps kexts available for load-by-identifier) + push. */
+	/* Open the repo (keeps kexts available for load-by-identifier) + push.
+	 * The step markers below bracket each startup call so that, if kextd
+	 * hangs at early boot, the last line printed pinpoints the blocking
+	 * call instead of leaving us with silence. */
+	printf("kextd: opening repo %s\n", repo);
 	u = url_for_path(repo);
 	repoKexts = (u != NULL) ?
 	    OSKextCreateKextsFromURL(kCFAllocatorDefault, u) : NULL;
@@ -282,6 +286,7 @@ do_watch(int fd, const char *repo)
 		CFRelease(u);
 	if (repoKexts == NULL)
 		errx(1, "%s: no kexts found", repo);
+	printf("kextd: repo opened; copying personalities\n");
 	(void) ioctl(fd, IOCATIOCFLUSH);
 	personalities = OSKextCopyPersonalitiesOfKexts(NULL);
 	if (personalities != NULL) {

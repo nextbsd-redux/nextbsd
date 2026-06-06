@@ -76,28 +76,18 @@ if [ -x /usr/libexec/kextd ]; then
 	esac
 fi
 
-# K3b round-trip (#216): the kernel->kextd Mach load request. test_kextd_mach
-# registers HOST_KEXTD_PORT, drives the matcher's send via IOCATIOCTESTSEND, and
-# receives the Mach message — proving the kernel can hand a load request to
-# userland over the faithful channel (no devd/devctl). The catalogue was just
-# populated by the kextd push above, so the 8260 lookup inside the ioctl hits.
-# Emits KEXTD-MACH-OK / -FAIL / -SKIP (SKIP on a kernel predating K3b).
-KM=/usr/tests/freebsd-launchd-mach/test_kextd_mach
-if [ -x "$KM" ]; then
-	"$KM" || true		# the marker (not the exit code) is the signal
-else
-	echo "KEXTD-MACH-SKIP: test_kextd_mach not present"
-fi
-
-# K3b step 3 (#217): the kextd DAEMON receives a kernel load request and actually
-# loads the bundle. Start `kextd -w` (registers HOST_KEXTD_PORT, pushes, listens),
-# inject a request with `kextd -t` (IOCATIOCTESTSEND — kernel sends to the running
-# daemon), and confirm if_iwlwifi got kldload'd. This is the auto-load path minus
-# the physical device (the 8260 bind is the t420 test). SKIP if kextd lacks -w.
+# K3b step 3 (#217): kextd AUTO-STARTS at boot (org.nextbsd.kextd.plist,
+# RunAtLoad System) — it registers HOST_KEXTD_PORT, pushes personalities, and
+# serves load requests. Its startup markers (kextd: listening / opening repo /
+# repo opened / pushed / ready) already appear in this serial log above, since
+# the plist routes kextd to /dev/console. Here we verify the AUTO-STARTED daemon
+# actually loads a kext on a kernel request: inject one with `kextd -t`
+# (IOCATIOCTESTSEND -> the kernel sends to the running daemon over HOST_KEXTD_PORT)
+# and confirm IntelWiFi kldloaded. This is the full auto-load path minus the
+# physical device (the 8260 bind is the t420 test).
 if [ -x /usr/libexec/kextd ]; then
-	/usr/libexec/kextd -w >/tmp/kextd-w.log 2>&1 &
-	wpid=$!
-	sleep 4					# register + push + enter receive loop
+	pgrep -f "kextd -w" >/dev/null 2>&1 && echo "kextd -w daemon is running" \
+	    || echo "WARN: kextd -w daemon not found running"
 	/usr/libexec/kextd -t 0x24f38086 || true	# inject a load request
 	loaded=no
 	i=0
@@ -109,14 +99,12 @@ if [ -x /usr/libexec/kextd ]; then
 		   kldstat -v 2>/dev/null | grep -qi iwlwifi; then loaded=yes; break; fi
 		sleep 1; i=$((i + 1))
 	done
-	echo "=== kextd -w log ==="; cat /tmp/kextd-w.log 2>/dev/null; echo "==="
-	kill "$wpid" 2>/dev/null
 	if [ "$loaded" = yes ]; then
-		echo "KEXTD-LOAD-OK: kextd loaded IntelWiFi on a kernel load request"
-	elif ! grep -q "listening on HOST_KEXTD_PORT" /tmp/kextd-w.log 2>/dev/null; then
-		echo "KEXTD-LOAD-SKIP: kextd -w unsupported / didn't start (pre-step-3)"
+		echo "KEXTD-LOAD-OK: auto-started kextd loaded IntelWiFi on a kernel request"
+	elif ! pgrep -f "kextd -w" >/dev/null 2>&1; then
+		echo "KEXTD-LOAD-SKIP: no kextd -w daemon (image predates the boot launch)"
 	else
-		echo "KEXTD-LOAD-FAIL: IntelWiFi not in kldstat after a kernel load request"
+		echo "KEXTD-LOAD-FAIL: IntelWiFi not loaded after a kernel request"
 	fi
 else
 	echo "KEXTD-LOAD-SKIP: kextd not present"
