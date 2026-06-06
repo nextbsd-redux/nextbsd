@@ -24,8 +24,66 @@ permissions:
   contents: read
 
 jobs:
+  # Decide whether the heavy ISO build is needed. Deny-by-default: the build
+  # runs UNLESS every changed file is under tests/ (the boot harness). Any
+  # non-tests/ file (src/, overlays/, build.sh, config/, pkglists, ...) forces
+  # a full build, so a mixed harness+code change is never boot-tested against a
+  # stale image. A tests-only change skips the ~17-min build and boots the
+  # latest published continuous ISO instead. workflow_dispatch /
+  # repository_dispatch / force-push always build.
+  changes:
+    name: changes (decide whether to rebuild)
+    runs-on: ubuntu-latest
+    outputs:
+      build_needed: ${{ steps.detect.outputs.build_needed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: detect changed paths
+        id: detect
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -eu
+          force() { echo "==> forcing full build ($1)"; echo "build_needed=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          case "$EVENT" in
+            pull_request)
+              [ -n "${BASE_SHA:-}" ] || force "no base sha"
+              git fetch --no-tags --depth=1 origin "$BASE_SHA" 2>/dev/null || true
+              changed=$(git diff --name-only "$BASE_SHA" HEAD) || force "diff failed"
+              ;;
+            push)
+              case "${BEFORE:-}" in
+                ""|0000000000000000000000000000000000000000) force "new/force push" ;;
+              esac
+              changed=$(git diff --name-only "$BEFORE" "$AFTER") || force "diff failed"
+              ;;
+            *)
+              force "$EVENT" ;;
+          esac
+          echo "changed files:"; printf '%s\n' "$changed"
+          # List the changed files that are NOT under tests/. Capture (not
+          # `grep -q`): grep -q exits on first match and SIGPIPEs the feeding
+          # printf, which under bash pipefail would falsely fail the pipeline
+          # and mis-skip a mixed change. grep -v reads all input; || true
+          # absorbs "no matches".
+          nontests=$(printf '%s\n' "$changed" | grep -vE '^tests/' || true)
+          if [ -z "$changed" ] || [ -n "$nontests" ]; then
+            need=true   # empty diff (safe default) or a non-tests/ file -> full build
+          else
+            need=false  # tests/ only -> skip build, boot the continuous ISO
+          fi
+          echo "build_needed=$need" >> "$GITHUB_OUTPUT"
+          echo "==> build_needed=$need"
+
   build:
     name: build (FreeBSD ${{ matrix.variant }} ${{ matrix.arch }})
+    needs: changes
+    if: needs.changes.outputs.build_needed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
@@ -190,7 +248,11 @@ jobs:
 
   test:
     name: test (FreeBSD ${{ matrix.variant }} ${{ matrix.arch }})
-    needs: build
+    needs: [changes, build]
+    # Run after a real build, OR when the build was skipped for a tests-only
+    # change (then we boot the latest published continuous ISO). Do NOT run if
+    # the build actually failed.
+    if: "!cancelled() && needs.changes.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped')"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -203,13 +265,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Download whatever the build job produced (the dated diskimg
-      # artifact) and locate the image by glob — avoids threading the
-      # datestamp across jobs.
-      - uses: actions/download-artifact@v4
+      # Image source depends on whether the build ran:
+      #  - build ran: download whatever the build job produced (the dated
+      #    diskimg artifact), located by glob (avoids threading the datestamp).
+      #  - build skipped (tests-only change): pull the latest published
+      #    continuous ISO so the harness change is validated against the
+      #    current known-good image.
+      - name: download built image (artifact)
+        if: needs.changes.outputs.build_needed == 'true'
+        uses: actions/download-artifact@v4
         with:
           path: out/
           merge-multiple: true
+
+      - name: download latest continuous ISO (build skipped)
+        if: needs.changes.outputs.build_needed != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p out
+          gh release download continuous \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'NextBSD-*.img.zip' \
+            --dir out/ --clobber
+          ls -lh out/
 
       - name: install qemu + expect
         run: |
