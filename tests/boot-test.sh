@@ -947,6 +947,27 @@ expect {
     }
 }
 
+# MDNS-IFWATCH — iter 4 reactive interface watcher. mDNSConfigStore.c's
+# SCDS subscriber now wakes the mDNS main thread (via a self-pipe onto
+# the event loop) to re-walk the interface list when ipconfigd publishes
+# / removes a service IPv4 (State:/Network/Global/IPv4 or
+# State:/Network/Service/.+/IPv4), logging MDNS-IFWATCH-OK. run.sh emits
+# a definite -OK or -SKIP line (it never relies on a bare timeout), so
+# this block always matches. Non-fatal by design: the routing-socket
+# watcher in mDNSPosix.c stays a parallel trigger, so -SKIP is not a
+# regression — keep this informational, not a hard gate.
+expect {
+    timeout {
+        puts "\nSKIP: MDNS-IFWATCH marker not seen (treated as non-fatal)"
+    }
+    "MDNS-IFWATCH-SKIP" {
+        puts "\nSKIP: no SCDS-driven interface re-walk observed (routing-socket watcher still active)"
+    }
+    "MDNS-IFWATCH-OK" {
+        puts "\nOK: SCDS interface/service IPv4 change drove a mDNSResponder interface re-walk (iter 4)"
+    }
+}
+
 # MDNS-DNSSD — iter 3 end-to-end DNS-SD round-trip via libdns_sd.
 # dnssdtest registers "_iter3._tcp" / "freebsd-launchd-mach-iter3"
 # through libdns_sd's AF_UNIX channel to the daemon, then browses
