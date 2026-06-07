@@ -519,7 +519,15 @@ IOServiceAddMatchingNotification(IONotificationPortRef port,
 		mask = HWREG_EVT_ARRIVED;
 
 	__io_extract_criteria(matching, &c);
-	kr = __io_pack_criteria(&c, critblob, &crit_sz);
+	/* Pack the criteria in the wire format the chosen backend's UNPACKER
+	 * expects: the kernel /dev/ioregistry IOREGIOCWATCH handler uses the base
+	 * system libnv (__io_pack_criteria_libnv), while the hwregd RPC fallback
+	 * uses this repo's libxpc nvlist on both ends (__io_pack_criteria). Packing
+	 * the libxpc format for the kernel path is exactly the #218 break: the
+	 * kernel nvlist_unpack returns NULL -> IOREGIOCWATCH EINVAL -> no watch. */
+	kr = port->use_kernel
+	    ? __io_pack_criteria_libnv(&c, critblob, &crit_sz)
+	    : __io_pack_criteria(&c, critblob, &crit_sz);
 	if (kr != KERN_SUCCESS) {
 		CFRelease(matching);
 		return (kr);

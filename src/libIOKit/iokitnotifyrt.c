@@ -66,7 +66,15 @@ main(void)
 	struct ioreg_test_event	te;
 	int			fd, i;
 
+	/* Unbuffer stdout so every step line below reaches the serial console
+	 * even if the process is killed or exits abnormally before an implicit
+	 * flush (#218 observability: the prior pass's stderr diagnostics never
+	 * surfaced). run.sh runs us as `iokitnotifyrt 2>&1` and echoes the lot. */
+	setvbuf(stdout, NULL, _IONBF, 0);
+
 	fd = open("/dev/ioregistry", O_RDONLY | O_CLOEXEC);
+	printf("iokitnotifyrt: opened /dev/ioregistry fd=%d (errno=%d)\n",
+	    fd, fd < 0 ? errno : 0);
 	if (fd < 0) {
 		printf("IOKITNOTIFY-SKIP: no /dev/ioregistry "
 		    "(kernel without the K1 in-kernel registry)\n");
@@ -80,12 +88,21 @@ main(void)
 	 * non-fatal SKIP so this gate is green on pre-Part-A continuous images. */
 	memset(&te, 0, sizeof(te));
 	te.kind = 0;
-	if (ioctl(fd, IOREGIOCTESTEVENT, &te) != 0 &&
-	    (errno == ENOTTY || errno == ENOSYS)) {
-		printf("IOKITNOTIFY-SKIP: IOREGIOCTESTEVENT absent (errno=%d) "
-		    "— kernel predating the notify test-inject ioctl\n", errno);
-		(void)close(fd);
-		return (0);
+	{
+		int probe_rc = ioctl(fd, IOREGIOCTESTEVENT, &te);
+		int probe_errno = errno;
+
+		printf("iokitnotifyrt: IOREGIOCTESTEVENT probe rc=%d errno=%d "
+		    "(EINVAL=%d expected on a kernel that HAS the ioctl)\n",
+		    probe_rc, probe_rc != 0 ? probe_errno : 0, EINVAL);
+		if (probe_rc != 0 &&
+		    (probe_errno == ENOTTY || probe_errno == ENOSYS)) {
+			printf("IOKITNOTIFY-SKIP: IOREGIOCTESTEVENT absent "
+			    "(errno=%d) — kernel predating the notify "
+			    "test-inject ioctl\n", probe_errno);
+			(void)close(fd);
+			return (0);
+		}
 	}
 
 	atomic_store(&g_fired, 0);
@@ -96,6 +113,8 @@ main(void)
 		(void)close(fd);
 		return (1);
 	}
+	printf("iokitnotifyrt: created notify port name=%u\n",
+	    (unsigned)IONotificationPortGetMachPort(notify));
 
 	/* Match on a unique name only we will inject (IONameMatch -> the kernel
 	 * criteria "name" key, AND-matched against the injected node's name). */
@@ -115,18 +134,29 @@ main(void)
 		CFRelease(v);
 	}
 
-	if (IOServiceAddMatchingNotification(notify, kIOFirstMatchNotification,
-	    matching, rt_callback, NULL, &it) != KERN_SUCCESS) {
-		printf("IOKITNOTIFY-FAIL: AddMatchingNotification\n");
-		IONotificationPortDestroy(notify);
-		(void)close(fd);
-		return (1);
+	{
+		kern_return_t akr = IOServiceAddMatchingNotification(notify,
+		    kIOFirstMatchNotification, matching, rt_callback, NULL, &it);
+
+		printf("iokitnotifyrt: IOREGIOCWATCH (via "
+		    "IOServiceAddMatchingNotification) kr=0x%x\n",
+		    (unsigned)akr);
+		if (akr != KERN_SUCCESS) {
+			printf("IOKITNOTIFY-FAIL: AddMatchingNotification "
+			    "(kr=0x%x) — watch registration failed; see the "
+			    "kernel 'iokit: IOREGIOCWATCH ...' line for the "
+			    "exact cause (nvlist_unpack / copyin_port)\n",
+			    (unsigned)akr);
+			IONotificationPortDestroy(notify);
+			(void)close(fd);
+			return (1);
+		}
 	}
-	/* Diagnostic (stderr, gate-safe — never an IOKITNOTIFY- marker): the watch
-	 * registered (IOREGIOCWATCH resolved our recv-port send right and added the
-	 * watch). If this prints but the callback never fires, the break is on the
-	 * kernel emit/match/send side, not registration. */
-	fprintf(stderr, "iokitnotifyrt: watch registered on '%s' (recv port %u)\n",
+	/* The watch registered: IOREGIOCWATCH resolved our recv-port send right,
+	 * unpacked the criteria and added the watch. If this prints but the
+	 * callback never fires, the break is on the kernel emit/match/send side
+	 * or the userland receive side, not registration. */
+	printf("iokitnotifyrt: watch registered on '%s' (recv port %u)\n",
 	    RT_TEST_NAME, (unsigned)IONotificationPortGetMachPort(notify));
 	/* `matching` consumed by the facade. Drain the (expected empty) initial
 	 * arming — no real device carries RT_TEST_NAME. */
@@ -146,23 +176,35 @@ main(void)
 	te.classname[0] = '\0';
 	te.pci_vendor = 0;
 	te.pci_device = 0;
-	if (ioctl(fd, IOREGIOCTESTEVENT, &te) != 0) {
-		/* The probe above already ruled out absence; a failure here is a
-		 * real channel error. */
-		printf("IOKITNOTIFY-FAIL: IOREGIOCTESTEVENT inject failed "
-		    "(errno=%d)\n", errno);
-		IONotificationPortDestroy(notify);
-		(void)close(fd);
-		return (1);
+	{
+		int inj_rc = ioctl(fd, IOREGIOCTESTEVENT, &te);
+		int inj_errno = errno;
+
+		printf("iokitnotifyrt: IOREGIOCTESTEVENT inject "
+		    "(kind=ARRIVE name='%s') rc=%d errno=%d\n",
+		    RT_TEST_NAME, inj_rc, inj_rc != 0 ? inj_errno : 0);
+		if (inj_rc != 0) {
+			/* The probe above already ruled out absence; a failure
+			 * here is a real channel error. */
+			printf("IOKITNOTIFY-FAIL: IOREGIOCTESTEVENT inject "
+			    "failed (errno=%d)\n", inj_errno);
+			IONotificationPortDestroy(notify);
+			(void)close(fd);
+			return (1);
+		}
 	}
-	fprintf(stderr, "iokitnotifyrt: IOREGIOCTESTEVENT inject ok "
-	    "(kind=ARRIVE name='%s'); waiting up to 5s for callback\n",
-	    RT_TEST_NAME);
+	printf("iokitnotifyrt: inject ok; waiting up to 5s for callback\n");
 
 	/* Wait for the callback. The receive thread polls on a 500ms mach_msg
 	 * timeout, so allow comfortably more than one cycle. */
 	for (i = 0; i < 50 && atomic_load(&g_fired) == 0; i++)
 		usleep(100 * 1000);	/* 100ms * 50 = 5s budget */
+
+	if (atomic_load(&g_fired) != 0)
+		printf("iokitnotifyrt: callback fired (received the injected "
+		    "event)\n");
+	else
+		printf("iokitnotifyrt: no callback after 5s\n");
 
 	IONotificationPortDestroy(notify);
 	(void)close(fd);

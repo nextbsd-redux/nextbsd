@@ -111,4 +111,16 @@ void	__io_extract_criteria(CFDictionaryRef matching,
 kern_return_t	__io_pack_criteria(const struct io_criteria *c,
 		    uint8_t *blob, uint32_t *out_size);
 
+/*
+ * Pack a criteria struct into the FreeBSD KERNEL libnv wire format, for the
+ * /dev/ioregistry IOREGIOC{WATCH,LOOKUP} ioctls whose handlers unpack with the
+ * base system's sys/contrib/libnv nvlist_unpack(). That layout differs from
+ * this repo's libxpc nvlist (an extra nvlh_type header byte and a trailing
+ * nvph_nitems per pair), so the libxpc-packed blob from __io_pack_criteria()
+ * fails to unpack in the kernel (#218). Use this for the kernel ioctl paths;
+ * keep __io_pack_criteria() for the hwregd RPC fallback (libxpc on both ends).
+ */
+kern_return_t	__io_pack_criteria_libnv(const struct io_criteria *c,
+		    uint8_t *blob, uint32_t *out_size);
+
 #endif /* _IOKIT_INTERNAL_H_ */
