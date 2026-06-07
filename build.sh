@@ -386,7 +386,10 @@ tar -xJf "$DIST/src.txz" -C "$WORK/freebsd-src"
 #      accidentally-disabled overlay and an incomplete compat artifact.
 #
 echo "==> verifying from-source base overlay provided the FreeBSD-only userland"
-for KEY_BIN in /sbin/kldload /sbin/mount /bin/kenv \
+# Probe kept FreeBSD-only tools. (The kld* CLIs the artifact also ships are
+# RETIRED from the image at step 3b2 below, #193 — macOS ships kextload/
+# kextstat, not kldload — so don't probe them here.)
+for KEY_BIN in /sbin/umount /sbin/mount /bin/kenv \
                /usr/bin/ldd /usr/sbin/pciconf; do
     if [ ! -x "$WORK/rootfs$KEY_BIN" ]; then
         echo "ERROR: from-source base overlay did not provide $KEY_BIN" >&2
@@ -395,7 +398,7 @@ for KEY_BIN in /sbin/kldload /sbin/mount /bin/kenv \
         exit 1
     fi
 done
-ls -lh "$WORK/rootfs/sbin/kldload" "$WORK/rootfs/sbin/mount" \
+ls -lh "$WORK/rootfs/sbin/umount" "$WORK/rootfs/sbin/mount" \
        "$WORK/rootfs/bin/kenv" "$WORK/rootfs/usr/bin/ldd" \
        "$WORK/rootfs/usr/sbin/pciconf"
 
@@ -630,6 +633,9 @@ fi
 #      still has a linker.hints (mach is built into the kernel, not a module).
 #
 echo "==> /boot/kernel: kernel only (no .ko module tree)"
+# kldxref runs HERE (build time, in the chroot) to generate the loader's
+# linker.hints. The kldxref BINARY itself is then retired from the image at
+# 3b2a below — only the hints file it produces needs to ship.
 chroot "$WORK/rootfs" kldxref /boot/kernel 2>/dev/null || true
 if ls "$WORK/rootfs/boot/kernel"/*.ko >/dev/null 2>&1; then
     echo "    WARN: unexpected .ko present in /boot/kernel:"
@@ -637,6 +643,42 @@ if ls "$WORK/rootfs/boot/kernel"/*.ko >/dev/null 2>&1; then
 else
     echo "    confirmed: no .ko modules in /boot/kernel"
 fi
+
+#
+# 3b2a. Retire the FreeBSD kld* USER-SPACE CLIs (#193). macOS ships
+#       kextload/kextunload/kextstat, NOT kldload/kldunload/kldstat — so
+#       NextBSD does the same. These CLI front-ends arrive from the
+#       nextbsd-freebsd-compat from-source base artifact (overlaid at the
+#       top of this script); that artifact is built in a separate repo, so
+#       they can't be dropped at the source from here — strip them from the
+#       rootfs instead, now that build-time kldxref (above) has run.
+#
+#       KEPT, deliberately NOT touched: the kld*(2) SYSCALLS (kldload(2)/
+#       kldunload(2)/kldstat(2)/kldnext(2)/modfind(2)/... — the libc stubs
+#       and kernel ABI), libkldelf / libprivatekldelf, and /boot/kernel/
+#       linker.hints. kextload/kextd/OSKext and our kextstat (src/kext_tools)
+#       ride those syscalls; removing the CLIs leaves them intact.
+#
+echo "==> retiring kld* user-space CLIs (#193 — kextload/kextstat replace them)"
+for kldbin in sbin/kldload sbin/kldunload sbin/kldstat sbin/kldconfig \
+              usr/sbin/kldxref; do
+    rm -f "$WORK/rootfs/$kldbin"
+done
+# man pages for the retired CLIs (section 8 — user-space tools). The kld*(2)
+# section-2 syscall man pages are LEFT in place (they document the kept ABI).
+rm -f "$WORK/rootfs"/usr/share/man/man8/kldload.8.gz \
+      "$WORK/rootfs"/usr/share/man/man8/kldunload.8.gz \
+      "$WORK/rootfs"/usr/share/man/man8/kldstat.8.gz \
+      "$WORK/rootfs"/usr/share/man/man8/kldconfig.8.gz \
+      "$WORK/rootfs"/usr/share/man/man8/kldxref.8.gz 2>/dev/null || true
+for kldbin in sbin/kldload sbin/kldunload sbin/kldstat sbin/kldconfig \
+              usr/sbin/kldxref; do
+    if [ -e "$WORK/rootfs/$kldbin" ]; then
+        echo "    ERROR: failed to retire /$kldbin" >&2
+        exit 1
+    fi
+done
+echo "    confirmed: kld* CLIs removed; kld*(2) syscalls + linker.hints intact"
 
 #
 # 3b3. install bundled driver kexts (IntelWiFi.kext, ...) from the
@@ -1909,7 +1951,9 @@ echo "==> libIOKit built + installed"
 #       (+ libIOKit, for IORegistryEntryCreateCFProperty), so the whole subdir
 #       builds here. kextload = dependency-ordered load, kextunload =
 #       bundle-aware unload, kextdeps = dependency resolution; kextstat stays
-#       kld-only. Install: /usr/sbin/{kextload,kextunload,kextstat,kextdeps}.
+#       kld-syscall-backed (kldnext/kldstat/modfind — the KEPT ABI) and now
+#       also serves `kextstat -m <module>`, the stand-in for the retired
+#       `kldstat -m` (#193). Install: /usr/sbin/{kextload,kextunload,kextstat,kextdeps}.
 #       A runtime smoke then proves the OSBundleLibraries dependency sort works
 #       on the real image (possible now that CF runs, #195).
 #
