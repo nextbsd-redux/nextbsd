@@ -181,17 +181,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
         run: |
-          # ~100MB tarball, extracted + installed inside the VM by build.sh.
-          # Non-fatal if absent (ISO just ships without the driver kexts).
+          # Driver-kext tarballs, extracted + installed inside the VM by build.sh
+          # (the build.sh loop installs every kext-dl/*.tar.gz it finds). Each is
+          # non-fatal if absent (ISO just ships without that driver kext).
           mkdir -p kext-dl
-          if gh release download continuous \
-               -R nextbsd-redux/nextbsd-kernel-modules \
-               --pattern "intelwifi-kext.tar.gz" \
-               --output kext-dl/intelwifi-kext.tar.gz --clobber; then
-            echo "kext tarball: $(ls -lh kext-dl/intelwifi-kext.tar.gz | awk '{print $5}')"
-          else
-            echo "WARN: no intelwifi-kext asset; ISO ships without IntelWiFi.kext"
-          fi
+          for k in intelwifi intelethernet; do
+            if gh release download continuous \
+                 -R nextbsd-redux/nextbsd-kernel-modules \
+                 --pattern "${k}-kext.tar.gz" \
+                 --output "kext-dl/${k}-kext.tar.gz" --clobber; then
+              echo "kext tarball: $(ls -lh kext-dl/${k}-kext.tar.gz | awk '{print $5}')"
+            else
+              echo "WARN: no ${k}-kext asset; ISO ships without ${k} kext"
+            fi
+          done
 
       - name: build ISO inside FreeBSD VM
         uses: vmactions/freebsd-vm@v1
