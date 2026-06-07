@@ -122,6 +122,12 @@ main(void)
 		(void)close(fd);
 		return (1);
 	}
+	/* Diagnostic (stderr, gate-safe — never an IOKITNOTIFY- marker): the watch
+	 * registered (IOREGIOCWATCH resolved our recv-port send right and added the
+	 * watch). If this prints but the callback never fires, the break is on the
+	 * kernel emit/match/send side, not registration. */
+	fprintf(stderr, "iokitnotifyrt: watch registered on '%s' (recv port %u)\n",
+	    RT_TEST_NAME, (unsigned)IONotificationPortGetMachPort(notify));
 	/* `matching` consumed by the facade. Drain the (expected empty) initial
 	 * arming — no real device carries RT_TEST_NAME. */
 	if (it != IO_OBJECT_NULL) {
@@ -149,6 +155,9 @@ main(void)
 		(void)close(fd);
 		return (1);
 	}
+	fprintf(stderr, "iokitnotifyrt: IOREGIOCTESTEVENT inject ok "
+	    "(kind=ARRIVE name='%s'); waiting up to 5s for callback\n",
+	    RT_TEST_NAME);
 
 	/* Wait for the callback. The receive thread polls on a 500ms mach_msg
 	 * timeout, so allow comfortably more than one cycle. */

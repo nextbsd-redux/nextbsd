@@ -331,8 +331,33 @@ IONotificationPortCreate(mach_port_t mainPort __unused)
 	    MACH_PORT_RIGHT_RECEIVE, &mp) != KERN_SUCCESS)
 		return (NULL);
 
+	/*
+	 * Insert a send right into our own name space for `mp` (MAKE_SEND).
+	 * Both backends resolve this port by *name* and need that name to
+	 * carry a send right:
+	 *   - the kernel notify channel passes the name to IOREGIOCWATCH, where
+	 *     iokit_notify_copyin_port does ipc_object_copyin(...,
+	 *     MACH_MSG_TYPE_COPY_SEND, ...) on the calling task's IPC space.
+	 *     COPY_SEND requires the name to already hold a send right
+	 *     (ipc_right_copyin rejects a name with no MACH_PORT_TYPE_SEND_RIGHTS
+	 *     as KERN_INVALID_RIGHT); a bare receive-right name fails, the watch
+	 *     never registers, and no event is ever delivered.
+	 *   - the hwregd fallback sends the name as the message's local port with
+	 *     MAKE_SEND, which likewise needs the receive right (still held here).
+	 * This mirrors the proven hwregd subscribe pattern in
+	 * src/hwregd/hwregtest.c (allocate RECEIVE, then insert MAKE_SEND).
+	 */
+	if (mach_port_insert_right(mach_task_self(), mp, mp,
+	    MACH_MSG_TYPE_MAKE_SEND) != KERN_SUCCESS) {
+		(void)mach_port_mod_refs(mach_task_self(), mp,
+		    MACH_PORT_RIGHT_RECEIVE, -1);
+		return (NULL);
+	}
+
 	p = calloc(1, sizeof(*p));
 	if (p == NULL) {
+		(void)mach_port_mod_refs(mach_task_self(), mp,
+		    MACH_PORT_RIGHT_SEND, -1);
 		(void)mach_port_mod_refs(mach_task_self(), mp,
 		    MACH_PORT_RIGHT_RECEIVE, -1);
 		return (NULL);
@@ -347,6 +372,8 @@ IONotificationPortCreate(mach_port_t mainPort __unused)
 	(void)pthread_mutex_init(&p->lock, NULL);
 	if (pthread_create(&p->thread, NULL, receive_thread, p) != 0) {
 		(void)pthread_mutex_destroy(&p->lock);
+		(void)mach_port_mod_refs(mach_task_self(), mp,
+		    MACH_PORT_RIGHT_SEND, -1);
 		(void)mach_port_mod_refs(mach_task_self(), mp,
 		    MACH_PORT_RIGHT_RECEIVE, -1);
 		free(p);
@@ -407,7 +434,12 @@ IONotificationPortDestroy(IONotificationPortRef port)
 
 	/* Dropping the recv right both stops the legacy hwregd sends AND signals
 	 * the kernel notify channel to prune this port's watches on its next
-	 * emission (iokit_notify_port_dead). */
+	 * emission (iokit_notify_port_dead). The local send right inserted at
+	 * create time (MAKE_SEND) is released too so the name is fully reclaimed;
+	 * the kernel/hwregd each hold their own copied send ref independent of
+	 * ours, so this does not race their pending sends. */
+	(void)mach_port_mod_refs(mach_task_self(), port->recv_port,
+	    MACH_PORT_RIGHT_SEND, -1);
 	(void)mach_port_mod_refs(mach_task_self(), port->recv_port,
 	    MACH_PORT_RIGHT_RECEIVE, -1);
 	if (port->queue != NULL)
