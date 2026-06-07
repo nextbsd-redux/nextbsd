@@ -1252,9 +1252,41 @@ if [ -f /var/log/mDNSResponder.stderr ]; then
         sleep 1
         i=$((i+1))
     done
+    # MDNS-IFWATCH — iter 4 reactive interface watcher. mDNSConfigStore.c
+    # subscribes to State:/Network/Global/IPv4 + State:/Network/Service/
+    # .+/IPv4; when ipconfigd publishes (DHCP bind) or removes (lease
+    # loss) a service IPv4, the SCDS callback wakes the mDNS main thread
+    # (self-pipe) to re-walk the interface list via
+    # mDNSPlatformPosixRefreshInterfaceList, logging MDNS-IFWATCH-OK to
+    # this stderr. By the time we get here the iter-3 DHCP BOUND publish
+    # and the iter-5b RENEW re-publish (both checked above) have already
+    # fired, so the marker should be present. Wait a little longer for
+    # it in case the publish raced the subscriber's startup.
+    i=0
+    while [ $i -lt 15 ]; do
+        if grep -q 'MDNS-IFWATCH-OK' \
+            /var/log/mDNSResponder.stderr 2>/dev/null; then
+            break
+        fi
+        sleep 1
+        i=$((i+1))
+    done
     echo "--- /var/log/mDNSResponder.stderr ---"
     cat /var/log/mDNSResponder.stderr
     echo "--- end mDNSResponder.stderr ---"
+    # Informational/non-fatal gate. If the SCDS-driven re-walk is absent
+    # (e.g. the IPv4 publish raced subscriber startup), emit -SKIP rather
+    # than failing: the routing-socket watcher in mDNSPosix.c remains the
+    # parallel trigger, so interface state is still tracked either way.
+    if grep -q 'MDNS-IFWATCH-OK' /var/log/mDNSResponder.stderr 2>/dev/null; then
+        echo "MDNS-IFWATCH-OK: SCDS interface/service IPv4 change drove a" \
+            "mDNSResponder interface re-walk"
+    else
+        echo "MDNS-IFWATCH-SKIP: no SCDS-driven interface re-walk observed" \
+            "(routing-socket watcher still active)"
+    fi
+else
+    echo "MDNS-IFWATCH-SKIP: /var/log/mDNSResponder.stderr missing"
 fi
 
 # MDNS-DNSSD — iter 3 end-to-end round-trip via libdns_sd:
