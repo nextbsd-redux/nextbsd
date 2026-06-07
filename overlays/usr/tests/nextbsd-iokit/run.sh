@@ -229,4 +229,23 @@ if [ -x /usr/libexec/kextd ]; then
 else
 	echo "KEXTD-LOAD-SKIP: kextd not present"
 fi
+
+# EM-AUTOLOAD — #219 (D1): Intel ethernet em -> IntelEthernet.kext auto-load.
+# With `nodevice em` (#219) the qemu e1000 (82540EM) hits device_nomatch and
+# kextd loads IntelEthernet.kext (if_em) to bind it. The loaded kld file is
+# named after the bundle executable (IntelEthernet), so kextstat/kldstat show it
+# only when it was auto-loaded — a built-in em driver does not appear as a
+# separate loaded file. Emits:
+#   EM-AUTOLOAD-OK    — em0 present AND IntelEthernet loaded as a kext (auto-loaded)
+#   EM-AUTOLOAD-SKIP  — em0 present but em is built into the kernel (pre-#219)
+#   EM-AUTOLOAD-FAIL  — em0 absent (the kext did not load / bind)
+if ! ifconfig em0 >/dev/null 2>&1; then
+	echo "EM-AUTOLOAD-FAIL: em0 not present (IntelEthernet.kext did not auto-load/bind)"
+elif kextstat 2>/dev/null | grep -qi intelethernet || \
+     kldstat 2>/dev/null | grep -qi intelethernet; then
+	echo "EM-AUTOLOAD-OK: em0 up via kextd auto-load of IntelEthernet.kext"
+else
+	echo "EM-AUTOLOAD-SKIP: em0 present but em is built into the kernel (pre-#219 nodevice em)"
+fi
+
 exit 0
