@@ -2104,6 +2104,28 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/iokitnotifytest" \
     || { echo "FAIL: iokitnotifytest not built"; exit 1; }
 echo "==> iokitnotifytest built"
 
+# iokitnotifyrt — libIOKit notification ROUND-TRIP test (C1.2, #218). Registers
+# a matching notification through libIOKit (-> IOREGIOCWATCH on /dev/ioregistry)
+# then fires the IOREGIOCTESTEVENT inject ioctl to synthesize a matching device
+# event and confirms the registered callback fires — the deterministic proof of
+# the kernel notify channel migration. SELF-SKIPs when /dev/ioregistry or
+# IOREGIOCTESTEVENT is absent, so it is green on continuous images built before
+# the Part A kernel ingests. -I src/libIOKit for the vendored ioregistry.h
+# (IOREGIOCTESTEVENT / struct ioreg_test_event).
+echo "==> building iokitnotifyrt"
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
+   -I"$ROOT/src/libIOKit" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/iokitnotifyrt" \
+   "$ROOT/src/libIOKit/iokitnotifyrt.c" \
+   -lIOKit -lCoreFoundation -ldispatch -lBlocksRuntime \
+   -lsystem_kernel -llaunch -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/iokitnotifyrt" \
+    || { echo "FAIL: iokitnotifyrt not built"; exit 1; }
+echo "==> iokitnotifyrt built"
+
 #
 # 3s. Phase J1 iter 1 — generate libnotify MIG stubs + build libnotify.
 #     Apple's libnotify client library (src/Libnotify/). Vendored at

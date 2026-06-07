@@ -1219,6 +1219,33 @@ expect {
         puts "\nOK: libIOKit walks /dev/ioregistry (root + boot device nubs)"
     }
 }
+# IOKITNOTIFY — C1.2 (#218) IOKitNotify migration round-trip gate. run.sh's
+# iokitnotifyrt registers a matching notification through libIOKit (now via
+# IOREGIOCWATCH on the in-kernel registry, #225) and fires IOREGIOCTESTEVENT to
+# synthesize a matching device event, confirming the registered callback fired —
+# the deterministic proof of the kernel notify channel with no physical device.
+#
+# CRITICAL (MDNS-IFWATCH lesson): OK/SKIP are folded into ONE block that ends
+# only on OK/FAIL/SKIP, with a NON-FATAL timeout, so an absent/optional marker
+# can never sit blocking while a later required marker (IOCATALOGUE/...) scrolls
+# past unmatched. The Part A inject ioctl must merge + reach continuous before
+# this can pass; until then iokitnotifyrt SELF-SKIPs (IOKITNOTIFY-SKIP), so this
+# gate is green on pre-Part-A continuous images. Only IOKITNOTIFY-FAIL gates.
+expect {
+    timeout {
+        puts "\nWARN: IOKITNOTIFY marker not seen (pre-C1.2 run.sh — informational)"
+    }
+    "IOKITNOTIFY-FAIL" {
+        puts "\nFAIL: libIOKit notify round-trip — injected event never reached the callback"
+        exit 1
+    }
+    "IOKITNOTIFY-SKIP" {
+        puts "\nWARN: IOKITNOTIFY-SKIP — no /dev/ioregistry or IOREGIOCTESTEVENT (pre-Part-A kernel)"
+    }
+    "IOKITNOTIFY-OK" {
+        puts "\nOK: libIOKit notify round-trip (IOREGIOCWATCH + IOREGIOCTESTEVENT -> callback)"
+    }
+}
 expect {
     timeout {
         puts "\nWARN: IOCATALOGUE marker not seen (pre-kextd/K2 image — informational)"
