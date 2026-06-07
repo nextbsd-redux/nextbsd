@@ -45,6 +45,30 @@ struct __IOObject {
 mach_port_t	__io_hwregd_port(void);
 
 /*
+ * __io_ioregistry_fd — cached read-only fd to the kernel /dev/ioregistry
+ * device (the K1 in-kernel registry, nextbsd#214), opened with
+ * O_CLOEXEC on first call (pthread_once-guarded, shared with the
+ * hwregd-port lookup). Returns -1 if the device is absent (an
+ * old-kernel image predating K1) — every facade entry point then
+ * FALLS BACK to the hwregd MIG path. This dual-path is the safety net
+ * for the consumer migration (#218) until hwregd is retired (PR7).
+ */
+int	__io_ioregistry_fd(void);
+
+/*
+ * Shared per-op node accessor: prefers the /dev/ioregistry fast path
+ * (IOREGIOCNODE) and falls back to hwregd's hwreg_get_node. Both
+ * IOKitLib.c (name/path) and IOKitMatching.c (class) call it so the
+ * dual-path logic lives in one place. Out-params mirror
+ * hwreg_get_node's so call sites change minimally; any pointer may be
+ * NULL to skip that field. `state` is the IOREG_STATE_* / hwregd
+ * liveness value. Returns a kern_return_t (KERN_SUCCESS on success).
+ */
+kern_return_t	__io_node(uint64_t node_id, uint64_t *parent_id, int *state,
+		    char name[32], char classname[32], char driver[32],
+		    char path[256]);
+
+/*
  * Internal allocators. __io_alloc_iterator takes ownership of the
  * id array (it is freed by IOObjectRelease) — on calloc failure the
  * array is freed and IO_OBJECT_NULL returned.
