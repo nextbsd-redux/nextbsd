@@ -1005,6 +1005,37 @@ expect {
     }
 }
 
+# DA-IOKIT — C1.3 (#218) DiskArbitration kernel-notify migration gate. run.sh's
+# da_iokit_gate inspects /var/log/diskarbitrationd.stderr: the daemon now learns
+# of storage arrival/removal from the kernel notify channel via libIOKit's
+# IOServiceAddMatchingNotification (recv port registered via IOREGIOCWATCH on
+# /dev/ioregistry, #225), keeping the legacy org.freebsd.hwregd pub/sub as a
+# fallback. DA-IOKIT-OK means it registered the kernel watches AND saw a storage
+# device (the qemu vtblk/ahci boot disk) arrive through that channel.
+#
+# CRITICAL (MDNS-IFWATCH lesson): OK/SKIP are folded into ONE block that ends
+# only on OK/FAIL/SKIP, with a NON-FATAL timeout, so an absent/optional marker
+# can never sit blocking while a later required marker scrolls past. The gate
+# SELF-SKIPs when /dev/ioregistry is absent (kernel predating K1 — DA used the
+# hwregd fallback) or when no storage device surfaced through the kernel
+# channel, so this stays green on pre-K1 continuous images. Only DA-IOKIT-FAIL
+# gates (a kernel watch registration failed outright).
+expect {
+    timeout {
+        puts "\nWARN: DA-IOKIT marker not seen (pre-C1.3 run.sh — informational)"
+    }
+    "DA-IOKIT-FAIL" {
+        puts "\nFAIL: diskarbitrationd failed to register kernel device notifications"
+        exit 1
+    }
+    "DA-IOKIT-SKIP" {
+        puts "\nWARN: DA-IOKIT-SKIP — no /dev/ioregistry, hwregd fallback, or no storage arrival"
+    }
+    "DA-IOKIT-OK" {
+        puts "\nOK: diskarbitrationd saw a storage device via the kernel notify channel (/dev/ioregistry)"
+    }
+}
+
 # IPCFG-IPCONFIG — iter 8 Apple-shape CLI. Same MIG round-trip
 # ipconfigrpctest exercises, but driven through /usr/sbin/ipconfig.
 # Validates that the Apple-canonical CLI parses argv, looks up

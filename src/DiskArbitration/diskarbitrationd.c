@@ -25,6 +25,7 @@
  *             DADiskUnmount / DADiskEject.
  *   iter 5+ — mount-policy arbitration, per-user agent.
  */
+#include "da_iokit_subscribe.h"
 #include "hwreg_subscribe.h"
 
 #include <mach/mach.h>
@@ -105,13 +106,26 @@ main(int argc, char **argv)
 	    "(receive right=0x%x)", (unsigned)svc);
 
 	/*
-	 * iter 2: subscribe to org.freebsd.hwregd's pub/sub bus and log
-	 * incoming device events. Tag storage names (ada*, da*, nvd*,
-	 * cd*, mmcsd*) with STORAGE; emit DA-WATCH-OK on subscription
-	 * ack. Non-fatal — if hwregd isn't up yet, the daemon stays
-	 * alive without storage events.
+	 * Subscribe to storage device arrival/removal. Prefer the kernel
+	 * notify channel (C1.3, #218): libIOKit's IOServiceAddMatchingNotification
+	 * registers DA's recv port with the in-kernel registry via IOREGIOCWATCH
+	 * on /dev/ioregistry (#225), and the kernel pushes a binary event per
+	 * matching device. DA registers a match-all arrival + departure watch and
+	 * filters storage names (ada*, da*, nvd*, nda*, cd*, mmcsd*) client-side.
+	 *
+	 * FALLBACK: if /dev/ioregistry is absent (a kernel image predating K1) or
+	 * registration fails, da_iokit_subscribe_start returns -1 and we fall
+	 * back to the legacy org.freebsd.hwregd raw pub/sub path
+	 * (hwreg_subscribe_start), which tags the same storage names and emits
+	 * DA-WATCH-OK on its subscription ack. Both paths are non-fatal — if
+	 * neither backend is up yet, the daemon stays alive without storage
+	 * events and KeepAlive respawns / relookups happen as services appear.
 	 */
-	(void)hwreg_subscribe_start();
+	if (da_iokit_subscribe_start() != 0) {
+		xlog("storage subscription: kernel notify channel unavailable, "
+		    "using hwregd pub/sub fallback");
+		(void)hwreg_subscribe_start();
+	}
 
 	/*
 	 * iter-1 hold-alive loop. Spin on sleep(60) — SIGTERM/SIGHUP

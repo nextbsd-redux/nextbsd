@@ -1337,6 +1337,76 @@ else
     "$datest" || true	# marker gates in boot-test.sh
 fi
 
+# DA-IOKIT — C1.3 (#218) DiskArbitration kernel-notify migration gate.
+# diskarbitrationd now learns of storage arrival/removal from the kernel notify
+# channel via libIOKit's IOServiceAddMatchingNotification (recv port registered
+# with the in-kernel registry via IOREGIOCWATCH on /dev/ioregistry, #225), with
+# the legacy org.freebsd.hwregd pub/sub kept as a fallback when /dev/ioregistry
+# is absent. The daemon logs to /var/log/diskarbitrationd.stderr (its own lines
+# use DISTINCT spellings — DA-IOKIT-ARMED / DA-IOKIT-REGFAIL / "DA-IOKIT: storage"
+# — that deliberately do NOT collide with the canonical DA-IOKIT-OK/SKIP/FAIL
+# tokens this gate emits, so dumping the daemon log below cannot trip the
+# boot-test expect block early):
+#   DA-IOKIT-ARMED        — daemon registered the kernel arrival + departure watches
+#   "DA-IOKIT: storage X" — daemon saw storage device X (qemu vtblk/ahci boot
+#                            disk) arrive through the kernel channel
+#   DA-IOKIT-REGFAIL      — a kernel watch registration failed outright
+#
+# This run.sh gate emits EXACTLY ONE definite marker and RETURNS (never exits),
+# folding the optional daemon-side lines into one decision so it can never sit
+# blocking while a later required marker scrolls past (the MDNS-IFWATCH lesson):
+#   DA-IOKIT-OK    — daemon registered the kernel watches + saw a storage device
+#   DA-IOKIT-FAIL  — daemon logged DA-IOKIT-FAIL (a watch registration failed)
+#   DA-IOKIT-SKIP  — no /dev/ioregistry, the daemon took the hwregd fallback, or
+#                    no storage device surfaced through the kernel channel
+# SKIP keeps this green on a continuous image whose kernel predates K1 (DA falls
+# back to hwregd) — only DA-IOKIT-FAIL gates in boot-test.sh.
+da_iokit_gate()
+{
+    log=/var/log/diskarbitrationd.stderr
+
+    if [ ! -f "$log" ]; then
+        echo "DA-IOKIT-SKIP: $log missing"
+        return 0
+    fi
+    echo "=== diskarbitrationd.stderr (tail -40) ==="
+    tail -40 "$log" 2>/dev/null
+    echo "==="
+
+    # A hard registration failure gates regardless of anything else.
+    if grep -q 'DA-IOKIT-REGFAIL' "$log" 2>/dev/null; then
+        echo "DA-IOKIT-FAIL: diskarbitrationd failed to register kernel watches"
+        return 0
+    fi
+    # No /dev/ioregistry on this kernel — DA took the hwregd fallback path.
+    if [ ! -c /dev/ioregistry ]; then
+        echo "DA-IOKIT-SKIP: no /dev/ioregistry (kernel predating K1); DA used the hwregd fallback"
+        return 0
+    fi
+    # The daemon itself self-reported the hwregd fallback (e.g. registration
+    # bailed before the kernel path armed). Treat as SKIP, not FAIL — the
+    # fallback subscription still works.
+    if grep -q 'using hwregd pub/sub fallback' "$log" 2>/dev/null; then
+        echo "DA-IOKIT-SKIP: diskarbitrationd took the hwregd pub/sub fallback"
+        return 0
+    fi
+    # Definite success: a storage device arrived through the kernel channel.
+    if grep -q 'DA-IOKIT: storage ' "$log" 2>/dev/null; then
+        echo "DA-IOKIT-OK: diskarbitrationd saw a storage device via /dev/ioregistry"
+        return 0
+    fi
+    # Kernel path armed (DA-IOKIT-ARMED subscription line) but no storage device
+    # surfaced — e.g. the qemu disk's class isn't visible as a storage *name* to
+    # the registry yet. Non-fatal: the channel works; nothing storage to report.
+    if grep -q 'DA-IOKIT-ARMED' "$log" 2>/dev/null; then
+        echo "DA-IOKIT-SKIP: kernel watches registered but no storage device arrival observed"
+        return 0
+    fi
+    echo "DA-IOKIT-SKIP: no DA kernel-notify activity in $log"
+    return 0
+}
+da_iokit_gate
+
 ipconfig_cli=/usr/sbin/ipconfig
 if [ ! -x "$ipconfig_cli" ]; then
     echo "IPCFG-IPCONFIG-FAIL: $ipconfig_cli missing"

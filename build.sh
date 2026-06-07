@@ -2480,13 +2480,16 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/dnssdtest" \
 echo "==> mDNSResponder + mdnstest + libdns_sd + dnssdtest built"
 
 #
-# 3w. Phase K DiskArbitration iter 1 — daemon skeleton.
-#     Apple's DiskArbitration daemon. iter 1 is the bootstrap_check_in
-#     shell (no hwregd subscription yet, no libgeom enrichment, no
-#     DA framework). Mirrors hwregd / ipconfigd / mDNSResponder iter 1
-#     shape: prove the Mach plumbing + launchd plist + build infra
-#     first, then layer real subsystem code. iter 2 subscribes to
-#     hwregd's storage device class events.
+# 3w. Phase K DiskArbitration — daemon + storage subscription.
+#     Apple's DiskArbitration daemon. It claims com.apple.DiskArbitration via
+#     bootstrap_check_in, then subscribes to storage device arrival/removal.
+#     C1.3 (#218): the subscription now prefers the kernel notify channel via
+#     libIOKit's IOServiceAddMatchingNotification (recv port registered with the
+#     in-kernel registry via IOREGIOCWATCH on /dev/ioregistry, #225), keeping the
+#     legacy org.freebsd.hwregd raw pub/sub as a fallback when /dev/ioregistry is
+#     absent. This step runs AFTER step 3r4 (libIOKit build + install), so the
+#     Makefile's -lIOKit resolves against the installed /usr/lib/system/libIOKit.so
+#     and <IOKit/IOKitLib.h> against the installed /usr/include/IOKit header.
 #     Plan: pkgdemon.github.io/freebsd-disk-arbitration-plan.html
 #
 echo "==> Phase K: building diskarbitrationd (src/DiskArbitration)"
@@ -2496,6 +2499,12 @@ make -C "$ROOT/src/DiskArbitration" \
      all install
 test -x "$WORK/rootfs/usr/sbin/diskarbitrationd" \
     || { echo "FAIL: /usr/sbin/diskarbitrationd not installed or not executable"; exit 1; }
+# C1.3 (#218): the kernel-notify subscription path links libIOKit. Verify the
+# dynamic dependency resolves to the installed facade (a regression in the
+# Makefile -lIOKit / SYSROOT lib path would otherwise only surface at runtime).
+chroot "$WORK/rootfs" ldd /usr/sbin/diskarbitrationd \
+    | grep -q "libIOKit.so.* => /usr/lib/system/" \
+    || { echo "FAIL: diskarbitrationd doesn't resolve libIOKit from /usr/lib/system"; exit 1; }
 
 # datest — iter 1 liveness probe. bootstrap_look_up for
 # com.apple.DiskArbitration; prints DA-BOOT-OK on success. run.sh
