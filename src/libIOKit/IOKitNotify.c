@@ -1,31 +1,42 @@
 /*
- * IOKitNotify.c — libIOKit iter 4: K2 device-arrival / departure
- * notifications.
+ * IOKitNotify.c — libIOKit: K2 device-arrival / departure notifications.
  *
- * Each IONotificationPort owns one Mach receive right and one
- * private pthread that drives a raw mach_msg(MACH_RCV_MSG|MACH_RCV_
- * TIMEOUT, 500ms) loop on it. Watch registrations go through
- * hwreg_watch (which targets the IONotificationPort's recv port);
- * events fan in on the one port and the receive thread re-matches
- * each event's device fields against the per-watch criteria stored
- * client-side, then fires each matching IOServiceMatchingCallback
- * (via dispatch_async_f if a queue is set, inline on the receive
- * thread otherwise).
+ * Each IONotificationPort owns one Mach receive right and one private pthread
+ * that drives a raw mach_msg(MACH_RCV_MSG|MACH_RCV_TIMEOUT, 500ms) loop on it.
+ * Events fan in on the one port and the receive thread re-matches each event's
+ * device fields against the per-watch criteria stored client-side, then fires
+ * each matching IOServiceMatchingCallback (via dispatch_async_f if a queue is
+ * set, inline on the receive thread otherwise).
  *
- * Why raw mach_msg and not a libdispatch MACH_RECV source: task
- * #41 + the libSystemConfiguration iter-2 / hwregd-Phase-0 notes
- * confirm DISPATCH_SOURCE_TYPE_MACH_RECV does not reliably deliver
- * in this repo. hwregd, libSystemConfiguration's SCNotify and now
- * this facade all use the same pthread+timed-mach_msg pattern.
+ * Backend (C1.2, #218): watch registration prefers the kernel notify channel —
+ * ioctl(/dev/ioregistry, IOREGIOCWATCH) registers the recv port directly with
+ * the in-kernel registry (#225), and the kernel pushes a binary ioreg_event_msg
+ * (msgid IOKIT_NOTIFY_EVENT_MSGID) from its device_attach/device_detach
+ * eventhandlers. If /dev/ioregistry is absent (a kernel image predating K1), it
+ * FALLS BACK to hwreg_watch on hwregd, whose events arrive as the legacy
+ * "arrived id=N name=Y class=Z" text wire format (msgid HWREG_MSG_EVENT). This
+ * is the same dual-path pattern IOKitLib.c uses for the read-only walk. The
+ * receive thread handles BOTH wire formats (dispatched by msgh_id) so the path
+ * choice is transparent to the rest of the facade.
+ *
+ * Why raw mach_msg and not a libdispatch MACH_RECV source: task #41 + the
+ * libSystemConfiguration iter-2 / hwregd-Phase-0 notes confirm
+ * DISPATCH_SOURCE_TYPE_MACH_RECV does not reliably deliver in this repo. hwregd,
+ * libSystemConfiguration's SCNotify and this facade all use the same
+ * pthread+timed-mach_msg pattern.
  */
 #include <IOKit/IOKitLib.h>
 #include "IOKitInternal.h"
 
 #include "hwreg.h"
 #include "hwreg_mig_types.h"
+#include "ioregistry.h"		/* vendored: IOREGIOCWATCH, ioreg_watch_reg */
+#include "iokit_notify.h"	/* vendored: ioreg_event_msg + msgid */
 
 #include <dispatch/dispatch.h>
 #include <mach/mach.h>
+
+#include <sys/ioctl.h>		/* ioctl(2) on /dev/ioregistry */
 
 #include <pthread.h>
 #include <stdatomic.h>
@@ -35,15 +46,21 @@
 #include <string.h>
 
 /*
- * The hwregd-side watch carried as one IOServiceAddMatching
- * Notification. The criteria fields are kept client-side so that
- * when multiple watches share one IONotificationPort, the receive
- * thread can re-match each event against them and fire the right
- * callback(s).
+ * One watch carried as an IOServiceAddMatchingNotification. The criteria
+ * fields are kept client-side so that when multiple watches share one
+ * IONotificationPort, the receive thread can re-match each event against them
+ * and fire the right callback(s). `watcher_id` is the hwregd server-side watcher
+ * id (fallback path only); for the kernel notify channel there is no per-watch
+ * id — the kernel retires the watch when the recv right is dropped — so it is 0.
+ *
+ * `event_mask` uses the HWREG_EVT_* bits as the client-side canonical mask; the
+ * kernel IOREG_EVENT_* / IOKIT_NOTIFY_KIND_* bits are value-identical to the
+ * arrive/depart ones (0x1 / 0x2), so the same mask drives both backends and the
+ * re-match in event_matches_watch is backend-agnostic.
  */
 struct __io_watch {
 	struct __io_watch		*next;
-	uint64_t			 watcher_id;
+	uint64_t			 watcher_id;	/* hwregd id; 0 for kernel */
 	uint32_t			 event_mask;	/* HWREG_EVT_* */
 	struct io_criteria		 criteria;
 	IOServiceMatchingCallback	 callback;
@@ -52,6 +69,7 @@ struct __io_watch {
 
 struct IONotificationPort {
 	mach_port_t		 recv_port;	/* receive right we own */
+	int			 use_kernel;	/* 1: IOREGIOCWATCH; 0: hwregd */
 	pthread_t		 thread;
 	atomic_int		 stop;
 	pthread_mutex_t		 lock;		/* guards `watches` + queue */
@@ -187,16 +205,83 @@ event_matches_watch(struct __io_watch *w, uint32_t evt_bit,
 	return (true);
 }
 
+/*
+ * One mach_msg receive buffer big enough for either wire format plus the
+ * largest trailer the kernel might append: the legacy hwregd text event
+ * (struct hwreg_event_msg, msgid HWREG_MSG_EVENT) or the kernel notify channel's
+ * binary event (ioreg_event_msg, msgid IOKIT_NOTIFY_EVENT_MSGID). The receive
+ * thread dispatches on msgh_id, so a single port can serve either backend.
+ */
+union event_rcv_buf {
+	mach_msg_header_t	hdr;
+	struct {
+		struct hwreg_event_msg	msg;
+		mach_msg_max_trailer_t	trailer;
+	} hw;
+	struct {
+		ioreg_event_msg		msg;
+		mach_msg_max_trailer_t	trailer;
+	} k;
+};
+
+/*
+ * Decode one received message into (evt, id, name, class). Returns true if the
+ * message was a recognized event (either wire format) and was decoded; false
+ * for an unknown msgid or a malformed body (caller drops it). `evt` is the
+ * client-side HWREG_EVT_* bit (arrive/depart) used by event_matches_watch.
+ */
+static bool
+decode_event(const union event_rcv_buf *buf, uint32_t *evt, uint64_t *id,
+    char *name, size_t name_sz, char *klass, size_t klass_sz)
+{
+	switch (buf->hdr.msgh_id) {
+	case IOKIT_NOTIFY_EVENT_MSGID: {
+		const ioreg_event_msg *m = &buf->k.msg;
+		char tmp_name[IOKIT_NOTIFY_NAME_MAX];
+		char tmp_klass[IOKIT_NOTIFY_NAME_MAX];
+
+		/* The kernel re-bounds these, but treat them as untrusted wire
+		 * data: copy into a local, force-terminate, then hand out. */
+		memcpy(tmp_name, m->name, sizeof(tmp_name));
+		memcpy(tmp_klass, m->classname, sizeof(tmp_klass));
+		tmp_name[sizeof(tmp_name) - 1] = '\0';
+		tmp_klass[sizeof(tmp_klass) - 1] = '\0';
+
+		*id = m->id;
+		if (name != NULL && name_sz > 0) {
+			strncpy(name, tmp_name, name_sz - 1);
+			name[name_sz - 1] = '\0';
+		}
+		if (klass != NULL && klass_sz > 0) {
+			strncpy(klass, tmp_klass, klass_sz - 1);
+			klass[klass_sz - 1] = '\0';
+		}
+		/* DEPART maps to departed; ARRIVE and MATCHED both map to
+		 * arrived (hwregd has no Publish/Matched distinction, and the
+		 * client-side mask only carries arrive/depart). */
+		*evt = (m->kind == IOKIT_NOTIFY_KIND_DEPART) ? HWREG_EVT_DEPARTED
+		    : HWREG_EVT_ARRIVED;
+		return (true);
+	}
+	case HWREG_MSG_EVENT:
+		if (!parse_event_text(buf->hw.msg.text, id, name, name_sz,
+		    klass, klass_sz))
+			return (false);
+		*evt = (buf->hw.msg.kind == '+') ? HWREG_EVT_ARRIVED
+		    : HWREG_EVT_DEPARTED;
+		return (true);
+	default:
+		return (false);
+	}
+}
+
 static void *
 receive_thread(void *arg)
 {
 	struct IONotificationPort *port = arg;
 
 	while (atomic_load(&port->stop) == 0) {
-		struct {
-			struct hwreg_event_msg msg;
-			mach_msg_max_trailer_t trailer;
-		} buf;
+		union event_rcv_buf buf;
 		mach_msg_return_t mr;
 		uint64_t id;
 		uint32_t evt;
@@ -204,7 +289,7 @@ receive_thread(void *arg)
 		struct __io_watch *w, *snap[16];
 		int n_snap = 0, i;
 
-		mr = mach_msg(&buf.msg.hdr,
+		mr = mach_msg(&buf.hdr,
 		    MACH_RCV_MSG | MACH_RCV_TIMEOUT,
 		    0, sizeof(buf), port->recv_port,
 		    500, MACH_PORT_NULL);
@@ -212,14 +297,9 @@ receive_thread(void *arg)
 			continue;
 		if (mr != MACH_MSG_SUCCESS)
 			continue;	/* transient — keep looping */
-		if (buf.msg.hdr.msgh_id != HWREG_MSG_EVENT)
-			continue;
-		if (!parse_event_text(buf.msg.text, &id, name, sizeof(name),
+		if (!decode_event(&buf, &evt, &id, name, sizeof(name),
 		    klass, sizeof(klass)))
 			continue;
-
-		evt = (buf.msg.kind == '+') ? HWREG_EVT_ARRIVED
-		    : HWREG_EVT_DEPARTED;
 
 		/* Snapshot the matching watches under the lock into a
 		 * small array, then fire outside the lock so a user
@@ -251,17 +331,49 @@ IONotificationPortCreate(mach_port_t mainPort __unused)
 	    MACH_PORT_RIGHT_RECEIVE, &mp) != KERN_SUCCESS)
 		return (NULL);
 
+	/*
+	 * Insert a send right into our own name space for `mp` (MAKE_SEND).
+	 * Both backends resolve this port by *name* and need that name to
+	 * carry a send right:
+	 *   - the kernel notify channel passes the name to IOREGIOCWATCH, where
+	 *     iokit_notify_copyin_port does ipc_object_copyin(...,
+	 *     MACH_MSG_TYPE_COPY_SEND, ...) on the calling task's IPC space.
+	 *     COPY_SEND requires the name to already hold a send right
+	 *     (ipc_right_copyin rejects a name with no MACH_PORT_TYPE_SEND_RIGHTS
+	 *     as KERN_INVALID_RIGHT); a bare receive-right name fails, the watch
+	 *     never registers, and no event is ever delivered.
+	 *   - the hwregd fallback sends the name as the message's local port with
+	 *     MAKE_SEND, which likewise needs the receive right (still held here).
+	 * This mirrors the proven hwregd subscribe pattern in
+	 * src/hwregd/hwregtest.c (allocate RECEIVE, then insert MAKE_SEND).
+	 */
+	if (mach_port_insert_right(mach_task_self(), mp, mp,
+	    MACH_MSG_TYPE_MAKE_SEND) != KERN_SUCCESS) {
+		(void)mach_port_mod_refs(mach_task_self(), mp,
+		    MACH_PORT_RIGHT_RECEIVE, -1);
+		return (NULL);
+	}
+
 	p = calloc(1, sizeof(*p));
 	if (p == NULL) {
+		(void)mach_port_mod_refs(mach_task_self(), mp,
+		    MACH_PORT_RIGHT_SEND, -1);
 		(void)mach_port_mod_refs(mach_task_self(), mp,
 		    MACH_PORT_RIGHT_RECEIVE, -1);
 		return (NULL);
 	}
 	p->recv_port = mp;
+	/* Prefer the kernel notify channel when /dev/ioregistry is present;
+	 * fall back to hwregd otherwise (same dual-path as IOKitLib.c). The
+	 * decision is fixed at port-create time and applies to every watch the
+	 * port registers, so the receive thread's backend stays consistent. */
+	p->use_kernel = (__io_ioregistry_fd() >= 0);
 	atomic_store(&p->stop, 0);
 	(void)pthread_mutex_init(&p->lock, NULL);
 	if (pthread_create(&p->thread, NULL, receive_thread, p) != 0) {
 		(void)pthread_mutex_destroy(&p->lock);
+		(void)mach_port_mod_refs(mach_task_self(), mp,
+		    MACH_PORT_RIGHT_SEND, -1);
 		(void)mach_port_mod_refs(mach_task_self(), mp,
 		    MACH_PORT_RIGHT_RECEIVE, -1);
 		free(p);
@@ -307,16 +419,27 @@ IONotificationPortDestroy(IONotificationPortRef port)
 	atomic_store(&port->stop, 1);
 	(void)pthread_join(port->thread, NULL);
 
-	/* Unwatch each registered watch on hwregd so the daemon
-	 * reclaims its watcher table slot. */
-	svc = __io_hwregd_port();
+	/* Retire each registered watch. Kernel-channel watches (watcher_id == 0)
+	 * need no explicit teardown — the kernel prunes the watch when the recv
+	 * right is dropped below — so only the hwregd fallback watches are
+	 * unwatched here, freeing the daemon's watcher-table slots. */
+	svc = port->use_kernel ? MACH_PORT_NULL : __io_hwregd_port();
 	for (w = port->watches; w != NULL; w = next) {
 		next = w->next;
-		if (svc != MACH_PORT_NULL)
+		if (!port->use_kernel && w->watcher_id != 0 &&
+		    svc != MACH_PORT_NULL)
 			(void)hwreg_unwatch(svc, w->watcher_id);
 		free(w);
 	}
 
+	/* Dropping the recv right both stops the legacy hwregd sends AND signals
+	 * the kernel notify channel to prune this port's watches on its next
+	 * emission (iokit_notify_port_dead). The local send right inserted at
+	 * create time (MAKE_SEND) is released too so the name is fully reclaimed;
+	 * the kernel/hwregd each hold their own copied send ref independent of
+	 * ours, so this does not race their pending sends. */
+	(void)mach_port_mod_refs(mach_task_self(), port->recv_port,
+	    MACH_PORT_RIGHT_SEND, -1);
 	(void)mach_port_mod_refs(mach_task_self(), port->recv_port,
 	    MACH_PORT_RIGHT_RECEIVE, -1);
 	if (port->queue != NULL)
@@ -325,19 +448,49 @@ IONotificationPortDestroy(IONotificationPortRef port)
 	free(port);
 }
 
+/*
+ * Register the watch on the kernel notify channel: ioctl(/dev/ioregistry,
+ * IOREGIOCWATCH) with this port's recv-right name, the flat by-value criteria
+ * struct (#218; same fixed struct IOREGIOCLOOKUP uses) and the IOREG_EVENT_*
+ * mask. The kernel copies a send right to the port and emits ioreg_event_msg on
+ * each matching event. Returns KERN_SUCCESS on success, a kIOReturn* error
+ * otherwise. The HWREG_EVT_* arrive/depart bits are value-identical to
+ * IOREG_EVENT_*. No nvlist packing is involved, so the libxpc-vs-libnv mismatch
+ * that broke the #218 round-trip cannot recur.
+ */
+static kern_return_t
+kernel_watch_register(struct IONotificationPort *port,
+    const struct io_criteria *c, uint32_t mask)
+{
+	struct ioreg_watch_reg reg;
+	int fd = __io_ioregistry_fd();
+
+	if (fd < 0)
+		return (kIOReturnNoDevice);
+
+	memset(&reg, 0, sizeof(reg));
+	__io_fill_criteria(c, &reg.criteria);
+	reg.event_mask = mask;	/* IOREG_EVENT_ARRIVE/DEPART == HWREG_EVT_* */
+	reg.notify_port = (uint32_t)port->recv_port;	/* recv right name */
+
+	if (ioctl(fd, IOREGIOCWATCH, &reg) != 0)
+		return (kIOReturnError);
+	return (KERN_SUCCESS);
+}
+
 kern_return_t
 IOServiceAddMatchingNotification(IONotificationPortRef port,
     const io_name_t notification_type, CFDictionaryRef matching,
     IOServiceMatchingCallback callback, void *refcon,
     io_iterator_t *out_iterator)
 {
-	mach_port_t svc = __io_hwregd_port();
 	struct __io_watch *w;
 	struct io_criteria c;
 	hwreg_blob_t critblob;
 	uint32_t crit_sz = 0;
 	uint32_t mask;
 	uint64_t watcher_id = 0;
+	mach_port_t svc = MACH_PORT_NULL;
 	kern_return_t kr;
 
 	if (port == NULL || notification_type == NULL || matching == NULL ||
@@ -346,36 +499,60 @@ IOServiceAddMatchingNotification(IONotificationPortRef port,
 			CFRelease(matching);
 		return (KERN_INVALID_ARGUMENT);
 	}
-	if (svc == MACH_PORT_NULL) {
-		CFRelease(matching);
-		return (kIOReturnNoDevice);
+
+	/* The fallback path needs hwregd; the kernel path needs nothing extra
+	 * here (the fd was resolved at port-create). Bail early if neither
+	 * backend is reachable. */
+	if (!port->use_kernel) {
+		svc = __io_hwregd_port();
+		if (svc == MACH_PORT_NULL) {
+			CFRelease(matching);
+			return (kIOReturnNoDevice);
+		}
 	}
 
-	/* Notification type → hwregd event mask. The three "device
-	 * arrived" flavours map to HWREG_EVT_ARRIVED (hwregd has no
-	 * internal Publish/FirstMatch/Matched distinction). */
+	/* Notification type → event mask. The three "device arrived" flavours
+	 * map to HWREG_EVT_ARRIVED / IOREG_EVENT_ARRIVE (no internal
+	 * Publish/FirstMatch/Matched distinction in either backend). */
 	if (strcmp(notification_type, kIOTerminatedNotification) == 0)
 		mask = HWREG_EVT_DEPARTED;
 	else
 		mask = HWREG_EVT_ARRIVED;
 
 	__io_extract_criteria(matching, &c);
-	kr = __io_pack_criteria(&c, critblob, &crit_sz);
-	if (kr != KERN_SUCCESS) {
-		CFRelease(matching);
-		return (kr);
-	}
 
-	kr = hwreg_watch(svc, critblob, (mach_msg_type_number_t)crit_sz,
-	    mask, port->recv_port, &watcher_id);
-	if (kr != KERN_SUCCESS || watcher_id == 0) {
-		CFRelease(matching);
-		return (kr != KERN_SUCCESS ? kr : kIOReturnError);
+	if (port->use_kernel) {
+		/* Kernel notify channel: the criteria travel as a flat by-value
+		 * struct (#218), so there is no nvlist packing and nothing to
+		 * mismatch — kernel_watch_register fills it from `c` directly. */
+		kr = kernel_watch_register(port, &c, mask);
+		if (kr != KERN_SUCCESS) {
+			CFRelease(matching);
+			return (kr);
+		}
+		/* watcher_id stays 0: the kernel has no per-watch handle and
+		 * retires the watch when the recv right is dropped. */
+	} else {
+		/* hwregd RPC fallback: libxpc-packed nvlist criteria over MIG (a
+		 * working transport, libxpc on both ends). */
+		kr = __io_pack_criteria(&c, critblob, &crit_sz);
+		if (kr != KERN_SUCCESS) {
+			CFRelease(matching);
+			return (kr);
+		}
+		kr = hwreg_watch(svc, critblob, (mach_msg_type_number_t)crit_sz,
+		    mask, port->recv_port, &watcher_id);
+		if (kr != KERN_SUCCESS || watcher_id == 0) {
+			CFRelease(matching);
+			return (kr != KERN_SUCCESS ? kr : kIOReturnError);
+		}
 	}
 
 	w = calloc(1, sizeof(*w));
 	if (w == NULL) {
-		(void)hwreg_unwatch(svc, watcher_id);
+		if (!port->use_kernel && watcher_id != 0 &&
+		    svc != MACH_PORT_NULL)
+			(void)hwreg_unwatch(svc, watcher_id);
 		CFRelease(matching);
 		return (KERN_RESOURCE_SHORTAGE);
 	}

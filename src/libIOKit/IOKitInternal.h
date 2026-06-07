@@ -111,4 +111,18 @@ void	__io_extract_criteria(CFDictionaryRef matching,
 kern_return_t	__io_pack_criteria(const struct io_criteria *c,
 		    uint8_t *blob, uint32_t *out_size);
 
+/*
+ * Fill a flat kernel `struct ioreg_criteria` from an io_criteria for the
+ * /dev/ioregistry IOREGIOC{WATCH,LOOKUP} ioctls (#218). These ioctls now carry
+ * the criteria as a fixed by-value struct instead of a packed nvlist: there is
+ * no serialization, so the former libxpc-vs-libnv wire-format mismatch that
+ * broke the #218 round-trip simply cannot happen. Non-empty string fields and
+ * non-zero numeric fields constrain the match (zero-as-wildcard); the hwregd RPC
+ * fallback still uses __io_pack_criteria() (libxpc nvlist over MIG, both ends).
+ * Declared with a forward struct ref so this header pulls in no kernel ABI.
+ */
+struct ioreg_criteria;
+void	__io_fill_criteria(const struct io_criteria *c,
+		    struct ioreg_criteria *out);
+
 #endif /* _IOKIT_INTERNAL_H_ */

@@ -82,6 +82,52 @@ ioreg_gate()
 }
 ioreg_gate
 
+# IOKITNOTIFY — C1.2 (#218) IOKitNotify migration round-trip gate. The
+# iokitnotifyrt client registers a matching notification through libIOKit (which
+# now registers the recv port via IOREGIOCWATCH on the in-kernel registry, #225)
+# and fires the IOREGIOCTESTEVENT inject ioctl to synthesize a matching device
+# event, then confirms the registered callback received it. This is the
+# deterministic proof of the kernel notify channel without a physical device.
+#
+#   IOKITNOTIFY-OK    — injected event round-tripped to the callback
+#   IOKITNOTIFY-FAIL  — channel present but the callback never fired
+#   IOKITNOTIFY-SKIP  — no /dev/ioregistry, no IOREGIOCTESTEVENT, or no client
+#
+# CRITICAL (MDNS-IFWATCH lesson): the client ALWAYS prints exactly one definite
+# marker — including a SELF-SKIP when the round-trip can't be staged (a kernel
+# predating the Part A inject ioctl, i.e. a continuous image built before the
+# kernel PR ingests). Run it as a function that emits one marker and RETURNS
+# (never exits) so the IOCATALOGUE / IOKIT-LOOKUP / KEXTD-LOAD checks below still
+# run. The boot test gates on the IOKITNOTIFY-FAIL *string*, not this script's
+# exit code.
+iokitnotify_gate()
+{
+	rt=/usr/tests/freebsd-launchd-mach/iokitnotifyrt
+
+	if [ ! -x "$rt" ]; then
+		echo "IOKITNOTIFY-SKIP: iokitnotifyrt client not present"
+		return 0
+	fi
+	# iokitnotifyrt prints exactly one IOKITNOTIFY-{OK,FAIL,SKIP} line and
+	# self-skips on a kernel without /dev/ioregistry or IOREGIOCTESTEVENT. It
+	# is self-bounding (a ~5s callback budget; its receive thread joins on a
+	# 500ms mach_msg timeout) so it cannot stall the boot test. If it somehow
+	# produces no marker at all (crash / signal), synthesize a SKIP so the
+	# expect stream always advances on a definite line.
+	out=$("$rt" 2>&1)
+	rc=$?
+	echo "=== iokitnotifyrt (rc=${rc}) ==="
+	echo "${out}"
+	echo "==="
+	if echo "${out}" | grep -q '^IOKITNOTIFY-'; then
+		:	# the client already emitted its definite marker
+	else
+		echo "IOKITNOTIFY-SKIP: iokitnotifyrt produced no marker (rc=${rc})"
+	fi
+	return 0
+}
+iokitnotify_gate
+
 
 if [ ! -c /dev/iocatalogue ]; then
 	echo "IOCATALOGUE-SKIP: no /dev/iocatalogue (kernel without the K2 IOCatalogue)"

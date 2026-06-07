@@ -324,6 +324,35 @@ __io_pack_criteria(const struct io_criteria *c, uint8_t *blob,
 }
 
 /*
+ * Fill a flat kernel `struct ioreg_criteria` from an io_criteria (#218).
+ *
+ * The kernel /dev/ioregistry IOREGIOC{WATCH,LOOKUP} handlers no longer unpack a
+ * packed-nvlist criteria bag — they read this fixed by-value struct directly.
+ * That removes the libxpc-vs-libnv wire-format mismatch (libxpc's packer added
+ * an extra nvlh_type header byte and omitted the trailing nvph_nitems the
+ * kernel's libnv reader expects) which made every kernel nvlist_unpack() return
+ * NULL, so IOREGIOCWATCH returned EINVAL and no watch ever registered — the #218
+ * round-trip break. There is no serialization here, so nothing can mismatch.
+ *
+ * Mapping: io_criteria name/klass/driver -> the kernel criteria name/classname/
+ * driver. Empty source strings are left zeroed (the kernel treats a zero field
+ * as a wildcard). The pci_* numeric criteria are unused by the current Apple
+ * matching keys and stay zero (also wildcard). The hwregd RPC fallback still
+ * uses __io_pack_criteria() (libxpc nvlist over MIG — a working transport).
+ */
+void
+__io_fill_criteria(const struct io_criteria *c, struct ioreg_criteria *out)
+{
+	(void)memset(out, 0, sizeof(*out));
+	if (c->name[0] != '\0')
+		(void)strlcpy(out->name, c->name, sizeof(out->name));
+	if (c->klass[0] != '\0')
+		(void)strlcpy(out->classname, c->klass, sizeof(out->classname));
+	if (c->driver[0] != '\0')
+		(void)strlcpy(out->driver, c->driver, sizeof(out->driver));
+}
+
+/*
  * Translate `matching` to a hwreg_lookup criteria nvlist, pack it,
  * fire the RPC, return the malloc'd id array + count. Caller frees
  * `ids_out`. KERN_SUCCESS even when 0 matches — the result is
@@ -337,17 +366,11 @@ lookup_matches(CFDictionaryRef matching, uint64_t **ids_out,
 {
 	int fd = __io_ioregistry_fd();
 	struct io_criteria c;
-	hwreg_blob_t critblob;	/* packed criteria nvlist; same wire format
-				 * for both /dev/ioregistry and hwregd */
-	uint32_t psz = 0;
 	uint64_t *ids;
 	uint32_t cap = IOKIT_MAX_MATCHES;
 	kern_return_t kr;
 
 	__io_extract_criteria(matching, &c);
-	kr = __io_pack_criteria(&c, critblob, &psz);
-	if (kr != KERN_SUCCESS)
-		return (kr);
 	ids = calloc(cap, sizeof(*ids));
 	if (ids == NULL)
 		return (KERN_RESOURCE_SHORTAGE);
@@ -355,11 +378,11 @@ lookup_matches(CFDictionaryRef matching, uint64_t **ids_out,
 	if (fd >= 0) {
 		struct ioreg_lookup lk;
 
+		/* Flat by-value criteria (#218): no nvlist packing, so nothing to
+		 * mismatch. An all-zero criteria (no key survived extraction)
+		 * matches every live node — the kernel ABI's documented default. */
 		(void)memset(&lk, 0, sizeof(lk));
-		/* crit_len 0 (no criteria survived extraction) matches every
-		 * live node — same semantics as the kernel ABI documents. */
-		lk.buf_criteria = (uint64_t)(uintptr_t)critblob;
-		lk.crit_len = psz;
+		__io_fill_criteria(&c, &lk.criteria);
 		lk.max = cap;
 		lk.matches = (uint64_t)(uintptr_t)ids;
 		if (ioctl(fd, IOREGIOCLOOKUP, &lk) != 0) {
@@ -373,14 +396,22 @@ lookup_matches(CFDictionaryRef matching, uint64_t **ids_out,
 		return (KERN_SUCCESS);
 	}
 
-	/* Fallback: hwregd MIG. */
+	/* Fallback: hwregd MIG — libxpc-packed nvlist criteria over the RPC (a
+	 * working transport: libxpc on both ends). */
 	{
 		mach_port_t svc = __io_hwregd_port();
+		hwreg_blob_t critblob;
+		uint32_t psz = 0;
 		mach_msg_type_number_t nids = cap;
 
 		if (svc == MACH_PORT_NULL) {
 			free(ids);
 			return (kIOReturnNoDevice);
+		}
+		kr = __io_pack_criteria(&c, critblob, &psz);
+		if (kr != KERN_SUCCESS) {
+			free(ids);
+			return (kr);
 		}
 		kr = hwreg_lookup(svc, critblob, (mach_msg_type_number_t)psz,
 		    ids, &nids);

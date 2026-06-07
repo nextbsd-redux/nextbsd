@@ -35,7 +35,32 @@
 
 #define	IOREG_NAME_MAX		32	/* device name / class / driver field */
 #define	IOREG_PATH_MAX		256	/* full newbus path, incl. NUL */
-#define	IOREG_CRIT_MAX		65536	/* max packed criteria nvlist (bytes) */
+
+/*
+ * Flat, fixed-size device match criteria (nextbsd#218). Replaces the former
+ * packed-nvlist criteria bag that IOREGIOCLOOKUP / IOREGIOCWATCH carried: the
+ * userland packer (libxpc's nvlist) and the kernel reader (base libnv) use
+ * incompatible wire formats, so a packed bag round-tripped through the ioctl
+ * never unpacked. A flat struct has NO serialization, so there is nothing to
+ * mismatch — both sides simply read the same fixed fields.
+ *
+ * Match semantics: a field that is the empty string (for the char[] fields) or
+ * zero (for the numeric fields) is a WILDCARD and does not constrain the match;
+ * any non-empty / non-zero field MUST equal the candidate node's corresponding
+ * value (strcmp for strings, == for numerics). All set fields are AND-ed; an
+ * all-zero criteria therefore matches every node. Self-contained / fixed-size,
+ * so the ABI is identical for 32- and 64-bit userland.
+ */
+struct ioreg_criteria {
+	char		name[IOREG_NAME_MAX];	/* device_get_name(); "" = any */
+	char		classname[IOREG_NAME_MAX]; /* devclass name; "" = any */
+	char		driver[IOREG_NAME_MAX];	/* bound driver name; "" = any */
+	uint32_t	pci_vendor;		/* PCI vendor id; 0 = any */
+	uint32_t	pci_device;		/* PCI device id; 0 = any */
+	uint32_t	pci_subvendor;		/* PCI subsystem vendor; 0 = any */
+	uint32_t	pci_class;		/* PCI base class (low 8 bits); 0 = any */
+	uint32_t	match_flags;		/* reserved; 0 (zero-as-wildcard) */
+};
 
 /*
  * Node lifecycle state (ioreg_node.state). Distinct from the newbus
@@ -98,20 +123,82 @@ struct ioreg_props {
 };
 
 /*
- * Look up nodes matching a packed-nvlist criteria bag (e.g. {"name":"pci"} or
- * {"pci_vendor":0x8086}). Userland sets `buf_criteria`/`crit_len` (a packed
- * nvlist of scalar keys, AND-matched against each node) and `max` (capacity of
- * the `matches` array, user ptr to uint64_t[max]); the kernel writes up to
+ * Look up nodes matching a flat criteria struct (e.g. {.name = "pci"} or
+ * {.pci_vendor = 0x8086}). Userland fills `criteria` (zero-as-wildcard,
+ * AND-matched against each node; see struct ioreg_criteria) and `max` (capacity
+ * of the `matches` array, user ptr to uint64_t[max]); the kernel writes up to
  * `max` matching ids and sets `count` to the total number of matches. count >
- * max means truncation. crit_len == 0 matches every live node.
+ * max means truncation. An all-zero criteria matches every live node.
  */
 struct ioreg_lookup {
-	uint64_t	buf_criteria;	/* in: user ptr to packed nvlist criteria */
-	uint32_t	crit_len;	/* in: length of criteria bag, 0 = match all */
+	struct ioreg_criteria criteria;	/* in: flat match criteria */
 	uint32_t	max;		/* in: capacity of matches[] */
 	uint32_t	count;		/* out: total number of matches */
-	uint32_t	_pad;
 	uint64_t	matches;	/* in: user ptr to uint64_t[max] */
+};
+
+/*
+ * Device-event notification (K-PR2, nextbsd#225). A userland client (e.g.
+ * DiskArbitration, the IOKitNotify migration) creates a Mach receive right,
+ * then registers it here so the kernel pushes a message to that port whenever a
+ * device whose newbus identity matches `criteria` arrives or departs. This is
+ * the kernel-served replacement for hwregd watching /dev/devctl: the kernel
+ * emits the events itself from the device_attach / device_detach eventhandlers.
+ *
+ * The faithful IOKit shape: the client owns the receive right; the kernel holds
+ * a copied send right and sends the on-the-wire event message (struct
+ * ioreg_event_msg, defined in <sys/mach/iokit_notify.h> with the wire msgid) on
+ * each matching event whose kind is in `event_mask`. The send right is dropped
+ * (and the watch retired) when the client's port goes dead.
+ */
+
+/* event_mask bits and ioreg_event_msg.kind values (faithful to IOKit's notion
+ * of matched/published vs. terminated). A watch with event_mask == 0 receives
+ * nothing; the common case is IOREG_EVENT_ARRIVE | IOREG_EVENT_DEPART. */
+#define	IOREG_EVENT_ARRIVE	0x00000001	/* device attached (published) */
+#define	IOREG_EVENT_DEPART	0x00000002	/* device detached (terminated) */
+#define	IOREG_EVENT_MATCHED	0x00000004	/* device bound a driver */
+
+/*
+ * IOREGIOCWATCH argument. `criteria` is the same flat AND-match struct used by
+ * IOREGIOCLOOKUP (fields name/class/driver/pci_*; zero-as-wildcard, an all-zero
+ * criteria means "match every device"). `event_mask` is the OR of the
+ * IOREG_EVENT_* kinds to deliver. `notify_port` is the *name*, in the calling
+ * task's IPC space, of the receive right whose send right the kernel copies and
+ * keeps; the client keeps the receive right and reads ioreg_event_msg from it.
+ * Self-contained / fixed-size for 32- and 64-bit ABI parity.
+ */
+struct ioreg_watch_reg {
+	struct ioreg_criteria criteria;	/* in: flat match criteria */
+	uint32_t	event_mask;	/* in: OR of IOREG_EVENT_* to deliver */
+	uint32_t	notify_port;	/* in: mach_port_name_t (recv right name) */
+};
+
+/*
+ * IOREGIOCTESTEVENT (PR4/C1.2, nextbsd#225/#218): deterministic test injection
+ * of a synthetic device event. The notify channel (IOREGIOCWATCH) normally
+ * pushes only on real device_attach / device_detach, which CI cannot easily
+ * synthesize without a physical device. This ioctl feeds a caller-supplied
+ * fake event {kind, id, name, classname, pci_vendor, pci_device} through the
+ * SAME watch match + ioreg_event_msg emission path a real device_attach takes,
+ * so any registered watch whose criteria match receives a genuine
+ * ioreg_event_msg. It exercises match + Mach send end-to-end with no device.
+ *
+ * `kind` is exactly ONE IOREG_EVENT_* bit (the event being injected). The
+ * string fields are NUL-terminated (the kernel re-bounds them). This mirrors
+ * the catalogue's IOCATIOCTESTSEND de-risk ioctl: a test affordance, inert in
+ * the build until a userland test fires it. Returns 0 on success, EINVAL for a
+ * malformed event, ENOSYS on a kernel built without COMPAT_MACH (no Mach
+ * channel). Self-contained / fixed-size for 32- and 64-bit ABI parity.
+ */
+struct ioreg_test_event {
+	uint32_t	kind;			/* in: exactly one IOREG_EVENT_* */
+	uint32_t	pci_vendor;		/* in: synthetic PCI vendor, 0 if n/a */
+	uint32_t	pci_device;		/* in: synthetic PCI device, 0 if n/a */
+	uint32_t	_pad;
+	uint64_t	id;			/* in: synthetic registry node id */
+	char		name[IOREG_NAME_MAX];	/* in: device name */
+	char		classname[IOREG_NAME_MAX]; /* in: devclass name */
 };
 
 #define	IOREGIOCROOT	_IOR('R', 1, uint64_t)		   /* get root node id */
@@ -119,5 +206,7 @@ struct ioreg_lookup {
 #define	IOREGIOCNODE	_IOWR('R', 3, struct ioreg_node)   /* node by id (in id) */
 #define	IOREGIOCPROPS	_IOWR('R', 4, struct ioreg_props)  /* node property bag */
 #define	IOREGIOCLOOKUP	_IOWR('R', 5, struct ioreg_lookup) /* match by criteria */
+#define	IOREGIOCWATCH	_IOW('R', 6, struct ioreg_watch_reg) /* register notify */
+#define	IOREGIOCTESTEVENT _IOW('R', 7, struct ioreg_test_event) /* inject event */
 
 #endif /* _SYS_IOREGISTRY_H_ */
