@@ -55,12 +55,16 @@ ioreg_gate()
 	# da) and the NIC is the configured model (em/e1000 in CI, or a
 	# virtio-net vtnet). Accept any of the common names so the gate tracks
 	# "the registry sees real hardware nubs" rather than one exact string.
+	# ioreg renders bare driver CLASS names without unit numbers, e.g.
+	# "+-o vtblk  <class vtblk>" / "+-o em  <class em>" — so match the
+	# "<class NAME>" token, not "name+digit". (virtio-blk is class "vtblk",
+	# NOT "vtbd"; the qemu e1000 NIC is class "em".)
 	disk_ok=no
-	if echo "${iorg}" | grep -Eqi 'vtbd|\bda[0-9]|\bnvd[0-9]|\bad[0-9]'; then
+	if echo "${iorg}" | grep -Eqi '<class (vtblk|ahcich|nvme|nvd|ada|da|mmcsd|cd)>'; then
 		disk_ok=yes
 	fi
 	nic_ok=no
-	if echo "${iorg}" | grep -Eqi 'vtnet|\bem[0-9]|\bigb[0-9]|\bre[0-9]'; then
+	if echo "${iorg}" | grep -Eqi '<class (em|vtnet|igb|ix|re|bge)>'; then
 		nic_ok=yes
 	fi
 	echo "ioreg: disk_ok=${disk_ok} nic_ok=${nic_ok}"
