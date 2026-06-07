@@ -324,110 +324,32 @@ __io_pack_criteria(const struct io_criteria *c, uint8_t *blob,
 }
 
 /*
- * Pack a criteria struct into the FreeBSD KERNEL libnv wire format (#218).
+ * Fill a flat kernel `struct ioreg_criteria` from an io_criteria (#218).
  *
- * The kernel /dev/ioregistry IOREGIOC{WATCH,LOOKUP} handlers unpack the
- * criteria blob with the base system's sys/contrib/libnv nvlist_unpack(), whose
- * on-the-wire layout is NOT the same as this repo's libxpc nvlist (used by
- * __io_pack_criteria above and by the hwregd RPCs). Two concrete differences
- * make a libxpc-packed blob fail to unpack in the kernel:
+ * The kernel /dev/ioregistry IOREGIOC{WATCH,LOOKUP} handlers no longer unpack a
+ * packed-nvlist criteria bag — they read this fixed by-value struct directly.
+ * That removes the libxpc-vs-libnv wire-format mismatch (libxpc's packer added
+ * an extra nvlh_type header byte and omitted the trailing nvph_nitems the
+ * kernel's libnv reader expects) which made every kernel nvlist_unpack() return
+ * NULL, so IOREGIOCWATCH returned EINVAL and no watch ever registered — the #218
+ * round-trip break. There is no serialization here, so nothing can mismatch.
  *
- *   - nvlist header: libxpc's struct nvlist_header has an extra uint8_t
- *     nvlh_type at offset 3 (a libxpc dictionary/array extension); the kernel's
- *     has none. So every following field is shifted one byte and the kernel's
- *     "nvlh_size == left - sizeof(header)" check fails (header sizes 20 vs 19).
- *   - nvpair header: the kernel's struct nvpair_header carries a trailing
- *     uint64_t nvph_nitems that libxpc's omits, shifting each pair by 8 bytes.
- *
- * Either mismatch makes the kernel nvlist_unpack() return NULL, so IOREGIOCWATCH
- * returns EINVAL and the watch is never registered (the #218 round-trip break).
- * The criteria are only ever a flat set of NV_TYPE_STRING pairs (name/class/
- * driver), so we serialize them directly in the kernel format here rather than
- * teach libxpc a second wire format.
- *
- * Kernel wire format (little-endian, __packed; mirrors sys/contrib/libnv):
- *   nvlist_header (19 bytes): u8 magic=0x6c, u8 version=0, u8 flags=0,
- *       u64 descriptors=0, u64 size=<bytes after this header>
- *   per pair (19 bytes + namesize + datasize): u8 type=3 (NV_TYPE_STRING),
- *       u16 namesize=strlen(key)+1, u64 datasize=strlen(val)+1, u64 nitems=0,
- *       key bytes (incl NUL), value bytes (incl NUL)
+ * Mapping: io_criteria name/klass/driver -> the kernel criteria name/classname/
+ * driver. Empty source strings are left zeroed (the kernel treats a zero field
+ * as a wildcard). The pci_* numeric criteria are unused by the current Apple
+ * matching keys and stay zero (also wildcard). The hwregd RPC fallback still
+ * uses __io_pack_criteria() (libxpc nvlist over MIG — a working transport).
  */
-#define	NV_HDR_MAGIC		0x6cu
-#define	NVPAIR_TYPE_STRING	3u	/* sys/contrib/libnv NV_TYPE_STRING */
-
-static void
-le_put16(uint8_t *p, uint16_t v)
+void
+__io_fill_criteria(const struct io_criteria *c, struct ioreg_criteria *out)
 {
-	p[0] = (uint8_t)(v & 0xff);
-	p[1] = (uint8_t)((v >> 8) & 0xff);
-}
-
-static void
-le_put64(uint8_t *p, uint64_t v)
-{
-	int i;
-
-	for (i = 0; i < 8; i++)
-		p[i] = (uint8_t)((v >> (8 * i)) & 0xff);
-}
-
-/* Append one NV_TYPE_STRING pair to `blob` at *off (bounded by cap). Returns
- * KERN_SUCCESS or kIOReturnError on overflow. */
-static kern_return_t
-libnv_append_string(uint8_t *blob, size_t cap, size_t *off,
-    const char *key, const char *val)
-{
-	size_t namesz = strlen(key) + 1;
-	size_t datasz = strlen(val) + 1;
-	size_t need = 1 + 2 + 8 + 8 + namesz + datasz;	/* nvpair_header + name + data */
-
-	if (*off + need > cap)
-		return (kIOReturnError);
-	blob[*off + 0] = (uint8_t)NVPAIR_TYPE_STRING;
-	le_put16(&blob[*off + 1], (uint16_t)namesz);
-	le_put64(&blob[*off + 3], (uint64_t)datasz);
-	le_put64(&blob[*off + 11], 0);			/* nvph_nitems == 0 for a string */
-	*off += 19;
-	(void)memcpy(&blob[*off], key, namesz);
-	*off += namesz;
-	(void)memcpy(&blob[*off], val, datasz);
-	*off += datasz;
-	return (KERN_SUCCESS);
-}
-
-kern_return_t
-__io_pack_criteria_libnv(const struct io_criteria *c, uint8_t *blob,
-    uint32_t *out_size)
-{
-	const size_t cap = sizeof(hwreg_blob_t);
-	size_t off = 19;	/* leave room for the nvlist_header, filled last */
-	kern_return_t kr;
-
-	if (cap < 19)
-		return (kIOReturnError);
-
-	if (c->klass[0] != '\0' &&
-	    (kr = libnv_append_string(blob, cap, &off, "class", c->klass))
-	    != KERN_SUCCESS)
-		return (kr);
-	if (c->name[0] != '\0' &&
-	    (kr = libnv_append_string(blob, cap, &off, "name", c->name))
-	    != KERN_SUCCESS)
-		return (kr);
-	if (c->driver[0] != '\0' &&
-	    (kr = libnv_append_string(blob, cap, &off, "driver", c->driver))
-	    != KERN_SUCCESS)
-		return (kr);
-
-	/* nvlist_header: magic, version 0, flags 0, descriptors 0, size = body. */
-	blob[0] = (uint8_t)NV_HDR_MAGIC;
-	blob[1] = 0;			/* version */
-	blob[2] = 0;			/* flags (must be 0: unpack(...,flags=0)) */
-	le_put64(&blob[3], 0);		/* descriptors */
-	le_put64(&blob[11], (uint64_t)(off - 19));	/* size after the header */
-
-	*out_size = (uint32_t)off;
-	return (KERN_SUCCESS);
+	(void)memset(out, 0, sizeof(*out));
+	if (c->name[0] != '\0')
+		(void)strlcpy(out->name, c->name, sizeof(out->name));
+	if (c->klass[0] != '\0')
+		(void)strlcpy(out->classname, c->klass, sizeof(out->classname));
+	if (c->driver[0] != '\0')
+		(void)strlcpy(out->driver, c->driver, sizeof(out->driver));
 }
 
 /*
@@ -444,23 +366,11 @@ lookup_matches(CFDictionaryRef matching, uint64_t **ids_out,
 {
 	int fd = __io_ioregistry_fd();
 	struct io_criteria c;
-	hwreg_blob_t critblob;	/* packed criteria nvlist; same wire format
-				 * for both /dev/ioregistry and hwregd */
-	uint32_t psz = 0;
 	uint64_t *ids;
 	uint32_t cap = IOKIT_MAX_MATCHES;
 	kern_return_t kr;
 
 	__io_extract_criteria(matching, &c);
-	/* Pack in the chosen backend's wire format: base-system libnv for the
-	 * kernel /dev/ioregistry IOREGIOCLOOKUP handler, libxpc for the hwregd
-	 * RPC fallback. The libxpc-vs-libnv mismatch is the #218 root cause (see
-	 * __io_pack_criteria_libnv); the same fix applies to LOOKUP and WATCH. */
-	kr = (fd >= 0)
-	    ? __io_pack_criteria_libnv(&c, critblob, &psz)
-	    : __io_pack_criteria(&c, critblob, &psz);
-	if (kr != KERN_SUCCESS)
-		return (kr);
 	ids = calloc(cap, sizeof(*ids));
 	if (ids == NULL)
 		return (KERN_RESOURCE_SHORTAGE);
@@ -468,11 +378,11 @@ lookup_matches(CFDictionaryRef matching, uint64_t **ids_out,
 	if (fd >= 0) {
 		struct ioreg_lookup lk;
 
+		/* Flat by-value criteria (#218): no nvlist packing, so nothing to
+		 * mismatch. An all-zero criteria (no key survived extraction)
+		 * matches every live node — the kernel ABI's documented default. */
 		(void)memset(&lk, 0, sizeof(lk));
-		/* crit_len 0 (no criteria survived extraction) matches every
-		 * live node — same semantics as the kernel ABI documents. */
-		lk.buf_criteria = (uint64_t)(uintptr_t)critblob;
-		lk.crit_len = psz;
+		__io_fill_criteria(&c, &lk.criteria);
 		lk.max = cap;
 		lk.matches = (uint64_t)(uintptr_t)ids;
 		if (ioctl(fd, IOREGIOCLOOKUP, &lk) != 0) {
@@ -486,14 +396,22 @@ lookup_matches(CFDictionaryRef matching, uint64_t **ids_out,
 		return (KERN_SUCCESS);
 	}
 
-	/* Fallback: hwregd MIG. */
+	/* Fallback: hwregd MIG — libxpc-packed nvlist criteria over the RPC (a
+	 * working transport: libxpc on both ends). */
 	{
 		mach_port_t svc = __io_hwregd_port();
+		hwreg_blob_t critblob;
+		uint32_t psz = 0;
 		mach_msg_type_number_t nids = cap;
 
 		if (svc == MACH_PORT_NULL) {
 			free(ids);
 			return (kIOReturnNoDevice);
+		}
+		kr = __io_pack_criteria(&c, critblob, &psz);
+		if (kr != KERN_SUCCESS) {
+			free(ids);
+			return (kr);
 		}
 		kr = hwreg_lookup(svc, critblob, (mach_msg_type_number_t)psz,
 		    ids, &nids);

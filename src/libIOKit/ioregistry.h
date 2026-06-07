@@ -35,7 +35,32 @@
 
 #define	IOREG_NAME_MAX		32	/* device name / class / driver field */
 #define	IOREG_PATH_MAX		256	/* full newbus path, incl. NUL */
-#define	IOREG_CRIT_MAX		65536	/* max packed criteria nvlist (bytes) */
+
+/*
+ * Flat, fixed-size device match criteria (nextbsd#218). Replaces the former
+ * packed-nvlist criteria bag that IOREGIOCLOOKUP / IOREGIOCWATCH carried: the
+ * userland packer (libxpc's nvlist) and the kernel reader (base libnv) use
+ * incompatible wire formats, so a packed bag round-tripped through the ioctl
+ * never unpacked. A flat struct has NO serialization, so there is nothing to
+ * mismatch — both sides simply read the same fixed fields.
+ *
+ * Match semantics: a field that is the empty string (for the char[] fields) or
+ * zero (for the numeric fields) is a WILDCARD and does not constrain the match;
+ * any non-empty / non-zero field MUST equal the candidate node's corresponding
+ * value (strcmp for strings, == for numerics). All set fields are AND-ed; an
+ * all-zero criteria therefore matches every node. Self-contained / fixed-size,
+ * so the ABI is identical for 32- and 64-bit userland.
+ */
+struct ioreg_criteria {
+	char		name[IOREG_NAME_MAX];	/* device_get_name(); "" = any */
+	char		classname[IOREG_NAME_MAX]; /* devclass name; "" = any */
+	char		driver[IOREG_NAME_MAX];	/* bound driver name; "" = any */
+	uint32_t	pci_vendor;		/* PCI vendor id; 0 = any */
+	uint32_t	pci_device;		/* PCI device id; 0 = any */
+	uint32_t	pci_subvendor;		/* PCI subsystem vendor; 0 = any */
+	uint32_t	pci_class;		/* PCI base class (low 8 bits); 0 = any */
+	uint32_t	match_flags;		/* reserved; 0 (zero-as-wildcard) */
+};
 
 /*
  * Node lifecycle state (ioreg_node.state). Distinct from the newbus
@@ -98,19 +123,17 @@ struct ioreg_props {
 };
 
 /*
- * Look up nodes matching a packed-nvlist criteria bag (e.g. {"name":"pci"} or
- * {"pci_vendor":0x8086}). Userland sets `buf_criteria`/`crit_len` (a packed
- * nvlist of scalar keys, AND-matched against each node) and `max` (capacity of
- * the `matches` array, user ptr to uint64_t[max]); the kernel writes up to
+ * Look up nodes matching a flat criteria struct (e.g. {.name = "pci"} or
+ * {.pci_vendor = 0x8086}). Userland fills `criteria` (zero-as-wildcard,
+ * AND-matched against each node; see struct ioreg_criteria) and `max` (capacity
+ * of the `matches` array, user ptr to uint64_t[max]); the kernel writes up to
  * `max` matching ids and sets `count` to the total number of matches. count >
- * max means truncation. crit_len == 0 matches every live node.
+ * max means truncation. An all-zero criteria matches every live node.
  */
 struct ioreg_lookup {
-	uint64_t	buf_criteria;	/* in: user ptr to packed nvlist criteria */
-	uint32_t	crit_len;	/* in: length of criteria bag, 0 = match all */
+	struct ioreg_criteria criteria;	/* in: flat match criteria */
 	uint32_t	max;		/* in: capacity of matches[] */
 	uint32_t	count;		/* out: total number of matches */
-	uint32_t	_pad;
 	uint64_t	matches;	/* in: user ptr to uint64_t[max] */
 };
 
@@ -137,20 +160,18 @@ struct ioreg_lookup {
 #define	IOREG_EVENT_MATCHED	0x00000004	/* device bound a driver */
 
 /*
- * IOREGIOCWATCH argument. `buf_criteria`/`crit_len` is the same packed-nvlist
- * AND-match bag used by IOREGIOCLOOKUP (scalar keys name/class/driver/pci_*;
- * crit_len == 0 means "match every device"). `event_mask` is the OR of the
+ * IOREGIOCWATCH argument. `criteria` is the same flat AND-match struct used by
+ * IOREGIOCLOOKUP (fields name/class/driver/pci_*; zero-as-wildcard, an all-zero
+ * criteria means "match every device"). `event_mask` is the OR of the
  * IOREG_EVENT_* kinds to deliver. `notify_port` is the *name*, in the calling
  * task's IPC space, of the receive right whose send right the kernel copies and
  * keeps; the client keeps the receive right and reads ioreg_event_msg from it.
  * Self-contained / fixed-size for 32- and 64-bit ABI parity.
  */
 struct ioreg_watch_reg {
-	uint64_t	buf_criteria;	/* in: user ptr to packed nvlist criteria */
-	uint32_t	crit_len;	/* in: length of criteria bag, 0 = all */
+	struct ioreg_criteria criteria;	/* in: flat match criteria */
 	uint32_t	event_mask;	/* in: OR of IOREG_EVENT_* to deliver */
 	uint32_t	notify_port;	/* in: mach_port_name_t (recv right name) */
-	uint32_t	_pad;
 };
 
 /*

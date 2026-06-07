@@ -112,15 +112,17 @@ kern_return_t	__io_pack_criteria(const struct io_criteria *c,
 		    uint8_t *blob, uint32_t *out_size);
 
 /*
- * Pack a criteria struct into the FreeBSD KERNEL libnv wire format, for the
- * /dev/ioregistry IOREGIOC{WATCH,LOOKUP} ioctls whose handlers unpack with the
- * base system's sys/contrib/libnv nvlist_unpack(). That layout differs from
- * this repo's libxpc nvlist (an extra nvlh_type header byte and a trailing
- * nvph_nitems per pair), so the libxpc-packed blob from __io_pack_criteria()
- * fails to unpack in the kernel (#218). Use this for the kernel ioctl paths;
- * keep __io_pack_criteria() for the hwregd RPC fallback (libxpc on both ends).
+ * Fill a flat kernel `struct ioreg_criteria` from an io_criteria for the
+ * /dev/ioregistry IOREGIOC{WATCH,LOOKUP} ioctls (#218). These ioctls now carry
+ * the criteria as a fixed by-value struct instead of a packed nvlist: there is
+ * no serialization, so the former libxpc-vs-libnv wire-format mismatch that
+ * broke the #218 round-trip simply cannot happen. Non-empty string fields and
+ * non-zero numeric fields constrain the match (zero-as-wildcard); the hwregd RPC
+ * fallback still uses __io_pack_criteria() (libxpc nvlist over MIG, both ends).
+ * Declared with a forward struct ref so this header pulls in no kernel ABI.
  */
-kern_return_t	__io_pack_criteria_libnv(const struct io_criteria *c,
-		    uint8_t *blob, uint32_t *out_size);
+struct ioreg_criteria;
+void	__io_fill_criteria(const struct io_criteria *c,
+		    struct ioreg_criteria *out);
 
 #endif /* _IOKIT_INTERNAL_H_ */

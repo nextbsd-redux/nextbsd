@@ -143,9 +143,10 @@ main(void)
 		    (unsigned)akr);
 		if (akr != KERN_SUCCESS) {
 			printf("IOKITNOTIFY-FAIL: AddMatchingNotification "
-			    "(kr=0x%x) — watch registration failed; see the "
-			    "kernel 'iokit: IOREGIOCWATCH ...' line for the "
-			    "exact cause (nvlist_unpack / copyin_port)\n",
+			    "(kr=0x%x) — watch registration failed; the most "
+			    "likely cause is the IOREGIOCWATCH copyin_port (the "
+			    "recv-port send right) since the criteria now travel "
+			    "as a flat by-value struct (#218, no nvlist unpack)\n",
 			    (unsigned)akr);
 			IONotificationPortDestroy(notify);
 			(void)close(fd);
@@ -153,9 +154,9 @@ main(void)
 		}
 	}
 	/* The watch registered: IOREGIOCWATCH resolved our recv-port send right,
-	 * unpacked the criteria and added the watch. If this prints but the
-	 * callback never fires, the break is on the kernel emit/match/send side
-	 * or the userland receive side, not registration. */
+	 * read the flat by-value criteria (#218) and added the watch. If this
+	 * prints but the callback never fires, the break is on the kernel
+	 * emit/match/send side or the userland receive side, not registration. */
 	printf("iokitnotifyrt: watch registered on '%s' (recv port %u)\n",
 	    RT_TEST_NAME, (unsigned)IONotificationPortGetMachPort(notify));
 	/* `matching` consumed by the facade. Drain the (expected empty) initial

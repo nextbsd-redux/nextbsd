@@ -450,15 +450,17 @@ IONotificationPortDestroy(IONotificationPortRef port)
 
 /*
  * Register the watch on the kernel notify channel: ioctl(/dev/ioregistry,
- * IOREGIOCWATCH) with this port's recv-right name, the packed-nvlist criteria
- * (same wire format IOREGIOCLOOKUP uses), and the IOREG_EVENT_* mask. The kernel
- * copies a send right to the port and emits ioreg_event_msg on each matching
- * event. Returns KERN_SUCCESS on success, a kIOReturn* error otherwise. The
- * HWREG_EVT_* arrive/depart bits are value-identical to IOREG_EVENT_*.
+ * IOREGIOCWATCH) with this port's recv-right name, the flat by-value criteria
+ * struct (#218; same fixed struct IOREGIOCLOOKUP uses) and the IOREG_EVENT_*
+ * mask. The kernel copies a send right to the port and emits ioreg_event_msg on
+ * each matching event. Returns KERN_SUCCESS on success, a kIOReturn* error
+ * otherwise. The HWREG_EVT_* arrive/depart bits are value-identical to
+ * IOREG_EVENT_*. No nvlist packing is involved, so the libxpc-vs-libnv mismatch
+ * that broke the #218 round-trip cannot recur.
  */
 static kern_return_t
 kernel_watch_register(struct IONotificationPort *port,
-    const hwreg_blob_t critblob, uint32_t crit_sz, uint32_t mask)
+    const struct io_criteria *c, uint32_t mask)
 {
 	struct ioreg_watch_reg reg;
 	int fd = __io_ioregistry_fd();
@@ -467,8 +469,7 @@ kernel_watch_register(struct IONotificationPort *port,
 		return (kIOReturnNoDevice);
 
 	memset(&reg, 0, sizeof(reg));
-	reg.buf_criteria = (crit_sz > 0) ? (uint64_t)(uintptr_t)critblob : 0;
-	reg.crit_len = crit_sz;
+	__io_fill_criteria(c, &reg.criteria);
 	reg.event_mask = mask;	/* IOREG_EVENT_ARRIVE/DEPART == HWREG_EVT_* */
 	reg.notify_port = (uint32_t)port->recv_port;	/* recv right name */
 
@@ -519,22 +520,12 @@ IOServiceAddMatchingNotification(IONotificationPortRef port,
 		mask = HWREG_EVT_ARRIVED;
 
 	__io_extract_criteria(matching, &c);
-	/* Pack the criteria in the wire format the chosen backend's UNPACKER
-	 * expects: the kernel /dev/ioregistry IOREGIOCWATCH handler uses the base
-	 * system libnv (__io_pack_criteria_libnv), while the hwregd RPC fallback
-	 * uses this repo's libxpc nvlist on both ends (__io_pack_criteria). Packing
-	 * the libxpc format for the kernel path is exactly the #218 break: the
-	 * kernel nvlist_unpack returns NULL -> IOREGIOCWATCH EINVAL -> no watch. */
-	kr = port->use_kernel
-	    ? __io_pack_criteria_libnv(&c, critblob, &crit_sz)
-	    : __io_pack_criteria(&c, critblob, &crit_sz);
-	if (kr != KERN_SUCCESS) {
-		CFRelease(matching);
-		return (kr);
-	}
 
 	if (port->use_kernel) {
-		kr = kernel_watch_register(port, critblob, crit_sz, mask);
+		/* Kernel notify channel: the criteria travel as a flat by-value
+		 * struct (#218), so there is no nvlist packing and nothing to
+		 * mismatch — kernel_watch_register fills it from `c` directly. */
+		kr = kernel_watch_register(port, &c, mask);
 		if (kr != KERN_SUCCESS) {
 			CFRelease(matching);
 			return (kr);
@@ -542,6 +533,13 @@ IOServiceAddMatchingNotification(IONotificationPortRef port,
 		/* watcher_id stays 0: the kernel has no per-watch handle and
 		 * retires the watch when the recv right is dropped. */
 	} else {
+		/* hwregd RPC fallback: libxpc-packed nvlist criteria over MIG (a
+		 * working transport, libxpc on both ends). */
+		kr = __io_pack_criteria(&c, critblob, &crit_sz);
+		if (kr != KERN_SUCCESS) {
+			CFRelease(matching);
+			return (kr);
+		}
 		kr = hwreg_watch(svc, critblob, (mach_msg_type_number_t)crit_sz,
 		    mask, port->recv_port, &watcher_id);
 		if (kr != KERN_SUCCESS || watcher_id == 0) {
