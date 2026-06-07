@@ -785,6 +785,19 @@ cc -I"$WORK/rootfs/usr/include" \
    -lsystem_kernel
 ls -lh "$WORK/rootfs/usr/tests/freebsd-launchd-mach/test_mach_port"
 
+# test_evfilt_machport — #168 gate: proves the NATIVE kernel EVFILT_MACHPORT
+# kqueue filter (mach.ko filt_machport, patch 0003 slot -16) actually delivers a
+# wakeup + inline-receives a Mach message arriving on a port set. Raw kevent(2),
+# no libdispatch/libmach bridge. Marker EVFILT-MACHPORT-OK / -FAIL / -SKIP.
+echo "==> building test_evfilt_machport"
+cc -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/test_evfilt_machport" \
+   "$ROOT/src/mach_kmod/tests/test_evfilt_machport.c" \
+   -lsystem_kernel
+ls -lh "$WORK/rootfs/usr/tests/freebsd-launchd-mach/test_evfilt_machport"
+
 # test_task_special_port — exercises task_get_special_port /
 # task_set_special_port traps (Phase G prerequisite for the bootstrap
 # server's port discovery). Failure surfaces as TASK-SPECIAL-PORT-FAIL.

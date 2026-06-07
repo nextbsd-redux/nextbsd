@@ -68,6 +68,18 @@ else
     exit 1
 fi
 
+# 2b'. EVFILT_MACHPORT native-filter probe (#168 Phase A). Does the kernel's
+# native kqueue Mach-port filter (mach.ko filt_machport, slot -16) actually
+# deliver a wakeup + inline-receive a message on a port set? The test prints its
+# own EVFILT-MACHPORT-OK/-FAIL/-SKIP marker. NON-FATAL here (the boot-test gate
+# is a WARN): this is a discovery probe gating the configd KEM-in-process rework
+# (#168) — we want the result reported, not the suite aborted, until we know it.
+if [ -x /usr/tests/freebsd-launchd-mach/test_evfilt_machport ]; then
+    /usr/tests/freebsd-launchd-mach/test_evfilt_machport || true
+else
+    echo "EVFILT-MACHPORT-SKIP: test_evfilt_machport binary not installed"
+fi
+
 # 2c. userland: task_get_special_port / task_set_special_port. Phase G
 # prerequisite — the bootstrap server uses task_set_bootstrap_port on
 # each client task to publish its receive port, and clients read it
