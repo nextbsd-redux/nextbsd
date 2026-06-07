@@ -1192,6 +1192,33 @@ expect {
 # nextbsd-kernel's smoke test boots an image built before kextd/K2 shipped);
 # only an explicit IOCATALOGUE-FAIL gates.
 send "/usr/tests/nextbsd-iokit/run.sh\r"
+
+# IOREG — C1.1 (#218) libIOKit registry migration gate. nextbsd-iokit/run.sh
+# now runs the IOREG check FIRST (before the IOCATALOGUE/IOKIT-LOOKUP/KEXTD-LOAD
+# markers below) so a K1-but-no-K2 kernel still reports it. libIOKit now walks
+# the K1 /dev/ioregistry device (falling back to hwregd when absent); the
+# `ioreg` tool is run over the live device and the root + boot disk/NIC nubs are
+# asserted. This is also the deferred K1 functional proof. The on-image script
+# self-SKIPs on a kernel predating /dev/ioregistry, so this stays green on
+# pre-K1 continuous images; the timeout here is non-fatal (older run.sh lacking
+# the IOREG step), and only an explicit IOREG-FAIL gates. OK/SKIP are folded
+# into one block that ends only on OK/FAIL/SKIP, so it can never sit blocking
+# while a later required marker scrolls past (the MDNS-IFWATCH lesson).
+expect {
+    timeout {
+        puts "\nWARN: IOREG marker not seen (pre-C1.1 run.sh — informational)"
+    }
+    "IOREG-FAIL" {
+        puts "\nFAIL: libIOKit /dev/ioregistry walk did not show the registry"
+        exit 1
+    }
+    "IOREG-SKIP" {
+        puts "\nWARN: IOREG-SKIP — no /dev/ioregistry (kernel without K1)"
+    }
+    "IOREG-OK" {
+        puts "\nOK: libIOKit walks /dev/ioregistry (root + boot device nubs)"
+    }
+}
 expect {
     timeout {
         puts "\nWARN: IOCATALOGUE marker not seen (pre-kextd/K2 image — informational)"
@@ -1254,6 +1281,7 @@ expect {
         puts "\nOK: kextd daemon loaded if_iwlwifi on a kernel load request"
     }
 }
+
 set timeout 60
 
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns

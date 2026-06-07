@@ -14,11 +14,15 @@
 #include <IOKit/IOKitLib.h>
 #include "IOKitInternal.h"
 
-#include "hwreg.h"
+#include "ioregistry.h"		/* vendored K1 ABI; canonical in nextbsd-kernel */
+
+#include "hwreg.h"		/* fallback MIG stubs */
 #include "hwreg_mig_types.h"
 #include "nv.h"			/* libxpc nvlist API */
 
 #include <CoreFoundation/CoreFoundation.h>
+
+#include <sys/ioctl.h>		/* ioctl(2) on /dev/ioregistry */
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -86,33 +90,117 @@ nvlist_to_cfdict(const nvlist_t *nv, CFAllocatorRef allocator)
 	return (d);
 }
 
+/*
+ * Pull a node's packed-nvlist property bag from /dev/ioregistry
+ * (IOREGIOCPROPS). Two-step: size the bag (NULL buf), allocate, then
+ * fetch. Returns a malloc'd buffer (caller frees) and its length, or
+ * NULL with *kr_out set on failure. Returns KERN_SUCCESS / sets *len_out
+ * = 0 with a non-NULL allocation if the bag is empty (len 0 still gets a
+ * 1-byte allocation so the caller frees a real pointer).
+ */
+static void *
+ioreg_fetch_props(int fd, uint64_t node_id, uint32_t *len_out,
+    kern_return_t *kr_out)
+{
+	struct ioreg_props pr;
+	void *buf;
+	uint32_t need;
+
+	/* Step 1: size the bag (NULL buf). */
+	(void)memset(&pr, 0, sizeof(pr));
+	pr.id = node_id;
+	pr.len = 0;
+	pr.buf = 0;
+	if (ioctl(fd, IOREGIOCPROPS, &pr) != 0) {
+		*kr_out = kIOReturnNotFound;
+		return (NULL);
+	}
+	need = pr.len;
+	buf = malloc(need != 0 ? need : 1);
+	if (buf == NULL) {
+		*kr_out = KERN_RESOURCE_SHORTAGE;
+		return (NULL);
+	}
+	if (need == 0) {		/* empty bag — nothing to fetch */
+		*len_out = 0;
+		*kr_out = KERN_SUCCESS;
+		return (buf);
+	}
+
+	/* Step 2: fetch into the sized buffer. */
+	(void)memset(&pr, 0, sizeof(pr));
+	pr.id = node_id;
+	pr.len = need;
+	pr.buf = (uint64_t)(uintptr_t)buf;
+	if (ioctl(fd, IOREGIOCPROPS, &pr) != 0 || pr.len > need) {
+		/* A grown len means the bag changed under us — bail rather
+		 * than unpack a truncated nvlist. */
+		free(buf);
+		*kr_out = kIOReturnError;
+		return (NULL);
+	}
+	*len_out = pr.len;
+	*kr_out = KERN_SUCCESS;
+	return (buf);
+}
+
 kern_return_t
 IORegistryEntryCreateCFProperties(io_registry_entry_t entry,
     CFMutableDictionaryRef *properties, CFAllocatorRef allocator,
     IOOptionBits options __unused)
 {
-	mach_port_t svc = __io_hwregd_port();
-	hwreg_blob_t blob;
-	mach_msg_type_number_t cnt = 0;
+	int fd;
 	nvlist_t *nv;
 	kern_return_t kr;
 
 	if (entry == NULL || entry->kind != IOOBJ_KIND_ENTRY ||
 	    properties == NULL)
 		return (KERN_INVALID_ARGUMENT);
-	if (svc == MACH_PORT_NULL)
-		return (kIOReturnNoDevice);
 
-	kr = hwreg_get_properties(svc, entry->node_id, blob, &cnt);
-	if (kr != KERN_SUCCESS)
-		return (kr);
+	fd = __io_ioregistry_fd();
+	if (fd >= 0) {
+		void *buf;
+		uint32_t len = 0;
 
-	nv = nvlist_unpack(blob, cnt);
-	if (nv == NULL)
-		return (kIOReturnError);
-	*properties = nvlist_to_cfdict(nv, allocator);
-	nvlist_destroy(nv);
-	return (*properties != NULL ? KERN_SUCCESS : kIOReturnError);
+		buf = ioreg_fetch_props(fd, entry->node_id, &len, &kr);
+		if (buf == NULL)
+			return (kr);
+		if (len == 0) {
+			/* Empty bag -> empty dictionary (still a success). */
+			free(buf);
+			*properties = CFDictionaryCreateMutable(allocator, 0,
+			    &kCFTypeDictionaryKeyCallBacks,
+			    &kCFTypeDictionaryValueCallBacks);
+			return (*properties != NULL ? KERN_SUCCESS
+			    : kIOReturnError);
+		}
+		nv = nvlist_unpack(buf, len);
+		free(buf);
+		if (nv == NULL)
+			return (kIOReturnError);
+		*properties = nvlist_to_cfdict(nv, allocator);
+		nvlist_destroy(nv);
+		return (*properties != NULL ? KERN_SUCCESS : kIOReturnError);
+	}
+
+	/* Fallback: hwregd MIG property bag. */
+	{
+		mach_port_t svc = __io_hwregd_port();
+		hwreg_blob_t blob;
+		mach_msg_type_number_t cnt = 0;
+
+		if (svc == MACH_PORT_NULL)
+			return (kIOReturnNoDevice);
+		kr = hwreg_get_properties(svc, entry->node_id, blob, &cnt);
+		if (kr != KERN_SUCCESS)
+			return (kr);
+		nv = nvlist_unpack(blob, cnt);
+		if (nv == NULL)
+			return (kIOReturnError);
+		*properties = nvlist_to_cfdict(nv, allocator);
+		nvlist_destroy(nv);
+		return (*properties != NULL ? KERN_SUCCESS : kIOReturnError);
+	}
 }
 
 CFTypeRef
@@ -135,19 +223,16 @@ IORegistryEntryCreateCFProperty(io_registry_entry_t entry,
 kern_return_t
 IOObjectGetClass(io_object_t object, io_name_t className)
 {
-	mach_port_t svc = __io_hwregd_port();
-	uint64_t parent_id;
-	int state;
-	char name[32], classname[32], driver[32], path[256];
+	char classname[32];
 	kern_return_t kr;
 
 	if (object == NULL || object->kind != IOOBJ_KIND_ENTRY ||
 	    className == NULL)
 		return (KERN_INVALID_ARGUMENT);
-	if (svc == MACH_PORT_NULL)
-		return (kIOReturnNoDevice);
-	kr = hwreg_get_node(svc, object->node_id, &parent_id, &state,
-	    name, classname, driver, path);
+	/* __io_node picks /dev/ioregistry (IOREGIOCNODE) or hwregd; only
+	 * the class field is wanted, so the rest are skipped (NULLs). */
+	kr = __io_node(object->node_id, NULL, NULL, NULL, classname, NULL,
+	    NULL);
 	if (kr != KERN_SUCCESS)
 		return (kr);
 	(void)strlcpy(className, classname, sizeof(io_name_t));
@@ -244,36 +329,69 @@ __io_pack_criteria(const struct io_criteria *c, uint8_t *blob,
  * `ids_out`. KERN_SUCCESS even when 0 matches — the result is
  * "no matches", not an error.
  */
+#define IOKIT_MAX_MATCHES	128	/* hwreg.defs hwreg_id_array_t bound */
+
 static kern_return_t
 lookup_matches(CFDictionaryRef matching, uint64_t **ids_out,
     uint32_t *count_out)
 {
-	mach_port_t svc = __io_hwregd_port();
+	int fd = __io_ioregistry_fd();
 	struct io_criteria c;
-	hwreg_blob_t critblob;
+	hwreg_blob_t critblob;	/* packed criteria nvlist; same wire format
+				 * for both /dev/ioregistry and hwregd */
 	uint32_t psz = 0;
 	uint64_t *ids;
-	mach_msg_type_number_t nids = 128;
+	uint32_t cap = IOKIT_MAX_MATCHES;
 	kern_return_t kr;
 
-	if (svc == MACH_PORT_NULL)
-		return (kIOReturnNoDevice);
 	__io_extract_criteria(matching, &c);
 	kr = __io_pack_criteria(&c, critblob, &psz);
 	if (kr != KERN_SUCCESS)
 		return (kr);
-	ids = calloc(nids, sizeof(*ids));
+	ids = calloc(cap, sizeof(*ids));
 	if (ids == NULL)
 		return (KERN_RESOURCE_SHORTAGE);
-	kr = hwreg_lookup(svc, critblob, (mach_msg_type_number_t)psz,
-	    ids, &nids);
-	if (kr != KERN_SUCCESS) {
-		free(ids);
-		return (kr);
+
+	if (fd >= 0) {
+		struct ioreg_lookup lk;
+
+		(void)memset(&lk, 0, sizeof(lk));
+		/* crit_len 0 (no criteria survived extraction) matches every
+		 * live node — same semantics as the kernel ABI documents. */
+		lk.buf_criteria = (uint64_t)(uintptr_t)critblob;
+		lk.crit_len = psz;
+		lk.max = cap;
+		lk.matches = (uint64_t)(uintptr_t)ids;
+		if (ioctl(fd, IOREGIOCLOOKUP, &lk) != 0) {
+			free(ids);
+			return (kIOReturnError);
+		}
+		if (lk.count > cap)	/* truncated to our fixed array */
+			lk.count = cap;
+		*ids_out = ids;
+		*count_out = lk.count;
+		return (KERN_SUCCESS);
 	}
-	*ids_out = ids;
-	*count_out = nids;
-	return (KERN_SUCCESS);
+
+	/* Fallback: hwregd MIG. */
+	{
+		mach_port_t svc = __io_hwregd_port();
+		mach_msg_type_number_t nids = cap;
+
+		if (svc == MACH_PORT_NULL) {
+			free(ids);
+			return (kIOReturnNoDevice);
+		}
+		kr = hwreg_lookup(svc, critblob, (mach_msg_type_number_t)psz,
+		    ids, &nids);
+		if (kr != KERN_SUCCESS) {
+			free(ids);
+			return (kr);
+		}
+		*ids_out = ids;
+		*count_out = nids;
+		return (KERN_SUCCESS);
+	}
 }
 
 io_service_t

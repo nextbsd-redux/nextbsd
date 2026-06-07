@@ -12,6 +12,77 @@
 
 set -u
 
+# IOREG — libIOKit registry walk via the K1 /dev/ioregistry device (C1.1,
+# #218). libIOKit now prefers /dev/ioregistry (IOREGIOC* ioctls) and falls
+# back to hwregd; this gate exercises the live path with the `ioreg` tool and
+# asserts the registry root plus the boot disk/NIC nubs are visible. It is also
+# the deferred K1 functional proof (the kernel registry actually answers).
+#
+#   IOREG-OK    — /dev/ioregistry present; ioreg printed root + a disk/NIC nub
+#   IOREG-FAIL  — /dev/ioregistry present but the walk is empty / missing nodes
+#   IOREG-SKIP  — no /dev/ioregistry (old kernel predating K1) — nothing to test
+#
+# Run as a function that emits EXACTLY ONE marker and returns (never exits) so
+# the IOCATALOGUE/IOKIT-LOOKUP/KEXTD-LOAD checks below still run on a K1-but-
+# no-K2 kernel — and so a K1 SKIP here doesn't short-circuit the rest. The boot
+# test gates on the IOREG-FAIL *string*, not on this script's exit code, so a
+# FAIL marker + return still fails CI. SELF-SKIP on a pre-K1 kernel keeps this
+# green on continuous images built before #214 landed.
+ioreg_gate()
+{
+	if [ ! -c /dev/ioregistry ]; then
+		echo "IOREG-SKIP: no /dev/ioregistry (kernel without the K1 in-kernel registry)"
+		return 0
+	fi
+	if [ ! -x /usr/sbin/ioreg ]; then
+		echo "IOREG-SKIP: /usr/sbin/ioreg not present"
+		return 0
+	fi
+
+	iorg=$(/usr/sbin/ioreg 2>/dev/null || true)
+	echo "=== ioreg (via /dev/ioregistry) ==="
+	echo "${iorg}"
+	echo "==="
+
+	# Root: ioreg prints the tree top as "+-o <root> <class ...>"; an empty
+	# walk (no "+-o" lines at all) means the registry didn't answer.
+	if ! echo "${iorg}" | grep -q '+-o '; then
+		echo "IOREG-FAIL: ioreg produced no nodes from /dev/ioregistry"
+		return 0
+	fi
+
+	# Boot devices: under QEMU the root disk is a virtio block device (vtbd /
+	# da) and the NIC is the configured model (em/e1000 in CI, or a
+	# virtio-net vtnet). Accept any of the common names so the gate tracks
+	# "the registry sees real hardware nubs" rather than one exact string.
+	# ioreg renders bare driver CLASS names without unit numbers, e.g.
+	# "+-o vtblk  <class vtblk>" / "+-o em  <class em>" — so match the
+	# "<class NAME>" token, not "name+digit". (virtio-blk is class "vtblk",
+	# NOT "vtbd"; the qemu e1000 NIC is class "em".)
+	disk_ok=no
+	if echo "${iorg}" | grep -Eqi '<class (vtblk|ahcich|nvme|nvd|ada|da|mmcsd|cd)>'; then
+		disk_ok=yes
+	fi
+	nic_ok=no
+	if echo "${iorg}" | grep -Eqi '<class (em|vtnet|igb|ix|re|bge)>'; then
+		nic_ok=yes
+	fi
+	echo "ioreg: disk_ok=${disk_ok} nic_ok=${nic_ok}"
+
+	if [ "${disk_ok}" = yes ] && [ "${nic_ok}" = yes ]; then
+		echo "IOREG-OK: /dev/ioregistry walk shows root + boot disk + NIC nubs"
+	elif [ "${disk_ok}" = yes ] || [ "${nic_ok}" = yes ]; then
+		# One nub class visible is enough to prove the live kernel walk
+		# works; the other may carry a name this matcher doesn't list.
+		echo "IOREG-OK: /dev/ioregistry walk shows root + a boot device nub"
+	else
+		echo "IOREG-FAIL: /dev/ioregistry walk found no disk or NIC nub"
+	fi
+	return 0
+}
+ioreg_gate
+
+
 if [ ! -c /dev/iocatalogue ]; then
 	echo "IOCATALOGUE-SKIP: no /dev/iocatalogue (kernel without the K2 IOCatalogue)"
 	exit 0
