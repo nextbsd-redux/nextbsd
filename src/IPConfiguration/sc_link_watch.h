@@ -3,9 +3,11 @@
  *
  * Replaces hwreg_subscribe (the removed hwregd attach trigger) with a
  * watch on State:/Network/Interface/<if>/Link, which the standalone
- * KernelEventMonitor publishes from PF_ROUTE link-state changes. On a
- * link going Active the watcher invokes the caller's callback so
- * ipconfigd can start DHCP on the freshly-linked interface.
+ * KernelEventMonitor publishes from PF_ROUTE link-state changes. The
+ * watcher invokes the caller's callback whenever an interface's Link
+ * entity appears or changes — carrying the current Active state — so
+ * ipconfigd can both admin-up a newly-seen interface (whose link is
+ * still down) and start DHCP once the link is Active.
  */
 #ifndef SC_LINK_WATCH_H
 #define SC_LINK_WATCH_H
@@ -13,13 +15,17 @@
 #include <stdint.h>
 
 /*
- * Invoked (on a libdispatch worker thread) when an interface's link
- * becomes Active. `ifname` is the BSD interface name; `lease_cap_secs`
+ * Invoked (on a libdispatch worker thread) for every change to a watched
+ * interface's Link entity, AND for each one found by the initial scan.
+ * `ifname` is the BSD interface name; `active` is non-zero when the link
+ * is up (Active:true), zero when it is present but down. `lease_cap_secs`
  * is forwarded verbatim from sc_link_watch_start. The callback decides
- * whether to DHCP (e.g. skip if already bound) and may block in the
- * DHCP + lease loop.
+ * what to do (e.g. admin-up the interface when down so its link can
+ * negotiate; DHCP when up, skipping if already bound) and may block in
+ * the DHCP + lease loop. lo0 is filtered by the watcher.
  */
-typedef void (*sc_link_watch_cb)(const char *ifname, uint32_t lease_cap_secs);
+typedef void (*sc_link_watch_cb)(const char *ifname, int active,
+	    uint32_t lease_cap_secs);
 
 /*
  * Open a configd session, watch State:/Network/Interface/<if>/Link,
