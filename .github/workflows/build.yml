@@ -252,7 +252,14 @@ jobs:
     # Run after a real build, OR when the build was skipped for a tests-only
     # change (then we boot the latest published continuous ISO). Do NOT run if
     # the build actually failed.
-    if: "!cancelled() && needs.changes.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped')"
+    #
+    # #83: SKIP the boot test on push-to-main. A push to main is the merge of a
+    # PR that already passed this exact boot test on its merge ref — re-running
+    # it only re-exposes the flaky qemu-serial loader handshake (it has bitten
+    # several merges while the identical code passed in-PR). We still boot-test
+    # on pull_request (the gate) and on repository_dispatch (the base-updated
+    # cascade has no PR, so it must be tested).
+    if: "!cancelled() && needs.changes.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') && github.event_name != 'push'"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -313,12 +320,17 @@ jobs:
   release:
     name: release (FreeBSD ${{ matrix.variant }} ${{ matrix.arch }})
     needs: [build, test]
-    # Publish when both jobs pass on main — either from a push to this repo or
-    # from an upstream cascade (repository_dispatch: base-updated), so an
-    # upstream change (releng -> toolchain -> compat -> nextbsd) refreshes the
-    # published continuous ISO, not just nextbsd-repo pushes. PRs and other
-    # branches build + test but never publish (ref is not refs/heads/main).
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'repository_dispatch')
+    # Publish on main from a push to this repo or an upstream cascade
+    # (repository_dispatch: base-updated). PRs and other branches never publish.
+    #
+    # #83: the boot `test` is SKIPPED on push-to-main (it already passed in-PR),
+    # so this gate can't require test=success on a push — it would never run.
+    # Instead: publish when build succeeded AND test either passed (dispatch
+    # cascade) OR was skipped (push). always() is required so a skipped `test`
+    # need doesn't auto-skip release. A failed build still blocks publish; a
+    # tests-only push (build skipped) yields build.result!='success' -> no
+    # republish, which is correct.
+    if: ${{ always() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'repository_dispatch') && needs.build.result == 'success' && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
