@@ -947,38 +947,36 @@ expect {
     }
 }
 
-# MDNS-IFWATCH — iter 4 reactive interface watcher. mDNSConfigStore.c's
-# SCDS subscriber now wakes the mDNS main thread (via a self-pipe onto
-# the event loop) to re-walk the interface list when ipconfigd publishes
-# / removes a service IPv4 (State:/Network/Global/IPv4 or
-# State:/Network/Service/.+/IPv4), logging MDNS-IFWATCH-OK. run.sh emits
-# a definite -OK or -SKIP line (it never relies on a bare timeout), so
-# this block always matches. Non-fatal by design: the routing-socket
-# watcher in mDNSPosix.c stays a parallel trigger, so -SKIP is not a
-# regression — keep this informational, not a hard gate.
-expect {
-    timeout {
-        puts "\nSKIP: MDNS-IFWATCH marker not seen (treated as non-fatal)"
-    }
-    "MDNS-IFWATCH-SKIP" {
-        puts "\nSKIP: no SCDS-driven interface re-walk observed (routing-socket watcher still active)"
-    }
-    "MDNS-IFWATCH-OK" {
-        puts "\nOK: SCDS interface/service IPv4 change drove a mDNSResponder interface re-walk (iter 4)"
-    }
-}
-
-# MDNS-DNSSD — iter 3 end-to-end DNS-SD round-trip via libdns_sd.
-# dnssdtest registers "_iter3._tcp" / "freebsd-launchd-mach-iter3"
-# through libdns_sd's AF_UNIX channel to the daemon, then browses
-# for the same type and waits up to 5s for its own registration to
-# show up in the browse callback. Proves the engine + uds_daemon +
-# libdns_sd stubs all wire correctly end-to-end — the first iter
-# that exercises a real DNS-SD round-trip from a client binary.
+# MDNS-IFWATCH (iter 4, OPTIONAL) + MDNS-DNSSD (iter 3, REQUIRED) — handled
+# in ONE expect block because the two markers can arrive in either order and
+# MDNS-IFWATCH may not arrive at all. When IFWATCH was a SEPARATE preceding
+# block, an absent IFWATCH marker made it sit in its own timeout while run.sh
+# raced ahead and emitted MDNS-DNSSD-OK unmatched — then the DNSSD block saw
+# its marker already scroll past and failed "marker not seen" (it had, in
+# fact, succeeded). Folding them together makes the optional IFWATCH markers
+# non-terminating (exp_continue) so they can never swallow the required DNSSD
+# marker; only DNSSD-OK/FAIL (or a real absence-of-DNSSD timeout) ends it.
+#
+# MDNS-IFWATCH — mDNSConfigStore.c's SCDS subscriber wakes the mDNS main
+# thread (self-pipe onto the event loop) to re-walk the interface list when
+# ipconfigd publishes/removes a service IPv4. Informational only: the
+# routing-socket watcher in mDNSPosix.c is a parallel trigger, so its absence
+# is not a regression.
+# MDNS-DNSSD — end-to-end DNS-SD round-trip via libdns_sd: dnssdtest
+# registers "_iter3._tcp" / "freebsd-launchd-mach-iter3" through the daemon's
+# AF_UNIX channel and browses for it. This is the hard gate.
 expect {
     timeout {
         puts "\nFAIL: MDNS-DNSSD marker not seen"
         exit 1
+    }
+    "MDNS-IFWATCH-OK" {
+        puts "\nOK: SCDS interface/service IPv4 change drove a mDNSResponder interface re-walk (iter 4)"
+        exp_continue
+    }
+    "MDNS-IFWATCH-SKIP" {
+        puts "\nSKIP: no SCDS-driven interface re-walk observed (routing-socket watcher still active)"
+        exp_continue
     }
     "MDNS-DNSSD-FAIL" {
         puts "\nFAIL: dnssdtest could not round-trip Register + Browse via libdns_sd"
