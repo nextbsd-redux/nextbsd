@@ -76,7 +76,7 @@ if [ -x /usr/libexec/kextd ]; then
 	esac
 fi
 
-# K3b step 3 (#217): kextd AUTO-STARTS at boot (org.nextbsd.kextd.plist,
+# K3b step 3 (#217): kextd AUTO-STARTS at boot (com.apple.kextd.plist,
 # RunAtLoad System) — it registers HOST_KEXTD_PORT, pushes personalities, and
 # serves load requests. Its startup markers (kextd: listening / opening repo /
 # repo opened / pushed / ready) already appear in this serial log above, since
