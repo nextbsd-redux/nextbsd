@@ -229,4 +229,28 @@ if [ -x /usr/libexec/kextd ]; then
 else
 	echo "KEXTD-LOAD-SKIP: kextd not present"
 fi
+
+# EM-AUTOLOAD — #219 (D1): Intel ethernet em -> IntelEthernet.kext auto-load.
+# With `nodevice em` (#219) the qemu e1000 (82540EM) hits device_nomatch and
+# kextd loads IntelEthernet.kext (if_em) to bind it as em0. The loaded kld file
+# is named after the bundle executable (IntelEthernet), so kextstat/kldstat show
+# it ONLY when it was auto-loaded — a built-in em driver does not appear as a
+# separate loaded file, so the kext-loaded signal cleanly distinguishes the two.
+# em0's address is read with `ipconfig` (Apple IPConfiguration); FreeBSD's
+# ifconfig(8) is NOT on the stripped image, so it must not be used here. Emits:
+#   EM-AUTOLOAD-OK    — IntelEthernet auto-loaded AND em0 has an address
+#   EM-AUTOLOAD-SKIP  — IntelEthernet not loaded -> em is built in (pre-#219)
+#   EM-AUTOLOAD-FAIL  — IntelEthernet loaded but em0 has no address (bind/DHCP failed)
+em_addr=$(ipconfig getifaddr em0 2>/dev/null || true)
+if kextstat 2>/dev/null | grep -qi intelethernet || \
+   kldstat 2>/dev/null | grep -qi intelethernet; then
+	if [ -n "$em_addr" ]; then
+		echo "EM-AUTOLOAD-OK: em0 ($em_addr) up via kextd auto-load of IntelEthernet.kext"
+	else
+		echo "EM-AUTOLOAD-FAIL: IntelEthernet.kext loaded but em0 has no address (bind/DHCP failed)"
+	fi
+else
+	echo "EM-AUTOLOAD-SKIP: IntelEthernet not loaded — em is built into the kernel (pre-#219 nodevice em)"
+fi
+
 exit 0

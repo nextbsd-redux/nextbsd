@@ -1341,6 +1341,31 @@ expect {
     }
 }
 
+# EM-AUTOLOAD — #219 (D1) Intel ethernet em → IntelEthernet.kext auto-load gate.
+# Once the kernel drops `device em` (nodevice em in config/NEXTBSD), the qemu
+# e1000 hits device_nomatch and kextd auto-loads IntelEthernet.kext to bind it
+# as em0. Self-SKIPs while em is still built in (em0 up but no loaded kext), so
+# this stays green on pre-#219 kernels / images; only EM-AUTOLOAD-FAIL gates
+# (em0 absent — the auto-load+bind did not happen). Non-fatal on timeout (older
+# run.sh lacking this step). This is the full #219 auto-load+attach proof: unlike
+# the 8260 (KEXTD-LOAD above, no qemu device), qemu DOES emulate the e1000, so
+# the bind actually exercises here.
+expect {
+    timeout {
+        puts "\nWARN: EM-AUTOLOAD marker not seen (pre-#219 run.sh — informational)"
+    }
+    "EM-AUTOLOAD-FAIL" {
+        puts "\nFAIL: em0 absent — IntelEthernet.kext did not auto-load/bind (#219)"
+        exit 1
+    }
+    "EM-AUTOLOAD-SKIP" {
+        puts "\nWARN: EM-AUTOLOAD-SKIP — em still built into the kernel (pre-#219 nodevice em)"
+    }
+    "EM-AUTOLOAD-OK" {
+        puts "\nOK: em0 up via kextd auto-load of IntelEthernet.kext (#219)"
+    }
+}
+
 set timeout 60
 
 # Stage 4: clean halt so qemu exits 0 (the -no-reboot flag turns
