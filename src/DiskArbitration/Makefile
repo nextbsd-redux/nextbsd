@@ -37,6 +37,18 @@ CFLAGS+=	-Wmissing-prototypes -Wpointer-arith
 # where DA itself uses no blocks. Same flag libIOKit + its clients carry.
 CFLAGS+=	-fblocks
 
+# ${SYSROOT}/usr/include MUST precede freebsd-shims: <IOKit/IOKitLib.h> has
+# to resolve to libIOKit's REAL installed header (IONotificationPortRef /
+# io_iterator_t / io_name_t / IOServiceAddMatchingNotification, which
+# da_iokit_subscribe.c needs) and NOT the freebsd-shims IOKit stub
+# (IOKitWaitQuiet-only, for launchctl). IOKitLib.h is the only header present
+# in both trees; AvailabilityMacros.h / NSSystemDirectories.h etc. are
+# Apple-only and still resolve from freebsd-shims regardless of order.
+SYSROOT?=
+.if !empty(SYSROOT)
+CFLAGS+=	-I${SYSROOT}/usr/include
+.endif
+
 # <servers/bootstrap.h> (bootstrap_check_in + bootstrap_port global)
 # comes from liblaunch; its bootstrap.h pulls in Apple shim headers
 # (AvailabilityMacros.h, ...) from launchd/freebsd-shims. Same -I
@@ -44,9 +56,7 @@ CFLAGS+=	-fblocks
 CFLAGS+=	-I${.CURDIR}/../launchd/liblaunch
 CFLAGS+=	-I${.CURDIR}/../launchd/freebsd-shims
 
-SYSROOT?=
 .if !empty(SYSROOT)
-CFLAGS+=	-I${SYSROOT}/usr/include
 LDFLAGS+=	-L${SYSROOT}/usr/lib/system
 LDFLAGS+=	-Wl,-rpath,/usr/lib/system
 LDFLAGS+=	-Wl,--allow-shlib-undefined
