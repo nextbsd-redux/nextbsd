@@ -13,7 +13,7 @@
 	     makes the kernel re-fire requests when kextd pushes, so kextd may
 	     start at any time without losing loads. -->
 	<key>Label</key>
-	<string>org.nextbsd.kextd</string>
+	<string>com.apple.kextd</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>/usr/libexec/kextd</string>
