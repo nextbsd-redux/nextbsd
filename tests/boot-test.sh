@@ -989,8 +989,8 @@ expect {
 
 # DA-BOOT — DiskArbitration iter 1 liveness. bootstrap_look_up for
 # com.apple.DiskArbitration via datest. Iter 1 ships just the daemon
-# skeleton (no hwregd subscription / libgeom / framework yet); iter 2+
-# adds storage event subscription via Mach RPC to hwregd.
+# skeleton (no libgeom / framework yet); the kernel notify-channel
+# storage subscription (C1.3, #218) is wired in da_iokit_subscribe.c.
 expect {
     timeout {
         puts "\nFAIL: DA-BOOT marker not seen"
@@ -1009,17 +1009,18 @@ expect {
 # da_iokit_gate inspects /var/log/diskarbitrationd.stderr: the daemon now learns
 # of storage arrival/removal from the kernel notify channel via libIOKit's
 # IOServiceAddMatchingNotification (recv port registered via IOREGIOCWATCH on
-# /dev/ioregistry, #225), keeping the legacy org.freebsd.hwregd pub/sub as a
-# fallback. DA-IOKIT-OK means it registered the kernel watches AND saw a storage
-# device (the qemu vtblk/ahci boot disk) arrive through that channel.
+# /dev/ioregistry, #225). hwregd was retired in #218 — the kernel is the
+# registry, no userland fallback. DA-IOKIT-OK means it registered the kernel
+# watches AND saw a storage device (the qemu vtblk/ahci boot disk) arrive
+# through that channel.
 #
 # CRITICAL (MDNS-IFWATCH lesson): OK/SKIP are folded into ONE block that ends
 # only on OK/FAIL/SKIP, with a NON-FATAL timeout, so an absent/optional marker
 # can never sit blocking while a later required marker scrolls past. The gate
-# SELF-SKIPs when /dev/ioregistry is absent (kernel predating K1 — DA used the
-# hwregd fallback) or when no storage device surfaced through the kernel
-# channel, so this stays green on pre-K1 continuous images. Only DA-IOKIT-FAIL
-# gates (a kernel watch registration failed outright).
+# SELF-SKIPs when /dev/ioregistry is absent (kernel predating K1 — no storage
+# events) or when no storage device surfaced through the kernel channel, so this
+# stays green on pre-K1 continuous images. Only DA-IOKIT-FAIL gates (a kernel
+# watch registration failed outright).
 expect {
     timeout {
         puts "\nWARN: DA-IOKIT marker not seen (pre-C1.3 run.sh — informational)"
@@ -1029,7 +1030,7 @@ expect {
         exit 1
     }
     "DA-IOKIT-SKIP" {
-        puts "\nWARN: DA-IOKIT-SKIP — no /dev/ioregistry, hwregd fallback, or no storage arrival"
+        puts "\nWARN: DA-IOKIT-SKIP — no /dev/ioregistry or no storage arrival"
     }
     "DA-IOKIT-OK" {
         puts "\nOK: diskarbitrationd saw a storage device via the kernel notify channel (/dev/ioregistry)"
@@ -1227,7 +1228,7 @@ send "/usr/tests/nextbsd-iokit/run.sh\r"
 # IOREG — C1.1 (#218) libIOKit registry migration gate. nextbsd-iokit/run.sh
 # now runs the IOREG check FIRST (before the IOCATALOGUE/IOKIT-LOOKUP/KEXTD-LOAD
 # markers below) so a K1-but-no-K2 kernel still reports it. libIOKit now walks
-# the K1 /dev/ioregistry device (falling back to hwregd when absent); the
+# the K1 /dev/ioregistry device (hwregd retired in #218); the
 # `ioreg` tool is run over the live device and the root + boot disk/NIC nubs are
 # asserted. This is also the deferred K1 functional proof. The on-image script
 # self-SKIPs on a kernel predating /dev/ioregistry, so this stays green on
