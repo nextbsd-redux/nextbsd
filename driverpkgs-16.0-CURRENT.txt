@@ -2,7 +2,7 @@
 #
 # Picked up by build.sh when FREEBSD_VARIANT=16.0-CURRENT. See
 # driverpkgs-15.0-RELEASE.txt for the wider context (purpose, install
-# path, hwregd autoload).
+# path, kernel-matcher autoload).
 #
 # 16.0-CURRENT runs __FreeBSD_version 1600000+, so drm-latest-kmod
 # (Linux 6.9 DRM-KPI) — which IGNORE-gates on 1600018+ for this

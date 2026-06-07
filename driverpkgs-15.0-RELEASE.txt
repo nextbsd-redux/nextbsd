@@ -13,13 +13,12 @@
 # 1500509+ (15-STABLE / 16.0-CURRENT). See driverpkgs-15-STABLE.txt
 # and driverpkgs-16.0-CURRENT.txt for the newer-kernel variants.
 #
-# These are the kernel modules hwregd autoloads on hot-plug and on
-# the boot-backlog drain (see src/hwregd/hwregd.c act_on_match +
-# drain_deferred_loads). /boot/loader.conf is intentionally minimal —
-# only root-mount drivers (ahci / nvme / virtio_* / mfi) plus mach.ko
-# — so every other device driver lives in /boot/modules where these
-# packages install, and hwregd kldload(2)s them on demand when the
-# kernel posts a nomatch event for matching hardware.
+# These are the kernel modules the in-kernel IOKit matcher (#211)
+# auto-loads on device attach (via the kextd loader). /boot/loader.conf
+# is intentionally minimal — only root-mount drivers (ahci / nvme /
+# virtio_* / mfi) plus mach.ko — so every other device driver lives in
+# /boot/modules where these packages install, and the kernel matcher
+# loads them on demand when matching hardware attaches.
 #
 # NVIDIA needs LICENSES_ACCEPTED=NVIDIA — already set by build.sh's
 # chroot pkg-install env.

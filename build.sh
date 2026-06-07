@@ -216,8 +216,8 @@ echo "    /bin/sh -> $(readlink "$WORK/rootfs/bin/sh" 2>/dev/null || echo real) 
 # gpu-firmware-kmod, realtek-re-kmod, utouch-kmod, wifi-firmware-kmod).
 # Temporarily disabled to trim CI build time — the firmware+kmod set
 # adds several minutes per run to the chroot pkg install, and CI's
-# QEMU/SLIRP target doesn't exercise any of them. hwregd still
-# kldload(2)s any module that happens to live in /boot/modules; the
+# QEMU/SLIRP target doesn't exercise any of them. The in-kernel
+# matcher (#211) auto-loads any module that lives in /boot/modules; the
 # missing packages just mean those modules aren't present in the
 # rootfs at all on CI builds. Real-hardware images can re-enable by
 # uncommenting the validation + grep block below.
@@ -1450,69 +1450,14 @@ echo "==> launchctl built + ldd verified"
 #      previously a kld-only kextload/kextstat/kextunload trio, #183.)
 
 #
-# 3r. build hwregd (src/hwregd/hwregd.c).
-#     freebsd-launchd-mach hardware registry daemon. Phase 0 iter 1:
-#     pure libc daemon, no library deps. Reads /dev/devctl events
-#     and logs them to /var/log/hwregd.log via the launchd plist's
-#     StandardErrorPath. Future iters add the devmatch search_hints
-#     parser, kldload-on-nomatch, and Mach pub/sub.
-#     Install: /usr/sbin/hwregd. Smoke marker HWREGD-BUILD-OK.
-#     Plan: pkgdemon.github.io/freebsd-hardware-registry-iokit-plan.html
+# 3r. hwregd retired (#218). The kernel /dev/ioregistry registry (K1, #214) +
+#     IOREGIOCWATCH notify channel (#225) replaced the hwregd userland daemon
+#     and its MIG pub/sub; libIOKit + DiskArbitration now consume the kernel
+#     directly. The src/hwregd tree and its hwregtest/hwregquery clients were
+#     removed with the consumer fallbacks. usr/sbin is created here for the
+#     daemons built below (configd is the first).
 #
-echo "==> building hwregd (src/hwregd)"
 mkdir -p "$WORK/rootfs/usr/sbin"
-# Phase 1 iter 2a — generate the hwreg.defs MIG stubs (hwreg_server()
-# demux for hwregd, hwregUser.c for the hwregquery test client). Same
-# mig.sh + migcom path as the launchd MIG step above.
-HWREG_MIG="$WORK/hwreg-mig"
-mkdir -p "$HWREG_MIG"
-( cd "$HWREG_MIG" && \
-  MIGCC=cc MIGCOM="$WORK/rootfs/usr/libexec/migcom" \
-  /bin/sh "$ROOT/src/bootstrap_cmds/migcom.tproj/mig.sh" \
-    -I"$ROOT/src/libmach/include" \
-    -header hwreg.h -user hwregUser.c \
-    -server hwregServer.c -sheader hwregServer.h \
-    "$ROOT/src/hwregd/hwreg.defs" ) \
-  || { echo "FAIL: mig could not process hwreg.defs"; exit 1; }
-test -s "$HWREG_MIG/hwregServer.c" \
-    || { echo "FAIL: mig produced no hwregServer.c"; exit 1; }
-make -C "$ROOT/src/hwregd" \
-    DESTDIR="$WORK/rootfs" \
-    SYSROOT="$WORK/rootfs" \
-    MIGOUT="$HWREG_MIG" \
-    all install
-ls -lh "$WORK/rootfs/usr/sbin/hwregd"
-test -x "$WORK/rootfs/usr/sbin/hwregd" \
-    || { echo "FAIL: /usr/sbin/hwregd not installed or not executable"; exit 1; }
-echo "==> HWREGD-BUILD-OK"
-
-# hwregtest — iter 3b-ii test client for hwregd's Mach pub/sub bus.
-# run.sh subscribes with it and checks for the HWREG-PUBSUB-OK marker.
-echo "==> building hwregtest"
-mkdir -p "$WORK/rootfs/usr/tests/freebsd-launchd-mach"
-cc -I"$WORK/rootfs/usr/include" \
-   -L"$WORK/rootfs/usr/lib/system" \
-   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
-   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hwregtest" \
-   "$ROOT/src/hwregd/hwregtest.c" \
-   -llaunch -lsystem_kernel
-test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hwregtest" \
-    || { echo "FAIL: hwregtest not built"; exit 1; }
-
-# hwregquery — iter 2a/2b test client for hwregd's Mach-RPC query API.
-# Links the MIG user stub hwregUser.c (+ libxpc for the nvlist API the
-# iter 2b property-bag / lookup routines use); run.sh exercises it and
-# checks for the HWREG-RPC-OK marker.
-echo "==> building hwregquery"
-cc -I"$HWREG_MIG" -I"$ROOT/src/hwregd" -I"$ROOT/src/libxpc" \
-   -I"$WORK/rootfs/usr/include" \
-   -L"$WORK/rootfs/usr/lib/system" \
-   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
-   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hwregquery" \
-   "$ROOT/src/hwregd/hwregquery.c" "$HWREG_MIG/hwregUser.c" \
-   -llaunch -lsystem_kernel -lxpc
-test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hwregquery" \
-    || { echo "FAIL: hwregquery not built"; exit 1; }
 
 #
 # 3r2. build configd (src/configd/) — configd iter 1.
@@ -1915,11 +1860,11 @@ echo "==> scbridgetest built"
 
 #
 # 3r4. build libIOKit (src/libIOKit/) — the IOKit userland facade,
-#      iter 1. Thin CF wrapper over hwregd's MIG hwreg.defs Mach RPC
-#      (K1 of the IOKit-userland port plan). iter 1 ships the read-
-#      only registry walk (IORegistryGetRootEntry, GetChildIterator,
-#      IOIteratorNext, GetName, GetPath, IOObject{Retain,Release}).
-#      Re-uses hwregd's MIG client stubs in $HWREG_MIG.
+#      iter 1. Thin CF wrapper over the kernel /dev/ioregistry registry
+#      (K1 of the IOKit-userland port plan, #214/#225). iter 1 ships the
+#      read-only registry walk (IORegistryGetRootEntry, GetChildIterator,
+#      IOIteratorNext, GetName, GetPath, IOObject{Retain,Release}); later
+#      iters add properties + matching + notifications.
 #      Installs /usr/lib/system/libIOKit.so + /usr/include/IOKit/.
 #      Plan: pkgdemon.github.io/freebsd-hardware-registry-iokit-plan.html
 #
@@ -1930,7 +1875,6 @@ mkdir -p "$WORK/rootfs/usr/include/IOKit"
 make -C "$ROOT/src/libIOKit" \
     DESTDIR="$WORK/rootfs" \
     SYSROOT="$WORK/rootfs" \
-    MIGOUT="$HWREG_MIG" \
     all install
 # Re-prime ldconfig hints now that libIOKit is installed.
 chroot "$WORK/rootfs" ldconfig -m /usr/lib /usr/lib/system
@@ -2024,9 +1968,9 @@ kd_leaf=$(echo "$kd_out" | grep -n "org.nextbsd.test.leaf" | head -1 | cut -d: -
     || { echo "FAIL: load order wrong — base ($kd_base) must precede leaf ($kd_leaf)"; exit 1; }
 echo "==> kextdeps built + installed + dependency smoke passed"
 
-# iokittest — libIOKit iter 1 walk test client. Walks the hwregd
-# registry through the IOKit facade and prints IOKIT-WALK-OK. run.sh
-# runs it and checks for the marker.
+# iokittest — libIOKit iter 1 walk test client. Walks the kernel
+# /dev/ioregistry registry through the IOKit facade and prints
+# IOKIT-WALK-OK. run.sh runs it and checks for the marker.
 # -fblocks: IOKitLib.h pulls CoreFoundation; CF headers carry block
 # typedefs that need -fblocks even when iokittest itself doesn't use
 # any. Same flag the libSystemConfiguration test clients carry.
@@ -2064,7 +2008,7 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/iokitmatchtest" \
 echo "==> iokitmatchtest built"
 
 # ioreg(8) — libIOKit iter 3 registry introspection tool. Walks the
-# hwregd registry via the IOKit facade and prints the tree (+
+# kernel /dev/ioregistry registry via the IOKit facade and prints the tree (+
 # properties with -l), modelled on macOS ioreg. The K1 success marker
 # in the IOKit-userland port plan ("ioreg -l works"). Installs to
 # /usr/sbin/ioreg. run.sh runs it and emits IOKIT-IOREG-OK/FAIL.
@@ -2483,11 +2427,11 @@ echo "==> mDNSResponder + mdnstest + libdns_sd + dnssdtest built"
 # 3w. Phase K DiskArbitration — daemon + storage subscription.
 #     Apple's DiskArbitration daemon. It claims com.apple.DiskArbitration via
 #     bootstrap_check_in, then subscribes to storage device arrival/removal.
-#     C1.3 (#218): the subscription now prefers the kernel notify channel via
+#     C1.3 (#218): the subscription uses the kernel notify channel via
 #     libIOKit's IOServiceAddMatchingNotification (recv port registered with the
-#     in-kernel registry via IOREGIOCWATCH on /dev/ioregistry, #225), keeping the
-#     legacy org.freebsd.hwregd raw pub/sub as a fallback when /dev/ioregistry is
-#     absent. This step runs AFTER step 3r4 (libIOKit build + install), so the
+#     in-kernel registry via IOREGIOCWATCH on /dev/ioregistry, #225). hwregd was
+#     retired in #218 — the kernel is the registry, no userland fallback.
+#     This step runs AFTER step 3r4 (libIOKit build + install), so the
 #     Makefile's -lIOKit resolves against the installed /usr/lib/system/libIOKit.so
 #     and <IOKit/IOKitLib.h> against the installed /usr/include/IOKit header.
 #     Plan: pkgdemon.github.io/freebsd-disk-arbitration-plan.html

@@ -13,7 +13,7 @@
 
 PROG=		diskarbitrationd
 MAN=
-SRCS=		diskarbitrationd.c da_iokit_subscribe.c hwreg_subscribe.c
+SRCS=		diskarbitrationd.c da_iokit_subscribe.c
 
 NO_MAN=		yes
 
@@ -64,7 +64,7 @@ LDFLAGS+=	-Wl,--allow-shlib-undefined
 
 # -llaunch: bootstrap_check_in + the bootstrap_port global.
 # -lsystem_kernel: mach_msg + the Mach port syscalls behind it.
-# -lpthread: the hwregd subscription receive-loop runs on its own thread.
+# -lpthread: libIOKit's IONotificationPort receive loop (linked transitively).
 # -lIOKit: the IONotificationPort / IOServiceAddMatchingNotification kernel-
 #   notify path (C1.3, #218). -lCoreFoundation: the CFDictionary matching-dict
 #   object model libIOKit's API consumes. -ldispatch + -lBlocksRuntime: the

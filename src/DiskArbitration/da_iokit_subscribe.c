@@ -1,14 +1,13 @@
 /*
  * da_iokit_subscribe.c — DiskArbitration kernel-notify subscription (C1.3, #218).
  *
- * Migrates DA's device-arrival/removal subscription off hwregd's raw pub/sub
- * onto the kernel notify channel, reusing libIOKit's now-proven
- * IOServiceAddMatchingNotification path (#241, IOKITNOTIFY-OK): an
- * IONotificationPort whose recv port libIOKit registers with the in-kernel
- * registry via IOREGIOCWATCH on /dev/ioregistry, the kernel pushing a binary
- * ioreg_event_msg per matching event into libIOKit's receive thread, which fires
- * our IOServiceMatchingCallback (delivered on DA's dispatch queue via
- * IONotificationPortSetDispatchQueue).
+ * Drives DA's device-arrival/removal subscription over the kernel notify
+ * channel, reusing libIOKit's proven IOServiceAddMatchingNotification path
+ * (#241, IOKITNOTIFY-OK): an IONotificationPort whose recv port libIOKit
+ * registers with the in-kernel registry via IOREGIOCWATCH on /dev/ioregistry,
+ * the kernel pushing a binary ioreg_event_msg per matching event into
+ * libIOKit's receive thread, which fires our IOServiceMatchingCallback
+ * (delivered on DA's dispatch queue via IONotificationPortSetDispatchQueue).
  *
  * DA cares about MANY storage classes (da/ada/nvd/nda/cd/mmcsd), but the kernel
  * watch criteria is a single flat by-value struct that matches ONE class or a
@@ -16,18 +15,13 @@
  * leaves every kernel criteria field zeroed, which the kernel ABI treats as a
  * wildcard) for both arrival (kIOFirstMatchNotification) and departure
  * (kIOTerminatedNotification), and keeps the is_storage_name() filter
- * client-side in the callback — exactly the receive-all-then-filter shape
- * hwreg_subscribe.c uses today.
+ * client-side in the callback (receive-all-then-filter).
  *
- * FALLBACK: this path needs /dev/ioregistry. If it is absent (a kernel image
+ * No fallback: this path needs /dev/ioregistry. If it is absent (a kernel image
  * predating the K1 in-kernel registry), da_iokit_subscribe_start() returns -1
- * (without a failure marker) and diskarbitrationd falls back to the legacy
- * hwreg_subscribe_start() pub/sub path, which stays compiled (PR7/#218 removes
- * it). libIOKit itself also has an internal hwregd fallback inside
- * IONotificationPortCreate, but DA gates on /dev/ioregistry up front so a
- * fallback run takes the SAME hwregd subscription DA used before this change,
- * and so the DA-IOKIT gate can self-SKIP cleanly (rather than double-subscribing
- * via two different hwregd clients).
+ * (without a failure marker) and the daemon runs without storage events; the
+ * DA-IOKIT gate self-SKIPs. hwregd (the former fallback) was retired in #218 —
+ * the kernel is now the registry.
  */
 #include "da_iokit_subscribe.h"
 
@@ -235,18 +229,17 @@ da_iokit_subscribe_start(void)
 
 	/*
 	 * Gate on /dev/ioregistry up front. If it is absent, the kernel notify
-	 * channel does not exist on this image; return -1 (no failure marker)
-	 * so the caller takes the legacy hwregd fallback. (libIOKit would itself
-	 * fall back to hwregd internally, but DA prefers a single explicit
-	 * decision here so the fallback uses DA's own hwreg_subscribe client and
-	 * the DA-IOKIT gate can self-SKIP rather than report a half-kernel path.)
+	 * channel does not exist on this image (a kernel predating K1); return -1
+	 * (no failure marker) so the daemon stays alive without storage events and
+	 * the DA-IOKIT gate self-SKIPs rather than reporting a half-kernel path.
+	 * There is no userland fallback — hwregd was retired in #218.
 	 */
 	{
 		int fd = open("/dev/ioregistry", O_RDONLY | O_CLOEXEC);
 
 		if (fd < 0) {
 			xlog("no /dev/ioregistry — kernel notify channel "
-			    "unavailable; falling back to hwregd pub/sub");
+			    "unavailable; storage events disabled");
 			return (-1);
 		}
 		(void)close(fd);

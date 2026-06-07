@@ -7,7 +7,7 @@
  * storage subscription yet, no libgeom enrichment, no DA framework
  * surface — iter 2+ wires those.
  *
- * Same shape as ipconfigd / hwregd / configd / mDNSResponder iter 1:
+ * Same shape as ipconfigd / configd / mDNSResponder iter 1:
  * stand the daemon up first, prove the Mach plumbing + launchd
  * MachServices broker + plist + build infra all work, THEN bring in
  * real subsystem code. iter-1 marker DA-BOOT-OK is emitted by the
@@ -15,9 +15,9 @@
  *
  * Architecture (per the refactored plan,
  * pkgdemon.github.io/freebsd-disk-arbitration-plan.html):
- *   iter 2  — subscribe to hwregd's storage device class events
- *             (system=DEVFS subsystem=ada0/da0/nvd0/cd0 ATTACH /
- *             DETACH) via Mach RPC, log them.
+ *   iter 2  — subscribe to storage device arrival/removal over the
+ *             kernel notify channel (ada0/da0/nvd0/cd0 ATTACH /
+ *             DETACH), log them.
  *   iter 3  — libgeom enrichment: partition table, UUID, label,
  *             FS-type detection.
  *   iter 4  — DiskArbitration.framework + da.defs MIG IDL serving
@@ -26,7 +26,6 @@
  *   iter 5+ — mount-policy arbitration, per-user agent.
  */
 #include "da_iokit_subscribe.h"
-#include "hwreg_subscribe.h"
 
 #include <mach/mach.h>
 #include <servers/bootstrap.h>
@@ -78,8 +77,7 @@ main(int argc, char **argv)
 	(void)argc;
 	(void)argv;
 
-	xlog("starting (iter 1 — daemon skeleton, no hwregd subscription "
-	    "or libgeom enrichment yet)");
+	xlog("starting (iter 1 — daemon skeleton, no libgeom enrichment yet)");
 
 	(void)memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = on_signal;
@@ -88,7 +86,7 @@ main(int argc, char **argv)
 	(void)sigaction(SIGHUP, &sa, NULL);
 
 	/*
-	 * Claim the Mach service. Same pattern hwregd / configd /
+	 * Claim the Mach service. Same pattern configd /
 	 * ipconfigd / mDNSResponder use: bootstrap_check_in returns the
 	 * receive right for the service port that launchd's plist-
 	 * declared MachServices broker has set up. Once we hold the
@@ -106,26 +104,20 @@ main(int argc, char **argv)
 	    "(receive right=0x%x)", (unsigned)svc);
 
 	/*
-	 * Subscribe to storage device arrival/removal. Prefer the kernel
-	 * notify channel (C1.3, #218): libIOKit's IOServiceAddMatchingNotification
+	 * Subscribe to storage device arrival/removal over the kernel notify
+	 * channel (C1.3, #218): libIOKit's IOServiceAddMatchingNotification
 	 * registers DA's recv port with the in-kernel registry via IOREGIOCWATCH
 	 * on /dev/ioregistry (#225), and the kernel pushes a binary event per
 	 * matching device. DA registers a match-all arrival + departure watch and
 	 * filters storage names (ada*, da*, nvd*, nda*, cd*, mmcsd*) client-side.
 	 *
-	 * FALLBACK: if /dev/ioregistry is absent (a kernel image predating K1) or
-	 * registration fails, da_iokit_subscribe_start returns -1 and we fall
-	 * back to the legacy org.freebsd.hwregd raw pub/sub path
-	 * (hwreg_subscribe_start), which tags the same storage names and emits
-	 * DA-WATCH-OK on its subscription ack. Both paths are non-fatal — if
-	 * neither backend is up yet, the daemon stays alive without storage
-	 * events and KeepAlive respawns / relookups happen as services appear.
+	 * Non-fatal: if /dev/ioregistry is absent (a kernel image predating K1) or
+	 * registration fails, da_iokit_subscribe_start returns -1 and the daemon
+	 * stays alive without storage events — KeepAlive respawns / relookups
+	 * happen as services appear. (hwregd, the former fallback, was retired in
+	 * #218; the kernel is now the registry.)
 	 */
-	if (da_iokit_subscribe_start() != 0) {
-		xlog("storage subscription: kernel notify channel unavailable, "
-		    "using hwregd pub/sub fallback");
-		(void)hwreg_subscribe_start();
-	}
+	(void)da_iokit_subscribe_start();
 
 	/*
 	 * iter-1 hold-alive loop. Spin on sleep(60) — SIGTERM/SIGHUP

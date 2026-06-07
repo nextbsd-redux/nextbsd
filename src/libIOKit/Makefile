@@ -1,16 +1,16 @@
 # libIOKit — the IOKit userland facade (freebsd-launchd-mach K1+K2 of
 # the IOKit-userland port plan), iter 1.
 #
-# A thin CF-flavored client over hwregd's MIG Mach RPC (hwreg.defs).
-# Not a port of Apple's IOKitUser source — that library decomposes to
-# a kernel device.defs surface this repo has no kernel for; instead
-# the facade re-aims the Apple-shape API at hwregd. iter 1 ships the
-# read-only registry walk (IORegistryGetRootEntry,
-# IORegistryEntryGetChildIterator, IOIteratorNext, GetName, GetPath,
-# IOObject{Retain,Release}); later iters add properties + matching,
-# the ioreg tool, and notifications.
+# A thin CF-flavored client over the kernel /dev/ioregistry device (the
+# in-kernel IORegistry, nextbsd#214/#225). Not a port of Apple's IOKitUser
+# source — that library decomposes to a kernel device.defs surface this repo
+# implements differently; instead the facade re-aims the Apple-shape API at
+# /dev/ioregistry. iter 1 ships the read-only registry walk
+# (IORegistryGetRootEntry, IORegistryEntryGetChildIterator, IOIteratorNext,
+# GetName, GetPath, IOObject{Retain,Release}); later iters add properties +
+# matching, the ioreg tool, and notifications.
 #
-# Build:   cd src/libIOKit && make SYSROOT=... MIGOUT=...
+# Build:   cd src/libIOKit && make SYSROOT=...
 # Install: make DESTDIR=/path/to/rootfs install
 #   -> /usr/lib/system/libIOKit.so(.1)
 #   -> /usr/include/IOKit/IOKitLib.h
@@ -19,26 +19,6 @@ LIB=		IOKit
 SHLIB_MAJOR=	1
 
 SRCS=		IOKitLib.c IOKitMatching.c IOKitNotify.c
-
-# hwregUser.c — MIG-generated hwreg.defs client stubs. build.sh runs
-# mig (step 3r) and passes MIGOUT=$HWREG_MIG. Same wiring
-# libSystemConfiguration's Makefile uses for configUser.c. Pulled in
-# only when MIGOUT is set; a bare standalone build (no MIGOUT) fails
-# at the generated #include "hwreg.h", which is expected.
-MIGOUT?=
-.if !empty(MIGOUT)
-.PATH:			${MIGOUT}
-.PATH:			${.CURDIR}/../hwregd
-SRCS+=			hwregUser.c
-CFLAGS+=		-I${MIGOUT}
-CFLAGS+=		-I${.CURDIR}/../hwregd	# hwreg_mig_types.h
-CFLAGS.hwregUser.c+=	-w
-# <mach/notify.h> (pulled by the MIG stubs) redefines the MACH_NOTIFY_*
-# macros <mach/message.h> also defines — identical values, whitespace
-# differs. A benign clash in the vendored mach headers; the hwregd and
-# libSystemConfiguration build steps suppress it the same way.
-CFLAGS+=		-Wno-macro-redefined
-.endif
 
 # WARNS=0: the public header pulls the whole CoreFoundation public
 # header tree (for later iters' CFDictionary / CFString surfaces).
@@ -65,11 +45,10 @@ CFLAGS+=	-O2 -pipe -fblocks
 # order matches first; that umbrella -I also picks up IOKitInternal.h.
 CFLAGS+=	-I${.CURDIR}
 
-# <servers/bootstrap.h> (bootstrap_look_up + the bootstrap_port
-# global) comes from liblaunch; its bootstrap.h pulls Apple shim
-# headers from launchd/freebsd-shims. -I libxpc gives IOKitMatching.c
-# the `nv.h` nvlist API (hwregd's property bag + hwreg_lookup
-# criteria cross MIG as packed nvlist blobs).
+# liblaunch + launchd/freebsd-shims supply Apple shim headers
+# (AvailabilityMacros.h etc.) pulled transitively by the CoreFoundation
+# public headers. -I libxpc gives IOKitMatching.c the `nv.h` nvlist API
+# used to decode the /dev/ioregistry IOREGIOCPROPS property bag.
 CFLAGS+=	-I${.CURDIR}/../launchd/liblaunch
 CFLAGS+=	-I${.CURDIR}/../launchd/freebsd-shims
 CFLAGS+=	-I${.CURDIR}/../libxpc
@@ -87,14 +66,13 @@ LIBDIR=		${PREFIX}/lib/system
 # -lCoreFoundation: the CFDictionary / CFString / CFNumber object
 # model behind the iter-2 property and matching surface (the public
 # header pulls CoreFoundation too). -lxpc: the nvlist API
-# (nvlist_unpack / pack / next / get_*) IOKitMatching.c uses to
-# bridge hwregd's property bag and lookup criteria. -ldispatch +
+# (nvlist_unpack / next / get_*) IOKitMatching.c uses to decode the
+# /dev/ioregistry IOREGIOCPROPS property bag. -ldispatch +
 # -lBlocksRuntime: the iter-4 IONotificationPortSetDispatchQueue +
 # dispatch_async_f path (the public header pulls <dispatch/dispatch.h>
 # too). -lsystem_kernel: mach_msg + the Mach port syscalls behind
-# the MIG client stubs. -llaunch: bootstrap_look_up +
-# bootstrap_port. -lpthread: pthread_once for the lazy hwregd
-# service-port lookup + the IONotificationPort receive thread.
+# the IONotificationPort receive loop. -lpthread: pthread_once for the
+# lazy /dev/ioregistry fd + the IONotificationPort receive thread.
 LDADD+=		-lCoreFoundation -lxpc
 LDADD+=		-ldispatch -lBlocksRuntime
 LDADD+=		-lsystem_kernel -llaunch -lpthread

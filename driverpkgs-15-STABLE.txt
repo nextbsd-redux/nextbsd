@@ -1,7 +1,7 @@
 # driverpkgs-15-STABLE.txt — driver kmods for FreeBSD 15-STABLE.
 #
 # Picked up by build.sh when FREEBSD_VARIANT=15-STABLE. The wider
-# context (purpose, install path, hwregd autoload) lives in
+# context (purpose, install path, kernel-matcher autoload) lives in
 # driverpkgs-15.0-RELEASE.txt — read that first if you're not sure
 # why these files exist.
 #

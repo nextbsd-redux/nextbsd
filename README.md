@@ -25,7 +25,7 @@ see [PORTING.md](PORTING.md).
 | `init(8)` is PID 1 | **`launchd(8)`** is PID 1 |
 | Services configured in `/etc/rc.conf` + `rc.d/*` scripts | Services configured in **`.plist` files** under `/System/Library/LaunchDaemons/` |
 | `syslogd(8)` is the FreeBSD-base one | **Apple's `syslogd`** (Apple System Logger / ASL) plus `notifyd` for the cross-process event bus |
-| Hardware events surfaced via `devd(8)` (when present) | **`hwregd`** &mdash; an IOKit-shaped hardware registry daemon with a Mach-IPC API |
+| Hardware events surfaced via `devd(8)` (when present) | **In-kernel IORegistry** (`/dev/ioregistry`) with an IOKit-shaped notification channel, browsed via Apple's `libIOKit` / `ioreg` |
 | `dhclient(8)` brings up network interfaces | **`ipconfigd`** (Apple's IPConfiguration) handles DHCPv4 + ARP probing + lease renewal + publishes to `SCDynamicStore` |
 | `mdnsd` (if installed) for Bonjour | **Apple's `mDNSResponder`** with its full client API |
 | Nothing equivalent | **`configd`** + `SCDynamicStore` &mdash; the system-wide key/value store every Apple-source daemon expects |
@@ -96,7 +96,7 @@ launchctl list com.apple.syslogd     # plist for one specific job
 ipconfig getifaddr em0
 ipconfig ifcount
 
-# ioreg — Apple's hardware-registry browser, served by hwregd
+# ioreg — Apple's hardware-registry browser, over the in-kernel IORegistry
 ioreg -l                             # the full registry tree
 ioreg -c PCIDevice                   # filter by class
 ioreg -n hostb0                      # find by name
@@ -123,8 +123,8 @@ pkg info
                                 | starts + monitors
                                 v
    +----------------+----------------+---------------+---------------+
-   | syslogd + ASL  |   notifyd      |    hwregd     |   configd     |
-   | /var/log/...   | event pub/sub  | hw registry   | SCDynamicStore|
+   | syslogd + ASL  |   notifyd      | mDNSResponder |   configd     |
+   | /var/log/...   | event pub/sub  | Bonjour/DNS-SD| SCDynamicStore|
    +----------------+----------------+---------------+---------------+
                                                      |
                                                      | publishes to

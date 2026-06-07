@@ -1338,11 +1338,11 @@ else
 fi
 
 # DA-IOKIT — C1.3 (#218) DiskArbitration kernel-notify migration gate.
-# diskarbitrationd now learns of storage arrival/removal from the kernel notify
+# diskarbitrationd learns of storage arrival/removal from the kernel notify
 # channel via libIOKit's IOServiceAddMatchingNotification (recv port registered
-# with the in-kernel registry via IOREGIOCWATCH on /dev/ioregistry, #225), with
-# the legacy org.freebsd.hwregd pub/sub kept as a fallback when /dev/ioregistry
-# is absent. The daemon logs to /var/log/diskarbitrationd.stderr (its own lines
+# with the in-kernel registry via IOREGIOCWATCH on /dev/ioregistry, #225). hwregd
+# was retired in #218, so there is no userland fallback — the kernel is the
+# registry. The daemon logs to /var/log/diskarbitrationd.stderr (its own lines
 # use DISTINCT spellings — DA-IOKIT-ARMED / DA-IOKIT-REGFAIL / "DA-IOKIT: storage"
 # — that deliberately do NOT collide with the canonical DA-IOKIT-OK/SKIP/FAIL
 # tokens this gate emits, so dumping the daemon log below cannot trip the
@@ -1357,10 +1357,10 @@ fi
 # blocking while a later required marker scrolls past (the MDNS-IFWATCH lesson):
 #   DA-IOKIT-OK    — daemon registered the kernel watches + saw a storage device
 #   DA-IOKIT-FAIL  — daemon logged DA-IOKIT-FAIL (a watch registration failed)
-#   DA-IOKIT-SKIP  — no /dev/ioregistry, the daemon took the hwregd fallback, or
-#                    no storage device surfaced through the kernel channel
-# SKIP keeps this green on a continuous image whose kernel predates K1 (DA falls
-# back to hwregd) — only DA-IOKIT-FAIL gates in boot-test.sh.
+#   DA-IOKIT-SKIP  — no /dev/ioregistry (kernel predates K1), or no storage
+#                    device surfaced through the kernel channel
+# SKIP keeps this green on a continuous image whose kernel predates K1 (no
+# /dev/ioregistry, so no storage events) — only DA-IOKIT-FAIL gates in boot-test.sh.
 da_iokit_gate()
 {
     log=/var/log/diskarbitrationd.stderr
@@ -1378,16 +1378,9 @@ da_iokit_gate()
         echo "DA-IOKIT-FAIL: diskarbitrationd failed to register kernel watches"
         return 0
     fi
-    # No /dev/ioregistry on this kernel — DA took the hwregd fallback path.
+    # No /dev/ioregistry on this kernel (predates K1) — no storage events.
     if [ ! -c /dev/ioregistry ]; then
-        echo "DA-IOKIT-SKIP: no /dev/ioregistry (kernel predating K1); DA used the hwregd fallback"
-        return 0
-    fi
-    # The daemon itself self-reported the hwregd fallback (e.g. registration
-    # bailed before the kernel path armed). Treat as SKIP, not FAIL — the
-    # fallback subscription still works.
-    if grep -q 'using hwregd pub/sub fallback' "$log" 2>/dev/null; then
-        echo "DA-IOKIT-SKIP: diskarbitrationd took the hwregd pub/sub fallback"
+        echo "DA-IOKIT-SKIP: no /dev/ioregistry (kernel predating K1)"
         return 0
     fi
     # Definite success: a storage device arrived through the kernel channel.

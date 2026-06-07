@@ -1,24 +1,21 @@
 /*
  * IOKitMatching.c — libIOKit iter 2: properties + matching.
  *
- * Translates hwregd's nvlist-shaped property bag into CFDictionary
- * (hwregd emits only NV_TYPE_STRING and NV_TYPE_NUMBER — see
- * src/hwregd/hwregd.c hwreg_get_properties) and Apple-style
- * IOService matching dictionaries into hwreg_lookup criteria. The
- * understood matching keys are IOProviderClass / IOClass (→
- * hwregd's `class`) and IONameMatch (→ `name`); other Apple keys
- * (IOPropertyMatch, IOBSDName, IOService plane parents/children,
- * regex) are silently ignored and the lookup falls back to whatever
- * criteria survived.
+ * Translates the kernel /dev/ioregistry nvlist-shaped property bag
+ * (IOREGIOCPROPS, carrying NV_TYPE_STRING and NV_TYPE_NUMBER) into a
+ * CFDictionary, and Apple-style IOService matching dictionaries into the
+ * flat kernel `struct ioreg_criteria` used by IOREGIOC{LOOKUP,WATCH}. The
+ * understood matching keys are IOProviderClass / IOClass (→ `classname`)
+ * and IONameMatch (→ `name`); other Apple keys (IOPropertyMatch, IOBSDName,
+ * IOService plane parents/children, regex) are silently ignored and the
+ * lookup uses whatever criteria survived.
  */
 #include <IOKit/IOKitLib.h>
 #include "IOKitInternal.h"
 
 #include "ioregistry.h"		/* vendored K1 ABI; canonical in nextbsd-kernel */
 
-#include "hwreg.h"		/* fallback MIG stubs */
-#include "hwreg_mig_types.h"
-#include "nv.h"			/* libxpc nvlist API */
+#include "nv.h"			/* libxpc nvlist API (IOREGIOCPROPS property bag) */
 
 #include <CoreFoundation/CoreFoundation.h>
 
@@ -29,8 +26,8 @@
 #include <string.h>
 
 /*
- * Build a CFMutableDictionary from a hwregd property nvlist.
- * Unknown nvlist entry types are silently skipped; hwregd's bag
+ * Build a CFMutableDictionary from a kernel property nvlist.
+ * Unknown nvlist entry types are silently skipped; the bag
  * never carries them today but keeping the switch permissive lets
  * later enrichment add types without breaking old clients.
  */
@@ -66,9 +63,9 @@ nvlist_to_cfdict(const nvlist_t *nv, CFAllocatorRef allocator)
 			break;
 		}
 		case NV_TYPE_NUMBER: {
-			/* hwregd packs the unsigned PCI/id/state fields
+			/* The kernel packs the unsigned PCI/id/state fields
 			 * as nvlist NUMBERs (uint64_t). CFNumber speaks
-			 * signed; cast through int64_t — every hwregd
+			 * signed; cast through int64_t — every such
 			 * value fits the positive half. */
 			uint64_t n = nvlist_get_number(nv, key);
 			int64_t s = (int64_t)n;
@@ -158,7 +155,10 @@ IORegistryEntryCreateCFProperties(io_registry_entry_t entry,
 		return (KERN_INVALID_ARGUMENT);
 
 	fd = __io_ioregistry_fd();
-	if (fd >= 0) {
+	if (fd < 0)
+		return (kIOReturnNoDevice);
+
+	{
 		void *buf;
 		uint32_t len = 0;
 
@@ -176,25 +176,6 @@ IORegistryEntryCreateCFProperties(io_registry_entry_t entry,
 		}
 		nv = nvlist_unpack(buf, len);
 		free(buf);
-		if (nv == NULL)
-			return (kIOReturnError);
-		*properties = nvlist_to_cfdict(nv, allocator);
-		nvlist_destroy(nv);
-		return (*properties != NULL ? KERN_SUCCESS : kIOReturnError);
-	}
-
-	/* Fallback: hwregd MIG property bag. */
-	{
-		mach_port_t svc = __io_hwregd_port();
-		hwreg_blob_t blob;
-		mach_msg_type_number_t cnt = 0;
-
-		if (svc == MACH_PORT_NULL)
-			return (kIOReturnNoDevice);
-		kr = hwreg_get_properties(svc, entry->node_id, blob, &cnt);
-		if (kr != KERN_SUCCESS)
-			return (kr);
-		nv = nvlist_unpack(blob, cnt);
 		if (nv == NULL)
 			return (kIOReturnError);
 		*properties = nvlist_to_cfdict(nv, allocator);
@@ -229,8 +210,8 @@ IOObjectGetClass(io_object_t object, io_name_t className)
 	if (object == NULL || object->kind != IOOBJ_KIND_ENTRY ||
 	    className == NULL)
 		return (KERN_INVALID_ARGUMENT);
-	/* __io_node picks /dev/ioregistry (IOREGIOCNODE) or hwregd; only
-	 * the class field is wanted, so the rest are skipped (NULLs). */
+	/* __io_node reads /dev/ioregistry (IOREGIOCNODE); only the class
+	 * field is wanted, so the rest are skipped (NULLs). */
 	kr = __io_node(object->node_id, NULL, NULL, NULL, classname, NULL,
 	    NULL);
 	if (kr != KERN_SUCCESS)
@@ -293,52 +274,21 @@ __io_extract_criteria(CFDictionaryRef matching, struct io_criteria *out)
 	    out->name, sizeof(out->name));
 }
 
-kern_return_t
-__io_pack_criteria(const struct io_criteria *c, uint8_t *blob,
-    uint32_t *out_size)
-{
-	nvlist_t *crit;
-	void *packed;
-	size_t psz = 0;
-
-	crit = nvlist_create_dictionary(0);
-	if (crit == NULL)
-		return (kIOReturnError);
-	if (c->klass[0] != '\0')
-		nvlist_add_string(crit, "class", c->klass);
-	if (c->name[0] != '\0')
-		nvlist_add_string(crit, "name", c->name);
-	if (c->driver[0] != '\0')
-		nvlist_add_string(crit, "driver", c->driver);
-
-	packed = nvlist_pack(crit, &psz);
-	nvlist_destroy(crit);
-	if (packed == NULL || psz > sizeof(hwreg_blob_t)) {
-		free(packed);
-		return (kIOReturnError);
-	}
-	(void)memcpy(blob, packed, psz);
-	free(packed);
-	*out_size = (uint32_t)psz;
-	return (KERN_SUCCESS);
-}
-
 /*
  * Fill a flat kernel `struct ioreg_criteria` from an io_criteria (#218).
  *
- * The kernel /dev/ioregistry IOREGIOC{WATCH,LOOKUP} handlers no longer unpack a
- * packed-nvlist criteria bag — they read this fixed by-value struct directly.
- * That removes the libxpc-vs-libnv wire-format mismatch (libxpc's packer added
- * an extra nvlh_type header byte and omitted the trailing nvph_nitems the
- * kernel's libnv reader expects) which made every kernel nvlist_unpack() return
- * NULL, so IOREGIOCWATCH returned EINVAL and no watch ever registered — the #218
+ * The kernel /dev/ioregistry IOREGIOC{WATCH,LOOKUP} handlers read this fixed
+ * by-value struct directly (no packed-nvlist criteria bag). That avoids the
+ * libxpc-vs-libnv wire-format mismatch (libxpc's packer added an extra
+ * nvlh_type header byte and omitted the trailing nvph_nitems the kernel's libnv
+ * reader expects) which made every kernel nvlist_unpack() return NULL, so
+ * IOREGIOCWATCH returned EINVAL and no watch ever registered — the #218
  * round-trip break. There is no serialization here, so nothing can mismatch.
  *
  * Mapping: io_criteria name/klass/driver -> the kernel criteria name/classname/
  * driver. Empty source strings are left zeroed (the kernel treats a zero field
  * as a wildcard). The pci_* numeric criteria are unused by the current Apple
- * matching keys and stay zero (also wildcard). The hwregd RPC fallback still
- * uses __io_pack_criteria() (libxpc nvlist over MIG — a working transport).
+ * matching keys and stay zero (also wildcard).
  */
 void
 __io_fill_criteria(const struct io_criteria *c, struct ioreg_criteria *out)
@@ -353,12 +303,11 @@ __io_fill_criteria(const struct io_criteria *c, struct ioreg_criteria *out)
 }
 
 /*
- * Translate `matching` to a hwreg_lookup criteria nvlist, pack it,
- * fire the RPC, return the malloc'd id array + count. Caller frees
- * `ids_out`. KERN_SUCCESS even when 0 matches — the result is
- * "no matches", not an error.
+ * Translate `matching` to a flat kernel criteria struct, fire IOREGIOCLOOKUP,
+ * return the malloc'd id array + count. Caller frees `ids_out`. KERN_SUCCESS
+ * even when 0 matches — the result is "no matches", not an error.
  */
-#define IOKIT_MAX_MATCHES	128	/* hwreg.defs hwreg_id_array_t bound */
+#define IOKIT_MAX_MATCHES	128	/* fixed per-call id array bound */
 
 static kern_return_t
 lookup_matches(CFDictionaryRef matching, uint64_t **ids_out,
@@ -368,14 +317,16 @@ lookup_matches(CFDictionaryRef matching, uint64_t **ids_out,
 	struct io_criteria c;
 	uint64_t *ids;
 	uint32_t cap = IOKIT_MAX_MATCHES;
-	kern_return_t kr;
+
+	if (fd < 0)
+		return (kIOReturnNoDevice);
 
 	__io_extract_criteria(matching, &c);
 	ids = calloc(cap, sizeof(*ids));
 	if (ids == NULL)
 		return (KERN_RESOURCE_SHORTAGE);
 
-	if (fd >= 0) {
+	{
 		struct ioreg_lookup lk;
 
 		/* Flat by-value criteria (#218): no nvlist packing, so nothing to
@@ -393,34 +344,6 @@ lookup_matches(CFDictionaryRef matching, uint64_t **ids_out,
 			lk.count = cap;
 		*ids_out = ids;
 		*count_out = lk.count;
-		return (KERN_SUCCESS);
-	}
-
-	/* Fallback: hwregd MIG — libxpc-packed nvlist criteria over the RPC (a
-	 * working transport: libxpc on both ends). */
-	{
-		mach_port_t svc = __io_hwregd_port();
-		hwreg_blob_t critblob;
-		uint32_t psz = 0;
-		mach_msg_type_number_t nids = cap;
-
-		if (svc == MACH_PORT_NULL) {
-			free(ids);
-			return (kIOReturnNoDevice);
-		}
-		kr = __io_pack_criteria(&c, critblob, &psz);
-		if (kr != KERN_SUCCESS) {
-			free(ids);
-			return (kr);
-		}
-		kr = hwreg_lookup(svc, critblob, (mach_msg_type_number_t)psz,
-		    ids, &nids);
-		if (kr != KERN_SUCCESS) {
-			free(ids);
-			return (kr);
-		}
-		*ids_out = ids;
-		*count_out = nids;
 		return (KERN_SUCCESS);
 	}
 }

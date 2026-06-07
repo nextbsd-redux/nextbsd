@@ -13,8 +13,8 @@
 set -u
 
 # IOREG — libIOKit registry walk via the K1 /dev/ioregistry device (C1.1,
-# #218). libIOKit now prefers /dev/ioregistry (IOREGIOC* ioctls) and falls
-# back to hwregd; this gate exercises the live path with the `ioreg` tool and
+# #218). libIOKit reads /dev/ioregistry (IOREGIOC* ioctls); hwregd was retired
+# in #218. This gate exercises the live path with the `ioreg` tool and
 # asserts the registry root plus the boot disk/NIC nubs are visible. It is also
 # the deferred K1 functional proof (the kernel registry actually answers).
 #

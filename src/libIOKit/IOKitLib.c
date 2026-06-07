@@ -1,30 +1,22 @@
 /*
  * IOKitLib.c — libIOKit: read-only registry walk.
  *
- * Each registry entry point first tries the kernel /dev/ioregistry
- * device (the K1 in-kernel registry, nextbsd#214) via ioctl, and
- * FALLS BACK to hwregd's MIG RPC (src/hwregd/hwreg.defs) when that
- * device is absent — i.e. an old-kernel image predating K1. This
- * dual-path is the consumer migration (#218): /dev/ioregistry walks
- * the live newbus device_t tree directly, whereas hwregd is only a
- * userland cache; the hwregd path stays compiled as the safety net
- * until hwregd is retired (PR7).
+ * Each registry entry point reads the kernel /dev/ioregistry device (the
+ * K1 in-kernel registry, nextbsd#214) via ioctl. /dev/ioregistry walks the
+ * live newbus device_t tree directly; the kernel is now the registry, so
+ * there is no userland fallback — hwregd (#218) has been retired.
  *
- * Handles are client-side structs with a node id (or a captured id
- * array for iterators) and an atomic refcount. The /dev/ioregistry
- * fd and the hwregd service port are both resolved lazily on first
- * use under one pthread_once and cached process-wide.
+ * Handles are client-side structs with a node id (or a captured id array
+ * for iterators) and an atomic refcount. The /dev/ioregistry fd is
+ * resolved lazily on first use under one pthread_once and cached
+ * process-wide.
  */
 #include <IOKit/IOKitLib.h>
 #include "IOKitInternal.h"
 
 #include "ioregistry.h"		/* vendored K1 ABI; canonical in nextbsd-kernel */
 
-#include "hwreg.h"		/* MIG hwreg.defs user-side stubs (fallback) */
-#include "hwreg_mig_types.h"	/* hwreg_id_array_t / hwreg_name_t / ... */
-
 #include <mach/mach.h>
-#include <servers/bootstrap.h>
 
 #include <sys/syscall.h>	/* NO_SYSCALL */
 #ifndef NO_SYSCALL
@@ -42,27 +34,20 @@
 #include <unistd.h>		/* syscall(2) */
 
 /*
- * Lazy registry-backend resolution, shared under one pthread_once:
+ * Lazy /dev/ioregistry resolution under one pthread_once:
  *   - ioregistry_fd: fd to /dev/ioregistry, or -1 if the K1 device is
- *     absent (then everything falls back to hwregd).
- *   - hwregd_port:   send right to org.freebsd.hwregd (the fallback),
- *     or MACH_PORT_NULL if that lookup also fails.
+ *     absent (a kernel image predating K1 — then the registry calls
+ *     return kIOReturnNoDevice / IO_OBJECT_NULL).
  * The fd is process-lived and intentionally never closed (libIOKit is
  * a long-lived facade); O_CLOEXEC keeps it from leaking across exec.
  */
 static pthread_once_t	io_backend_once = PTHREAD_ONCE_INIT;
 static int		ioregistry_fd = -1;
-static mach_port_t	hwregd_port = MACH_PORT_NULL;
 
 static void
 io_backend_init(void)
 {
 	ioregistry_fd = open("/dev/ioregistry", O_RDONLY | O_CLOEXEC);
-	/* hwregd is the fallback; resolve it too so a per-call miss on
-	 * /dev/ioregistry doesn't pay a bootstrap_look_up each time. */
-	if (bootstrap_look_up(bootstrap_port,
-	    "org.freebsd.hwregd", &hwregd_port) != KERN_SUCCESS)
-		hwregd_port = MACH_PORT_NULL;
 }
 
 int
@@ -72,76 +57,38 @@ __io_ioregistry_fd(void)
 	return (ioregistry_fd);
 }
 
-mach_port_t
-__io_hwregd_port(void)
-{
-	(void)pthread_once(&io_backend_once, io_backend_init);
-	return (hwregd_port);
-}
-
 /*
- * __io_node — fetch one node's scalar fields. Prefers /dev/ioregistry
+ * __io_node — fetch one node's scalar fields from /dev/ioregistry
  * (IOREGIOCNODE: fill struct ioreg_node.id, ioctl, copy out the
- * fields, which are laid out to match hwreg_get_node's out-params);
- * falls back to hwregd's hwreg_get_node. Any out-pointer may be NULL.
+ * fields). Any out-pointer may be NULL.
  */
 kern_return_t
 __io_node(uint64_t node_id, uint64_t *parent_id, int *state,
     char name[32], char classname[32], char driver[32], char path[256])
 {
 	int fd = __io_ioregistry_fd();
+	struct ioreg_node n;
 
-	if (fd >= 0) {
-		struct ioreg_node n;
+	if (fd < 0)
+		return (kIOReturnNoDevice);
 
-		(void)memset(&n, 0, sizeof(n));
-		n.id = node_id;
-		if (ioctl(fd, IOREGIOCNODE, &n) != 0)
-			return (kIOReturnNotFound);
-		if (parent_id != NULL)
-			*parent_id = n.parent_id;
-		if (state != NULL)
-			*state = n.state;
-		if (name != NULL)
-			(void)memcpy(name, n.name, IOREG_NAME_MAX);
-		if (classname != NULL)
-			(void)memcpy(classname, n.classname, IOREG_NAME_MAX);
-		if (driver != NULL)
-			(void)memcpy(driver, n.driver, IOREG_NAME_MAX);
-		if (path != NULL)
-			(void)memcpy(path, n.path, IOREG_PATH_MAX);
-		return (KERN_SUCCESS);
-	}
-
-	/* Fallback: hwregd MIG. hwreg_get_node requires all out-params,
-	 * so supply local scratch for any the caller passed as NULL. */
-	{
-		mach_port_t svc = __io_hwregd_port();
-		uint64_t lparent;
-		int lstate;
-		char lname[32], lclass[32], ldriver[32], lpath[256];
-		kern_return_t kr;
-
-		if (svc == MACH_PORT_NULL)
-			return (kIOReturnNoDevice);
-		kr = hwreg_get_node(svc, node_id, &lparent, &lstate,
-		    lname, lclass, ldriver, lpath);
-		if (kr != KERN_SUCCESS)
-			return (kr);
-		if (parent_id != NULL)
-			*parent_id = lparent;
-		if (state != NULL)
-			*state = lstate;
-		if (name != NULL)
-			(void)strlcpy(name, lname, 32);
-		if (classname != NULL)
-			(void)strlcpy(classname, lclass, 32);
-		if (driver != NULL)
-			(void)strlcpy(driver, ldriver, 32);
-		if (path != NULL)
-			(void)strlcpy(path, lpath, 256);
-		return (KERN_SUCCESS);
-	}
+	(void)memset(&n, 0, sizeof(n));
+	n.id = node_id;
+	if (ioctl(fd, IOREGIOCNODE, &n) != 0)
+		return (kIOReturnNotFound);
+	if (parent_id != NULL)
+		*parent_id = n.parent_id;
+	if (state != NULL)
+		*state = n.state;
+	if (name != NULL)
+		(void)memcpy(name, n.name, IOREG_NAME_MAX);
+	if (classname != NULL)
+		(void)memcpy(classname, n.classname, IOREG_NAME_MAX);
+	if (driver != NULL)
+		(void)memcpy(driver, n.driver, IOREG_NAME_MAX);
+	if (path != NULL)
+		(void)memcpy(path, n.path, IOREG_PATH_MAX);
+	return (KERN_SUCCESS);
 }
 
 io_object_t
@@ -180,29 +127,16 @@ IORegistryGetRootEntry(mach_port_t mainPort __unused)
 	int fd = __io_ioregistry_fd();
 	uint64_t root = 0;
 
-	if (fd >= 0) {
-		if (ioctl(fd, IOREGIOCROOT, &root) != 0 || root == 0)
-			return (IO_OBJECT_NULL);
-		return (__io_alloc_entry(root));
-	}
-
-	/* Fallback: hwregd MIG. */
-	{
-		mach_port_t svc = __io_hwregd_port();
-
-		if (svc == MACH_PORT_NULL)
-			return (IO_OBJECT_NULL);
-		if (hwreg_get_root(svc, &root) != KERN_SUCCESS || root == 0)
-			return (IO_OBJECT_NULL);
-		return (__io_alloc_entry(root));
-	}
+	if (fd < 0)
+		return (IO_OBJECT_NULL);
+	if (ioctl(fd, IOREGIOCROOT, &root) != 0 || root == 0)
+		return (IO_OBJECT_NULL);
+	return (__io_alloc_entry(root));
 }
 
 /*
- * Fixed capacity for a single get-children call. The hwregd fallback
- * caps a get_children reply at 128 ids (the hwreg_id_array_t bound),
- * so mirror it for the /dev/ioregistry path too — the kernel reports
- * the true count via ioreg_children.count and we clamp to this.
+ * Fixed capacity for a single get-children call. The kernel reports the
+ * true child count via ioreg_children.count; we clamp to this.
  */
 #define IOKIT_MAX_CHILDREN	128
 
@@ -218,11 +152,14 @@ IORegistryEntryGetChildIterator(io_registry_entry_t entry,
 	    iterator == NULL)
 		return (KERN_INVALID_ARGUMENT);
 
+	if (fd < 0)
+		return (kIOReturnNoDevice);
+
 	ids = calloc(cap, sizeof(*ids));
 	if (ids == NULL)
 		return (KERN_RESOURCE_SHORTAGE);
 
-	if (fd >= 0) {
+	{
 		struct ioreg_children c;
 
 		(void)memset(&c, 0, sizeof(c));
@@ -234,31 +171,10 @@ IORegistryEntryGetChildIterator(io_registry_entry_t entry,
 			return (kIOReturnError);
 		}
 		/* Truncation: c.count > cap means more children than the
-		 * fixed array holds; clamp to what we captured (mirrors the
-		 * hwreg.defs 128-id reply bound the fallback path inherits). */
+		 * fixed array holds; clamp to what we captured. */
 		if (c.count > cap)
 			c.count = cap;
 		*iterator = __io_alloc_iterator(ids, c.count);
-		return (*iterator != IO_OBJECT_NULL ? KERN_SUCCESS
-		    : KERN_RESOURCE_SHORTAGE);
-	}
-
-	/* Fallback: hwregd MIG. */
-	{
-		mach_port_t svc = __io_hwregd_port();
-		mach_msg_type_number_t nids = cap;
-		kern_return_t kr;
-
-		if (svc == MACH_PORT_NULL) {
-			free(ids);
-			return (kIOReturnNoDevice);
-		}
-		kr = hwreg_get_children(svc, entry->node_id, ids, &nids);
-		if (kr != KERN_SUCCESS) {
-			free(ids);
-			return (kr);
-		}
-		*iterator = __io_alloc_iterator(ids, nids);
 		return (*iterator != IO_OBJECT_NULL ? KERN_SUCCESS
 		    : KERN_RESOURCE_SHORTAGE);
 	}
@@ -284,8 +200,8 @@ IORegistryEntryGetName(io_registry_entry_t entry, io_name_t name)
 	    name == NULL)
 		return (KERN_INVALID_ARGUMENT);
 	/* Only the name is wanted; __io_node fills just that field and
-	 * skips the rest (NULLs). The 32/256 buffers match both the K1
-	 * ioreg_node[name] and the hwreg.defs hwreg_name_t bound. */
+	 * skips the rest (NULLs). The 32/256 buffers match the K1
+	 * ioreg_node[name] bound. */
 	kr = __io_node(entry->node_id, NULL, NULL, hwname, NULL, NULL, NULL);
 	if (kr != KERN_SUCCESS)
 		return (kr);
@@ -339,7 +255,7 @@ IOObjectRelease(io_object_t object)
 /*
  * iter 5 — bus quiescence.
  *
- * These do NOT use hwregd's MIG RPC: bus-busy state lives in the kernel
+ * Bus-busy state lives in the kernel
  * (mach.ko's device_match_start/device_match_end consumer), so we read
  * `sysctl mach.bus.busy` and resolve+call the `mach_wait_quiet` syscall
  * directly — the same lazy "resolve via sysctl mach.syscall.<name>,
