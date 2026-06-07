@@ -14,14 +14,17 @@
 
 set -u
 
-# 1. kernel-side: mach.ko loaded.
-if kldstat -m mach >/dev/null 2>&1; then
-    echo "MACH-SMOKE-OK: mach.ko is loaded"
-    kldstat -v 2>/dev/null | grep -i mach || true
+# 1. kernel-side: mach module registered. mach is compiled INTO the kernel
+# (#181), so it's a kernel module rather than a separate .ko. The kld* CLIs
+# were retired (#193); kextstat -m queries the module by name via modfind(2)
+# (a kept syscall), which finds it whether it's a .ko or in-kernel.
+if kextstat -m mach >/dev/null 2>&1; then
+    echo "MACH-SMOKE-OK: mach module is registered"
+    kextstat 2>/dev/null | grep -i mach || true
 else
-    echo "MACH-SMOKE-FAIL: mach.ko is NOT loaded"
-    echo "kldstat output:"
-    kldstat
+    echo "MACH-SMOKE-FAIL: mach module is NOT registered"
+    echo "kextstat output:"
+    kextstat
     exit 1
 fi
 
@@ -276,9 +279,12 @@ fi
 # Plan: https://pkgdemon.github.io/freebsd-srclist-build-plan.html
 FBSDGLUE_FAIL=0
 # bin/ + sbin/ (kernel-bound + UFS):
+# NOTE: the kld* CLIs (kldload/kldunload/kldstat/kldconfig/kldxref) were
+# RETIRED (#193) — macOS ships kextload/kextstat, not kldload. The kld*(2)
+# SYSCALLS stay; kextload/kextstat (src/kext_tools) drive them. They are
+# asserted ABSENT below.
 for fbin in /bin/freebsd-version /bin/kenv \
             /sbin/devfs /sbin/fsck /sbin/fsck_ffs \
-            /sbin/kldconfig /sbin/kldload /sbin/kldstat /sbin/kldunload \
             /sbin/ldconfig /sbin/mount /sbin/newfs /sbin/tunefs /sbin/umount; do
     if [ ! -x "$fbin" ]; then
         echo "FBSDGLUE-FAIL: $fbin missing or not executable"
@@ -293,9 +299,11 @@ if [ ! -x /usr/bin/ldd ]; then
     FBSDGLUE_FAIL=1
 fi
 # usr.sbin/ FreeBSD HW/FS introspection + user mgmt + libexec.
+# (kldxref retired with the rest of the kld* CLIs, #193 — linker.hints is
+# generated at build time, not on the image.)
 for fbin in /usr/sbin/devctl /usr/sbin/diskinfo \
             /usr/sbin/fstyp /usr/sbin/gstat \
-            /usr/sbin/kldxref /usr/sbin/pciconf /usr/sbin/pw \
+            /usr/sbin/pciconf /usr/sbin/pw \
             /usr/libexec/save-entropy; do
     if [ ! -x "$fbin" ]; then
         echo "FBSDGLUE-FAIL: $fbin missing or not executable"
@@ -322,12 +330,31 @@ if [ -d /rescue ]; then
     ls -la /rescue 2>&1 | head -5 || true
     FBSDGLUE_FAIL=1
 fi
+# Verify the kld* CLIs are ABSENT (#193) — macOS ships kextload/kextstat,
+# not kldload. The kld*(2) SYSCALLS stay (kextstat uses them); only the
+# user-space CLI front-ends are retired.
+for kldcli in /sbin/kldload /sbin/kldunload /sbin/kldstat \
+              /sbin/kldconfig /usr/sbin/kldxref; do
+    if [ -e "$kldcli" ]; then
+        echo "FBSDGLUE-FAIL: $kldcli still present; kld* CLIs should be retired (#193)"
+        ls -la "$kldcli" 2>&1 || true
+        FBSDGLUE_FAIL=1
+    fi
+done
+# Verify the kext* replacements ARE present.
+for kextcli in /usr/sbin/kextload /usr/sbin/kextunload /usr/sbin/kextstat; do
+    if [ ! -x "$kextcli" ]; then
+        echo "FBSDGLUE-FAIL: $kextcli missing; should replace the retired kld* CLI"
+        ls -la "$kextcli" 2>&1 || true
+        FBSDGLUE_FAIL=1
+    fi
+done
 if [ $FBSDGLUE_FAIL -eq 0 ]; then
-    # Sanity-probe a few: their --version/-h paths exit 0 quickly.
-    kldstat_count=$(kldstat 2>/dev/null | wc -l | tr -d ' ')
+    # Sanity-probe a few: their output paths exit 0 quickly.
+    kextstat_count=$(kextstat 2>/dev/null | wc -l | tr -d ' ')
     kenv_count=$(kenv 2>/dev/null | wc -l | tr -d ' ')
     mount_count=$(mount 2>/dev/null | wc -l | tr -d ' ')
-    echo "FBSDGLUE-OK: 25/25 fbsdglue binaries present + executable; BSD-debug toolkit deferred; kldstat=${kldstat_count} kenv=${kenv_count} mount=${mount_count}; /rescue/ absent"
+    echo "FBSDGLUE-OK: fbsdglue binaries present + executable; kld* CLIs retired (kext* present); BSD-debug toolkit deferred; kextstat=${kextstat_count} kenv=${kenv_count} mount=${mount_count}; /rescue/ absent"
 else
     exit 1
 fi

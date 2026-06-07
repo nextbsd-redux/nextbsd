@@ -220,7 +220,7 @@ expect {
 # Stage 3: invoke the on-ISO mach smoke test. Test scripts live under
 # /usr/tests/<component>/ following the FreeBSD convention. The script
 # emits two markers in sequence:
-#   MACH-SMOKE-OK / MACH-SMOKE-FAIL          — kernel-side kldstat -m mach
+#   MACH-SMOKE-OK / MACH-SMOKE-FAIL          — kernel-side kextstat -m mach
 #   LIBSYSTEM-KERNEL-OK / LIBSYSTEM-KERNEL-FAIL — userland test_libmach
 # Both must pass.
 send "/usr/tests/freebsd-launchd-mach/run.sh\r"
@@ -376,7 +376,7 @@ expect {
         puts "\nFAIL: fbsdglue full set missing or non-functional"
         exit 1
     }
-    "FBSDGLUE-OK" { puts "\nOK: srclist-fbsdglue.txt minimal 25-entry set present + /rescue/ absent (#109)" }
+    "FBSDGLUE-OK" { puts "\nOK: fbsdglue set present, kld* CLIs retired (kext* present), /rescue/ absent (#109/#193)" }
 }
 expect {
     timeout {

@@ -93,10 +93,12 @@ if [ -x /usr/libexec/kextd ]; then
 	i=0
 	while [ "$i" -lt 12 ]; do
 		# The loaded kld file is named after the bundle executable
-		# (IntelWiFi); plain `kldstat` shows that, while the driver
-		# module (if_iwlwifi) only appears under `kldstat -v`. Check both.
-		if kldstat 2>/dev/null | grep -qi intelwifi ||
-		   kldstat -v 2>/dev/null | grep -qi iwlwifi; then loaded=yes; break; fi
+		# (IntelWiFi); `kextstat` lists loaded files, so it shows that.
+		# The driver module inside (if_iwlwifi) is found by module name
+		# via `kextstat -m` (modfind(2)). The kld* CLIs were retired
+		# (#193); kextstat rides the same kld*(2) syscalls. Check both.
+		if kextstat 2>/dev/null | grep -qi intelwifi ||
+		   kextstat -m if_iwlwifi >/dev/null 2>&1; then loaded=yes; break; fi
 		sleep 1; i=$((i + 1))
 	done
 	echo "=== /var/log/kextd.log (daemon) ==="; cat /var/log/kextd.log 2>/dev/null; echo "==="
