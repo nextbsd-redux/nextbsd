@@ -61,41 +61,46 @@ mkstr(const char *s)
 }
 
 /* Trampoline payload — heap-allocated, freed by the trampoline. */
-struct dhcp_req {
+struct link_event {
 	char		ifname[IFNAMSIZ];
+	int		active;
 	uint32_t	lease_cap_secs;
 };
 
 static void
-run_dhcp_trampoline(void *arg)
+run_link_trampoline(void *arg)
 {
-	struct dhcp_req *req = arg;
+	struct link_event *ev = arg;
 
 	if (g_cb != NULL)
-		g_cb(req->ifname, req->lease_cap_secs);
-	free(req);
+		g_cb(ev->ifname, ev->active, ev->lease_cap_secs);
+	free(ev);
 }
 
-/* Schedule the caller's DHCP callback for `ifname` on the global queue. */
+/* Schedule the caller's link-event callback for `ifname` on the global queue. */
 static void
-schedule_dhcp(const char *ifname)
+schedule_link_event(const char *ifname, int active)
 {
-	struct dhcp_req *req;
+	struct link_event *ev;
 
-	req = calloc(1, sizeof(*req));
-	if (req == NULL)
+	ev = calloc(1, sizeof(*ev));
+	if (ev == NULL)
 		return;
-	(void)strlcpy(req->ifname, ifname, sizeof(req->ifname));
-	req->lease_cap_secs = g_lease_cap_secs;
+	(void)strlcpy(ev->ifname, ifname, sizeof(ev->ifname));
+	ev->active = active;
+	ev->lease_cap_secs = g_lease_cap_secs;
 	dispatch_async_f(dispatch_get_global_queue(
-	    DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), req, run_dhcp_trampoline);
+	    DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ev, run_link_trampoline);
 }
 
 /*
- * Pull "State:/Network/Interface/<if>/Link"'s Active flag out of the
- * store and, if true, schedule DHCP on <if>. Extracts the ifname from
- * the key text rather than the dict, so it works for both the change
- * callout and the initial scan.
+ * Pull "State:/Network/Interface/<if>/Link"'s Active flag out of the store
+ * and schedule the caller's callback for <if>, passing the link state.
+ * Fired for BOTH up and down so the callback can admin-up a newly-seen
+ * interface whose link is still down (the late-arriving-NIC case, #219) and
+ * DHCP it once it links. Extracts the ifname from the key text rather than the
+ * dict, so it works for both the change callout and the initial scan. lo0 is
+ * filtered here so the callback never sees loopback.
  */
 static void
 handle_link_key(SCDynamicStoreRef store, CFStringRef key)
@@ -107,6 +112,7 @@ handle_link_key(SCDynamicStoreRef store, CFStringRef key)
 	size_t n;
 	CFDictionaryRef dict;
 	CFBooleanRef active;
+	int is_active;
 
 	if (!CFStringGetCString(key, keybuf, sizeof(keybuf),
 	    kCFStringEncodingUTF8))
@@ -123,6 +129,9 @@ handle_link_key(SCDynamicStoreRef store, CFStringRef key)
 	(void)memcpy(ifname, p, n);
 	ifname[n] = '\0';
 
+	if (strncmp(ifname, "lo", 2) == 0)	/* loopback never DHCPs */
+		return;
+
 	dict = SCDynamicStoreCopyValue(store, key);
 	if (dict == NULL)
 		return;
@@ -131,11 +140,15 @@ handle_link_key(SCDynamicStoreRef store, CFStringRef key)
 		return;
 	}
 	active = CFDictionaryGetValue(dict, CFSTR("Active"));
-	if (active != NULL && CFGetTypeID(active) == CFBooleanGetTypeID() &&
-	    CFBooleanGetValue(active)) {
+	is_active = (active != NULL &&
+	    CFGetTypeID(active) == CFBooleanGetTypeID() &&
+	    CFBooleanGetValue(active));
+	if (is_active)
 		xlog("IPCFG-LINK-UP: %s link Active — scheduling DHCP", ifname);
-		schedule_dhcp(ifname);
-	}
+	else
+		xlog("IPCFG-LINK-SEEN: %s present, link down — scheduling "
+		    "admin-up", ifname);
+	schedule_link_event(ifname, is_active);
 	CFRelease(dict);
 }
 

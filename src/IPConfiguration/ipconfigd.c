@@ -40,7 +40,7 @@
  * sc_link_watch.c watches State:/Network/Interface/<if>/Link, which
  * the standalone KernelEventMonitor daemon publishes from PF_ROUTE
  * link-state changes; when an interface goes Active the watch invokes
- * on_link_active(), which runs DHCP on it. This is the Apple-shaped
+ * on_link_event(), which admin-ups it (link down) or runs DHCP (link up) on it. This is the Apple-shaped
  * trigger (KernelEventMonitor -> SCDynamicStore -> IPConfiguration);
  * it replaced the earlier hwregd attach subscription (removed with
  * hwregd in PR #167). At startup we bring the candidate NIC IFF_UP so
@@ -219,11 +219,11 @@ read_lease_cap_env(void)
 /*
  * dhcp_run_on_interface — full DHCPv4 INIT → BOUND → publish → RA →
  * lease loop on `ifname`. Driven by the link-watch callback
- * (on_link_active) when KernelEventMonitor reports the link Active.
+ * (on_link_event) when KernelEventMonitor reports the link Active.
  *
  * Blocks in lease_loop_run until SIGTERM; never returns from a fully
  * successful path. On any failure the function returns cleanly and
- * on_link_active re-arms so a later link-up event can retry.
+ * on_link_event re-arms so a later link-up event can retry.
  */
 static void
 dhcp_run_on_interface(const char *ifname, uint32_t lease_cap_secs)
@@ -334,26 +334,48 @@ dhcp_run_on_interface(const char *ifname, uint32_t lease_cap_secs)
 }
 
 /*
- * link-watch callback — invoked on a libdispatch worker thread when
- * KernelEventMonitor reports an interface's link went Active
- * (State:/Network/Interface/<if>/Link = {Active:true}). This is the
- * Apple-shaped trigger that replaced the hwregd attach subscription.
+ * link-watch callback — invoked on a libdispatch worker thread for every
+ * change to an interface's Link entity (State:/Network/Interface/<if>/Link),
+ * published by KernelEventMonitor from PF_ROUTE. `active` reflects the current
+ * link state. This is the Apple-shaped trigger that replaced the hwregd attach
+ * subscription.
  *
- * Run DHCP on the just-linked interface, guarding against concurrent /
- * duplicate fires: skip if a run is already in flight (g_dhcp_started)
- * or if we are already bound. The single-NIC focus is unchanged;
- * multi-NIC fan-out is a later iter. dhcp_run_on_interface blocks in
- * lease_loop_run on this worker thread once bound — fine, libdispatch
- * services other work on other threads.
+ * Two cases:
+ *   - link DOWN (active == 0): the interface is present but its link has not
+ *     come up. Bring it administratively up so its link can negotiate. This is
+ *     the critical path for a NIC that ARRIVES after startup — e.g. an
+ *     auto-loaded driver kext (#219): ipconfigd's startup scan never saw it, so
+ *     nothing else admin-ups it, and without IFF_UP the link stays down forever
+ *     and it is never DHCP'd. iface_bring_up is idempotent (no-op if already
+ *     up), so re-fires for an interface we already brought up are harmless. The
+ *     resulting link-up generates a fresh Active:true event that lands us in the
+ *     DHCP case below.
+ *   - link UP (active != 0): run DHCP on the just-linked interface, guarding
+ *     against concurrent / duplicate fires (skip if a run is in flight or we are
+ *     already bound). Single-NIC focus is unchanged; multi-NIC fan-out is a
+ *     later iter. dhcp_run_on_interface blocks in lease_loop_run on this worker
+ *     thread once bound — fine, libdispatch services other work on other threads.
  */
 static void
-on_link_active(const char *ifname, uint32_t lease_cap_secs)
+on_link_event(const char *ifname, int active, uint32_t lease_cap_secs)
 {
 	char already[IFNAMSIZ] = "";
 
-	/* loopback never carries a DHCP service; KEM filters lo0 too. */
+	/* loopback never carries a DHCP service; the watcher filters lo0 too. */
 	if (strncmp(ifname, "lo", 2) == 0)
 		return;
+
+	if (!active) {
+		/* Present but link down — admin-up so the link can negotiate
+		 * (the late-arriving-NIC onboarding path, #219). */
+		if (iface_bring_up(ifname) == 0)
+			xlog("link-seen(%s) — brought admin-up; awaiting "
+			    "link-active to DHCP", ifname);
+		else
+			xlog("link-seen(%s) — could not bring up: %s", ifname,
+			    strerror(errno));
+		return;
+	}
 
 	pthread_mutex_lock(&g_dhcp_lock);
 	if (g_dhcp_started || bound_state_any(already, sizeof(already))) {
@@ -455,7 +477,7 @@ main(int argc, char **argv)
 		xlog("no Ethernet at startup; will DHCP when one links up");
 	}
 
-	if (sc_link_watch_start(on_link_active, lease_cap_secs) != 0)
+	if (sc_link_watch_start(on_link_event, lease_cap_secs) != 0)
 		xlog("IPCFG-BOUND-FAIL: link watch unavailable — DHCP will "
 		    "not be triggered");
 
