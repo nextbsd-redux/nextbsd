@@ -681,8 +681,13 @@ done
 echo "    confirmed: kld* CLIs removed; kld*(2) syscalls + linker.hints intact"
 
 #
-# 3b3. install bundled driver kexts (IntelWiFi.kext, ...) from the
-#      nextbsd-kernel-modules `continuous` asset into /System/Library/Extensions.
+# 3b3. install bundled driver kexts (IntelWiFi.kext, IntelEthernet.kext, ...)
+#      from the nextbsd-kernel-modules `continuous` asset into
+#      /System/Library/Extensions. NB: IntelEthernet.kext (if_em, #219) ships
+#      here but stays INERT until the kernel drops `device em` (nodevice em in
+#      config/NEXTBSD) — until then the built-in em driver claims the e1000 and
+#      the matcher never fires a load for it. The loop below installs every
+#      kext-dl/*.tar.gz the workflow fetched, so no per-kext logic is needed.
 #      Each kext ships its firmware under Contents/Resources/firmware; firmware(9)
 #      locates it via the firmware_path kenv (see overlays/boot/loader.conf.d —
 #      a Tier-0 stopgap until kextload registers it dynamically, nextbsd#205).
