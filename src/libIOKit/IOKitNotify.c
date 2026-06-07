@@ -40,7 +40,6 @@
 
 #include <pthread.h>
 #include <stdatomic.h>
-#include <errno.h>		/* temp diag: errno from the IOREGIOCWATCH ioctl */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -474,21 +473,8 @@ kernel_watch_register(struct IONotificationPort *port,
 	reg.event_mask = mask;	/* IOREG_EVENT_ARRIVE/DEPART == HWREG_EVT_* */
 	reg.notify_port = (uint32_t)port->recv_port;	/* recv right name */
 
-	/* TEMP diag (#218): the kernel copyin print never surfaces though analysis
-	 * says it should — dump exactly what we send + the raw ioctl errno. */
-	(void)fprintf(stderr, "libIOKit/kwr: use_kernel=%d fd=%d notify_port=0x%x "
-	    "event_mask=0x%x sizeof_reg=%zu\n", port->use_kernel, fd,
-	    reg.notify_port, reg.event_mask, sizeof(reg));
-	(void)fflush(stderr);
-
-	if (ioctl(fd, IOREGIOCWATCH, &reg) != 0) {
-		(void)fprintf(stderr, "libIOKit/kwr: IOREGIOCWATCH ioctl errno=%d (%s)\n",
-		    errno, strerror(errno));
-		(void)fflush(stderr);
+	if (ioctl(fd, IOREGIOCWATCH, &reg) != 0)
 		return (kIOReturnError);
-	}
-	(void)fprintf(stderr, "libIOKit/kwr: IOREGIOCWATCH ioctl OK\n");
-	(void)fflush(stderr);
 	return (KERN_SUCCESS);
 }
 
