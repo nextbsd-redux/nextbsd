@@ -141,7 +141,8 @@ __SCDynamicStoreCreatePrivate(CFAllocatorRef		allocator,
 	storePrivate->server	= MACH_PORT_NULL;
 	storePrivate->notifyStatus	= NotifierNotRegistered;
 	storePrivate->notifyPort	= MACH_PORT_NULL;
-	storePrivate->notifyStop	= 0;
+	storePrivate->notifySource	= NULL;
+	storePrivate->notifyQueue	= NULL;
 	storePrivate->dispatchQueue	= NULL;
 	storePrivate->rls		= NULL;
 	storePrivate->rlsRunLoop	= NULL;

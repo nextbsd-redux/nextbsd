@@ -141,15 +141,19 @@ SCDynamicStoreCopyNotifiedKeys(SCDynamicStoreRef store)
 mach_port_t
 __SCDynamicStoreAddNotificationPort(SCDynamicStoreRef store)
 {
-	SCDynamicStorePrivateRef	storePrivate	= (SCDynamicStorePrivateRef)store;
 	mach_port_t			port		= MACH_PORT_NULL;
-	int				sc_status	= kSCStatusFailed;
 	kern_return_t			kr;
+
+	(void)store;
 
 	/*
 	 * Allocate a receive right and insert a send right under the same
-	 * name; notifyviaport's mach_port_move_send_t hands that send
-	 * right to configd. We keep the receive right to listen on.
+	 * name; the later notifyviaport (__sc_notify_register) hands that send
+	 * right to configd. We keep the receive right to listen on. The
+	 * notifyviaport is issued *after* the dispatch source is armed on this
+	 * port (see __sc_notify_start) — telling configd to start sending
+	 * before the edge-triggered EVFILT_MACHPORT knote is attached would
+	 * race the first notification past it.
 	 */
 	kr = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &port);
 	if (kr != KERN_SUCCESS) {
@@ -165,15 +169,28 @@ __SCDynamicStoreAddNotificationPort(SCDynamicStoreRef store)
 		return MACH_PORT_NULL;
 	}
 
-	kr = notifyviaport(storePrivate->server, port, 0, &sc_status);
-	if ((kr != KERN_SUCCESS) || (sc_status != kSCStatusOK)) {
-		(void) mach_port_mod_refs(mach_task_self(), port,
-					  MACH_PORT_RIGHT_RECEIVE, -1);
-		_SCErrorSet((kr != KERN_SUCCESS) ? kSCStatusFailed : sc_status);
-		return MACH_PORT_NULL;
-	}
-
 	return port;
+}
+
+/*
+ * Hand configd the send right to notifyPort (notifyviaport) so it starts
+ * posting change notifications. Call only after the MACH_RECV source is armed
+ * on notifyPort. Returns TRUE, or FALSE with SCError() set.
+ */
+static Boolean
+__sc_notify_register(SCDynamicStoreRef store)
+{
+	SCDynamicStorePrivateRef	storePrivate	= (SCDynamicStorePrivateRef)store;
+	int				sc_status	= kSCStatusFailed;
+	kern_return_t			kr;
+
+	kr = notifyviaport(storePrivate->server, storePrivate->notifyPort, 0,
+			   &sc_status);
+	if ((kr != KERN_SUCCESS) || (sc_status != kSCStatusOK)) {
+		_SCErrorSet((kr != KERN_SUCCESS) ? kSCStatusFailed : sc_status);
+		return FALSE;
+	}
+	return TRUE;
 }
 
 
@@ -226,38 +243,25 @@ __SCDynamicStoreDeliverChanges(SCDynamicStoreRef store)
 }
 
 /*
- * dispatch_async_f trampoline — drains the changed keys and runs the
- * client callout. Runs on the caller's dispatch queue; balances the
- * CFRetain the receive thread took before queueing it.
+ * MACH_RECV source event handler. configd posts a bare Mach message to
+ * notifyPort whenever a watched key changes; the native EVFILT_MACHPORT
+ * source wakes us here (#168/#250 — the task-#41 "doesn't reliably
+ * deliver" was the retired module-era pipe bridge). The source registers
+ * in notify mode and carries no message, so drain notifyPort ourselves —
+ * fully, to empty: several configd notifications can coalesce into one fire,
+ * and any message left queued keeps the source ready (it would re-fire, or
+ * with an edge-triggered backend stall). The messages are bare headers, so
+ * an unbounded drain can't be flooded. Then run the active delivery. Runs on
+ * the caller's dispatch queue (dispatch mode) or the private notifyQueue
+ * (run-loop mode).
  */
 static void
-__sc_deliver(void *context)
+__sc_source_handler(void *context)
 {
-	SCDynamicStoreRef	store	= (SCDynamicStoreRef)context;
-
-	__SCDynamicStoreDeliverChanges(store);
-	CFRelease(store);
-}
-
-/*
- * Notification receive loop. configd posts a bare Mach message to
- * notifyPort whenever a watched key changes; this thread receives it
- * and hands delivery to the caller's dispatch queue. The receive has a
- * bounded timeout so the thread can observe notifyStop and exit when
- * the notification is cancelled.
- *
- * A raw mach_msg loop, not a DISPATCH_SOURCE_TYPE_MACH_RECV source:
- * dispatch mach-receive sources do not reliably deliver in this repo
- * (task #41) — hwregd's Mach service thread uses a raw loop for the
- * same reason.
- */
-static void *
-__sc_notify_thread(void *arg)
-{
-	SCDynamicStoreRef		store		= (SCDynamicStoreRef)arg;
+	SCDynamicStoreRef		store		= (SCDynamicStoreRef)context;
 	SCDynamicStorePrivateRef	storePrivate	= (SCDynamicStorePrivateRef)store;
 
-	while (!storePrivate->notifyStop) {
+	for (;;) {
 		struct {
 			mach_msg_header_t	hdr;
 			mach_msg_max_trailer_t	trailer;
@@ -266,59 +270,94 @@ __sc_notify_thread(void *arg)
 
 		kr = mach_msg(&rmsg.hdr, MACH_RCV_MSG | MACH_RCV_TIMEOUT, 0,
 			      sizeof(rmsg), storePrivate->notifyPort,
-			      500 /* ms */, MACH_PORT_NULL);
-		if (kr == MACH_RCV_TIMED_OUT) {
-			continue;		/* re-check notifyStop */
-		}
+			      0 /* non-blocking */, MACH_PORT_NULL);
 		if (kr != KERN_SUCCESS) {
-			break;			/* port gone / unexpected error */
-		}
-
-		/* a notification arrived — hand it to the active delivery */
-		if (storePrivate->notifyStatus == Using_NotifierInformViaDispatch) {
-			CFRetain(store);
-			dispatch_async_f(storePrivate->dispatchQueue,
-					 (void *)store, __sc_deliver);
-		} else if (storePrivate->notifyStatus == Using_NotifierInformViaRunLoop) {
-			/* signal the run-loop source and wake its run loop */
-			CFRunLoopSourceSignal(storePrivate->rls);
-			if (storePrivate->rlsRunLoop != NULL) {
-				CFRunLoopWakeUp(storePrivate->rlsRunLoop);
-			}
+			break;		/* drained (RCV_TIMED_OUT) or port error */
 		}
 	}
 
-	return NULL;
+	if (storePrivate->notifyStatus == Using_NotifierInformViaDispatch) {
+		/* the handler already runs on the caller's dispatchQueue */
+		__SCDynamicStoreDeliverChanges(store);
+	} else if (storePrivate->notifyStatus == Using_NotifierInformViaRunLoop) {
+		/* signal the run-loop source and wake its run loop */
+		CFRunLoopSourceSignal(storePrivate->rls);
+		if (storePrivate->rlsRunLoop != NULL) {
+			CFRunLoopWakeUp(storePrivate->rlsRunLoop);
+		}
+	}
 }
 
 /*
- * Start the notification receive thread. notifyStatus and any
- * delivery-mode fields must already be set. Returns TRUE, or FALSE
- * with SCError() set and the registration unwound.
+ * MACH_RECV source cancel handler. Runs asynchronously after the source is
+ * cancelled and any in-flight event handler completes, so notifyPort and the
+ * store stay valid until the source is truly done with them. Drops the
+ * notifyPort receive right, the private queue (if any), and the source's
+ * store reference (balancing the CFRetain in __sc_notify_start).
+ */
+static void
+__sc_source_cancel(void *context)
+{
+	SCDynamicStoreRef		store		= (SCDynamicStoreRef)context;
+	SCDynamicStorePrivateRef	storePrivate	= (SCDynamicStorePrivateRef)store;
+
+	if (storePrivate->notifyPort != MACH_PORT_NULL) {
+		(void) mach_port_mod_refs(mach_task_self(),
+					  storePrivate->notifyPort,
+					  MACH_PORT_RIGHT_RECEIVE, -1);
+		storePrivate->notifyPort = MACH_PORT_NULL;
+	}
+	if (storePrivate->notifyQueue != NULL) {
+		dispatch_release(storePrivate->notifyQueue);
+		storePrivate->notifyQueue = NULL;
+	}
+	CFRelease(store);
+}
+
+/*
+ * Start notification delivery: open the notify port and attach a
+ * DISPATCH_SOURCE_TYPE_MACH_RECV source. notifyStatus and any delivery-mode
+ * fields must already be set. Returns TRUE, or FALSE with SCError() set and
+ * the registration unwound.
  */
 static Boolean
 __sc_notify_start(SCDynamicStoreRef store)
 {
 	SCDynamicStorePrivateRef	storePrivate	= (SCDynamicStorePrivateRef)store;
 	mach_port_t			mp;
-	int				err;
+	dispatch_queue_t		q;
 
 	mp = __SCDynamicStoreAddNotificationPort(store);
 	if (mp == MACH_PORT_NULL) {
 		return FALSE;		/* SCError already set */
 	}
 	storePrivate->notifyPort = mp;
-	storePrivate->notifyStop = 0;
 
-	/* the receive thread holds a reference to the store */
-	CFRetain(store);
+	/*
+	 * The source runs on the caller's dispatch queue when delivering via
+	 * dispatch; the run-loop path has no caller queue, so spin up a private
+	 * serial queue just to drive the receive + run-loop signal.
+	 */
+	if (storePrivate->notifyStatus == Using_NotifierInformViaDispatch) {
+		q = storePrivate->dispatchQueue;
+	} else {
+		storePrivate->notifyQueue =
+		    dispatch_queue_create("com.apple.SCDynamicStore.notify", NULL);
+		q = storePrivate->notifyQueue;
+	}
 
-	err = pthread_create(&storePrivate->notifyThread, NULL,
-			     __sc_notify_thread, (void *)store);
-	if (err != 0) {
+	if (q != NULL) {
+		storePrivate->notifySource =
+		    dispatch_source_create(DISPATCH_SOURCE_TYPE_MACH_RECV,
+					   mp, 0, q);
+	}
+	if (q == NULL || storePrivate->notifySource == NULL) {
 		int	sc_status;
 
-		CFRelease(store);
+		if (storePrivate->notifyQueue != NULL) {
+			dispatch_release(storePrivate->notifyQueue);
+			storePrivate->notifyQueue = NULL;
+		}
 		if (storePrivate->server != MACH_PORT_NULL) {
 			(void) notifycancel(storePrivate->server, &sc_status);
 		}
@@ -328,13 +367,54 @@ __sc_notify_start(SCDynamicStoreRef store)
 		_SCErrorSet(kSCStatusFailed);
 		return FALSE;
 	}
+
+	/* the source holds a reference to the store for its lifetime */
+	CFRetain(store);
+	dispatch_set_context(storePrivate->notifySource, (void *)store);
+	dispatch_source_set_event_handler_f(storePrivate->notifySource,
+					    __sc_source_handler);
+	dispatch_source_set_cancel_handler_f(storePrivate->notifySource,
+					     __sc_source_cancel);
+	dispatch_resume(storePrivate->notifySource);
+
+	/*
+	 * Arm the source BEFORE telling configd to start sending. The native
+	 * EVFILT_MACHPORT filter is edge-triggered (EV_CLEAR) and libdispatch
+	 * installs the knote asynchronously on its manager, so notifyviaport
+	 * must not precede the arm — otherwise configd's first notification can
+	 * reach notifyPort before the knote attaches and be missed (the bug the
+	 * old blocking-mach_msg loop never had). The notifyviaport RPC also
+	 * blocks this thread, which lets the manager complete the deferred knote
+	 * install before configd even learns the port, closing the window.
+	 */
+	if (!__sc_notify_register(store)) {
+		/*
+		 * Cancel the source; its cancel handler (async) drops the
+		 * notifyPort right, releases the queue, and releases the store
+		 * reference taken above. The caller unwinds notifyStatus.
+		 */
+		dispatch_source_cancel(storePrivate->notifySource);
+		dispatch_release(storePrivate->notifySource);
+		storePrivate->notifySource = NULL;
+		return FALSE;
+	}
+
+	/*
+	 * Belt-and-suspenders: kick one drain+deliver on the source's queue in
+	 * case a notification still slipped into the arm window. It is
+	 * idempotent with the armed source — whichever drains first wins; the
+	 * other finds the port empty and notifychanges returns nothing.
+	 */
+	dispatch_async_f(q, (void *)store, __sc_source_handler);
 	return TRUE;
 }
 
 /*
- * Stop the receive thread and tear the notification port down. Drops
- * the receive thread's store reference last; callers must not touch
- * storePrivate after this returns.
+ * Stop notification delivery. Cancels the MACH_RECV source; the cancel
+ * handler (async, after any in-flight event handler) drops the notifyPort
+ * receive right, releases the private queue, and releases the source's store
+ * reference — so the port and store stay valid until the source is truly
+ * done. We drop only our own source ref here.
  */
 static void
 __sc_notify_stop(SCDynamicStoreRef store)
@@ -342,21 +422,15 @@ __sc_notify_stop(SCDynamicStoreRef store)
 	SCDynamicStorePrivateRef	storePrivate	= (SCDynamicStorePrivateRef)store;
 	int				sc_status;
 
-	storePrivate->notifyStop = 1;
-	(void) pthread_join(storePrivate->notifyThread, NULL);
-
 	if (storePrivate->server != MACH_PORT_NULL) {
 		(void) notifycancel(storePrivate->server, &sc_status);
 	}
-	if (storePrivate->notifyPort != MACH_PORT_NULL) {
-		(void) mach_port_mod_refs(mach_task_self(),
-					  storePrivate->notifyPort,
-					  MACH_PORT_RIGHT_RECEIVE, -1);
-		storePrivate->notifyPort = MACH_PORT_NULL;
-	}
 
-	/* release the receive thread's store reference */
-	CFRelease(store);
+	if (storePrivate->notifySource != NULL) {
+		dispatch_source_cancel(storePrivate->notifySource);
+		dispatch_release(storePrivate->notifySource);
+		storePrivate->notifySource = NULL;
+	}
 }
 
 Boolean

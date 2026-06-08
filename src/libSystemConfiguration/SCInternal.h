@@ -82,16 +82,20 @@ typedef struct __SCDynamicStore {
 
 	/*
 	 * Notification delivery state (SCNotify.c). configd notifies the
-	 * session by sending a bare Mach message to notifyPort; a private
-	 * thread runs a raw mach_msg receive loop on it (a dispatch
-	 * DISPATCH_SOURCE_TYPE_MACH_RECV source does not reliably deliver
-	 * in this repo — task #41 — so hwregd and this both use a thread).
-	 * The callout still runs on the caller's dispatchQueue.
+	 * session by sending a bare Mach message to notifyPort; a
+	 * DISPATCH_SOURCE_TYPE_MACH_RECV source on it wakes the delivery
+	 * (task #41's "doesn't reliably deliver" was the module-era pipe
+	 * bridge — native EVFILT_MACHPORT delivers, #168/#250). The source's
+	 * handler self-drains notifyPort (notify-mode sources carry no
+	 * message) and runs the callout; for run-loop delivery it signals
+	 * the run-loop source instead.
 	 */
 	int			notifyStatus;	/* Notifier* enum above */
 	mach_port_t		notifyPort;	/* receive right configd notifies */
-	pthread_t		notifyThread;	/* raw mach_msg receive loop */
-	volatile int		notifyStop;	/* asks notifyThread to exit */
+	dispatch_source_t	notifySource;	/* MACH_RECV source on notifyPort */
+	dispatch_queue_t	notifyQueue;	/* serial queue the source runs on
+						 * (private — only for the run-loop
+						 * path, which has no caller queue) */
 
 	/* SCDynamicStoreSetDispatchQueue delivery */
 	dispatch_queue_t	dispatchQueue;	/* caller's callout queue (retained) */
