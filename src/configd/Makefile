@@ -19,7 +19,8 @@
 PROG=		configd
 MAN=
 
-SRCS=		configd.c config_store.c config_session.c config_wire.c
+SRCS=		configd.c config_store.c config_session.c config_wire.c \
+		config_link_monitor.c
 
 # configServer.c — MIG-generated server demux for config.defs.
 # configUser.c — MIG-generated client stubs, linked for the in-process

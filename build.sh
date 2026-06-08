@@ -2375,23 +2375,11 @@ test -x "$WORK/rootfs/usr/sbin/ipconfig" \
 echo "==> ipconfigd + ipconfigtest + ipconfigrpctest + ipconfig built"
 
 #
-# 3x2. KernelEventMonitor (src/KernelEventMonitor) — the Apple-shaped
-#      DHCP-on-link-up trigger. Reads the PF_ROUTE socket for
-#      RTM_IFINFO link-state changes and publishes
-#      State:/Network/Interface/<if>/Link into configd's SCDynamicStore;
-#      ipconfigd's sc_link_watch reacts and runs DHCP. Replaces the
-#      removed hwregd attach subscription. No MIG — it's a pure
-#      SCDynamicStore client, so a plain make after libSystemConfiguration
-#      + libCoreFoundation are in the sysroot.
+# 3x2. KernelEventMonitor is no longer a standalone daemon — the PF_ROUTE
+#      link-state -> State:/Network/Interface/<if>/Link translation now runs
+#      in-process inside configd (src/configd/config_link_monitor.c), the
+#      Apple-shaped hosting. Retired in #257; nothing to build here.
 #
-echo "==> building KernelEventMonitor (src/KernelEventMonitor)"
-make -C "$ROOT/src/KernelEventMonitor" \
-    DESTDIR="$WORK/rootfs" \
-    SYSROOT="$WORK/rootfs" \
-    all install
-ls -lh "$WORK/rootfs/usr/sbin/KernelEventMonitor"
-test -x "$WORK/rootfs/usr/sbin/KernelEventMonitor" \
-    || { echo "FAIL: /usr/sbin/KernelEventMonitor not installed or not executable"; exit 1; }
 
 #
 # 3y. Phase K mDNSResponder iter 1 — daemon skeleton.
