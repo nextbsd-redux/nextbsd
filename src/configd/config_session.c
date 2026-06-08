@@ -51,6 +51,13 @@ struct session {
 	struct keyref	*changed;	/* keys changed since the last drain */
 	size_t		n_changed;
 	size_t		changed_cap;
+	int		notify_owed;	/* a wakeup is owed: changes are pending
+					 * and the last send_notification did not
+					 * succeed (or none has been sent since
+					 * the last drain). Retried on the next
+					 * change and cleared on a drain so an
+					 * edge-only scheme can't strand a client
+					 * after a dropped wakeup. */
 };
 
 static struct session	*sessions;
@@ -164,11 +171,14 @@ session_find(mach_port_t port)
 /*
  * send_notification — wake a session's client with a bare-header Mach
  * message. Non-blocking (MACH_SEND_TIMEOUT 0): a dead or backed-up
- * client must never stall configd. A lost notification is harmless —
- * the change stays queued and the client still drains it via the next
- * notification or notifychanges poll.
+ * client must never stall configd's single serve thread. Returns the
+ * mach_msg result so the caller can tell a delivered wakeup from a
+ * dropped one (e.g. MACH_SEND_TIMED_OUT on a momentarily full notify
+ * port) and arrange a retry — see session_key_changed's notify_owed
+ * handling. A silently-discarded failure here is exactly the lost-wakeup
+ * that strands a client (#259).
  */
-static void
+static mach_msg_return_t
 send_notification(mach_port_t notify_port)
 {
 	mach_msg_header_t msg;
@@ -180,7 +190,7 @@ send_notification(mach_port_t notify_port)
 	msg.msgh_local_port = MACH_PORT_NULL;
 	msg.msgh_id = CONFIGD_NOTIFY_MSGID;
 
-	(void)mach_msg(&msg, MACH_SEND_MSG | MACH_SEND_TIMEOUT,
+	return mach_msg(&msg, MACH_SEND_MSG | MACH_SEND_TIMEOUT,
 	    sizeof(msg), 0, MACH_PORT_NULL, 0, MACH_PORT_NULL);
 }
 
@@ -504,11 +514,17 @@ session_drain_changes(mach_port_t port, void *buf, size_t cap)
 			return -1;	/* would not fit the reply array */
 	}
 
-	/* The client has now seen these — clear the pending list. */
+	/*
+	 * The client has now seen these — clear the pending list and the
+	 * wakeup debt. The next interested change starts from an empty list
+	 * and so re-arms a fresh notification, even if an earlier wakeup had
+	 * failed to send.
+	 */
 	keylist_free(s->changed, s->n_changed);
 	s->changed = NULL;
 	s->n_changed = 0;
 	s->changed_cap = 0;
+	s->notify_owed = 0;
 	return (ssize_t)off;
 }
 
@@ -559,16 +575,29 @@ session_key_changed(const void *key, size_t klen)
 			continue;
 
 		/*
-		 * Record the change. A notification is sent only on the
-		 * empty -> non-empty edge: further changes before the
-		 * client drains coalesce under the one notification.
+		 * Record the change, then wake the client. Coalescing: once a
+		 * wakeup has been *delivered* and not yet drained, the client
+		 * will pull the whole list in one notifychanges, so further
+		 * changes need no new wakeup.
+		 *
+		 * But the empty->non-empty edge alone is not a safe trigger: if
+		 * that one send fails (a momentarily full notify port returns
+		 * MACH_SEND_TIMED_OUT, dropped here), an edge-only scheme never
+		 * sends again — every later change sees a non-empty list — and
+		 * the client is stranded with undelivered changes (#259). Track
+		 * the debt: a wakeup is owed whenever the list went from empty,
+		 * or a prior send for this batch failed. Keep retrying while it
+		 * is owed; clear it only once a send actually succeeds (and at
+		 * drain, where the client has seen everything regardless).
 		 */
 		was_empty = (s->n_changed == 0);
 		if (keylist_add(&s->changed, &s->n_changed, &s->changed_cap,
 		    key, klen) != 0)
 			continue;	/* allocation failure — drop */
-		if (was_empty && s->n_changed != 0 &&
-		    s->notify_port != MACH_PORT_NULL)
-			send_notification(s->notify_port);
+		if (was_empty)
+			s->notify_owed = 1;
+		if (s->notify_owed && s->notify_port != MACH_PORT_NULL &&
+		    send_notification(s->notify_port) == MACH_MSG_SUCCESS)
+			s->notify_owed = 0;
 	}
 }
