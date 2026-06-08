@@ -7,7 +7,14 @@
  * HAVE_MACH paths compile against Apple-shape APIs. The wrapper
  * translates kevent_qos_s ↔ FreeBSD's struct kevent at the
  * __sys_kevent boundary, intercepting EVFILT_MACHPORT registrations
- * and routing them through mach.ko's register_event_bell mechanism.
+ * and routing them to mach.ko's NATIVE EVFILT_MACHPORT kqueue filter
+ * (slot -16) on a wrap port set. (Previously this used the
+ * register_event_bell self-pipe bridge, task #39 Path B; the native
+ * filter — proven in nextbsd#249 — delivers reliably, fixing the
+ * task-#41 dropped-notification flakiness, and is the Apple-shape path.)
+ * The filter is registered in notify mode (fflags = 0): filt_machport
+ * signals readiness without consuming, and the wrapper drains the pset
+ * via mach_msg into the per-registration backlog, exactly as before.
  *
  * Concurrency. A single global mutex protects the registration list.
  * The list is expected to stay small (a handful of dispatch_mach_t
@@ -79,6 +86,22 @@
 #define MACH_RCV_INITIAL_BUFSIZE 8192
 
 /*
+ * The kernel's NATIVE EVFILT_MACHPORT filter number (nextbsd-kernel patch
+ * 0003; registered by mach.ko's kqueue_add_filteropts). DISTINCT from the
+ * libmach API sentinel EVFILT_MACHPORT (-22, from <mach/dispatch_kevent.h>)
+ * that libdispatch/callers use — we translate the sentinel to this real
+ * filter when submitting to __sys_kevent. Proven to deliver (nextbsd#249).
+ *
+ * The reroute (was: register_event_bell pipe-bridge, task #39 Path B):
+ * register this filter on the wrap pset in *notify* mode (fflags = 0, no
+ * MACH_RCV_MSG) so filt_machport signals readiness WITHOUT consuming the
+ * message; the wrapper then drains the pset via mach_msg into the backlog
+ * exactly as before. Only the wakeup transport changed — the drain/backlog/
+ * synth path to libdispatch is unchanged.
+ */
+#define EVFILT_MACHPORT_NATIVE	(-16)
+
+/*
  * Flags that may appear on a *delivered* EVFILT_MACHPORT event. The
  * registration flags libdispatch passes (EV_ADD|EV_ENABLE|EV_DISPATCH|
  * EV_UDATA_SPECIFIC|EV_VANISHED = 0x385) include lifecycle/action
@@ -100,9 +123,9 @@ extern int __sys_kevent(int kq, const struct kevent *changelist, int nchanges,
  * Registration record. One per (kq, original ident) tuple.
  *   - wrap_pset: a libmach-owned pset always allocated; for port
  *     idents we move the ident into it; for pset idents we use the
- *     ident itself (mach_port_move_member rejects pset→pset).
- *   - pipe_r/pipe_w: a self-pipe; read end registered on the user's
- *     kq as EVFILT_READ, write end stored in mach.ko via op 4.
+ *     ident itself (mach_port_move_member rejects pset→pset). The native
+ *     EVFILT_MACHPORT knote is registered on this pset; on its readiness
+ *     wake we drain the pset via mach_msg into the backlog.
  */
 /*
  * Per-message backlog entry. Multiple Mach messages can arrive
@@ -126,9 +149,8 @@ struct mach_kev_reg {
 	struct mach_kev_reg	*next;
 	int			 kq;		/* user's kq fd */
 	uint64_t		 ident;		/* original MACHPORT ident */
-	mach_port_name_t	 wrap_pset;	/* libmach-owned pset */
-	int			 pipe_r;
-	int			 pipe_w;
+	mach_port_name_t	 wrap_pset;	/* libmach-owned pset; the native
+						 * EVFILT_MACHPORT knote watches it */
 	uint64_t		 udata;		/* original kev->udata */
 	uint16_t		 flags;		/* original kev->flags */
 	uint32_t		 fflags;	/* original kev->fflags */
@@ -157,11 +179,11 @@ reg_find_locked(int kq, uint64_t ident)
 }
 
 static struct mach_kev_reg *
-reg_find_by_pipe_r_locked(int pipe_r)
+reg_find_by_wrap_pset_locked(mach_port_name_t wrap_pset)
 {
 	struct mach_kev_reg *r;
 	for (r = g_reg_head; r != NULL; r = r->next) {
-		if (r->pipe_r == pipe_r)
+		if (r->wrap_pset == wrap_pset)
 			return (r);
 	}
 	return (NULL);
@@ -244,11 +266,12 @@ mach_event_bell_unregister(mach_port_name_t pset_name)
 }
 
 /*
- * Build the userland half of a registration: allocate a wrap pset,
- * move the original ident into it (if ident is a port; pset-into-
- * pset is rejected by kernel and we fall back to using ident as the
- * bell key directly), create the pipe, arm the bell. Returns 0 on
- * success, errno on failure with all partial state cleaned up.
+ * Build the userland half of a registration: allocate a wrap pset and move
+ * the original ident into it (if ident is a port; pset-into-pset is rejected
+ * by the kernel and we fall back to using the ident pset directly). The
+ * caller registers the native EVFILT_MACHPORT knote on r->wrap_pset via the
+ * `out` changelist entry. Returns 0 on success, errno on failure with all
+ * partial state cleaned up.
  */
 static int
 reg_create(int kq, const struct kevent_qos_s *src, struct mach_kev_reg **out)
@@ -256,7 +279,6 @@ reg_create(int kq, const struct kevent_qos_s *src, struct mach_kev_reg **out)
 	struct mach_kev_reg *r;
 	mach_port_name_t wrap = MACH_PORT_NULL;
 	kern_return_t kr;
-	int p[2] = { -1, -1 };
 	int err;
 
 	r = calloc(1, sizeof(*r));
@@ -273,26 +295,15 @@ reg_create(int kq, const struct kevent_qos_s *src, struct mach_kev_reg **out)
 	kr = mach_port_move_member(mach_task_self(),
 	    (mach_port_name_t)src->ident, wrap);
 	if (kr != KERN_SUCCESS) {
-		/* ident is likely already a pset. Drop our wrap pset
-		 * and use the ident directly as the bell key. */
+		/* ident is likely already a pset. Drop our wrap pset and use
+		 * the ident pset directly as the EVFILT_MACHPORT target. */
 		(void)mach_port_deallocate(mach_task_self(), wrap);
 		wrap = (mach_port_name_t)src->ident;
 	}
 
-	if (pipe2(p, O_CLOEXEC | O_NONBLOCK) != 0) {
-		err = errno;
-		goto fail;
-	}
-
-	err = mach_event_bell_register(wrap, p[1]);
-	if (err != 0)
-		goto fail;
-
 	r->kq = kq;
 	r->ident = src->ident;
 	r->wrap_pset = wrap;
-	r->pipe_r = p[0];
-	r->pipe_w = p[1];
 	r->udata = src->udata;
 	r->flags = src->flags;
 	r->fflags = src->fflags;
@@ -303,10 +314,6 @@ reg_create(int kq, const struct kevent_qos_s *src, struct mach_kev_reg **out)
 	return (0);
 
 fail:
-	if (p[0] != -1)
-		(void)close(p[0]);
-	if (p[1] != -1)
-		(void)close(p[1]);
 	if (wrap != MACH_PORT_NULL &&
 	    wrap != (mach_port_name_t)src->ident) {
 		(void)mach_port_deallocate(mach_task_self(), wrap);
@@ -331,18 +338,14 @@ reg_destroy(struct mach_kev_reg *r)
 	}
 	r->backlog_tail = NULL;
 	/*
-	 * Unregister the kernel bell BEFORE closing the pipe. The
-	 * kernel holds a struct file * ref on pipe_w; if we close
-	 * pipe_r first, a message arriving before the bell is torn
-	 * down fires fo_write into a reader-less pipe (EPIPE) and the
-	 * wakeup is lost. op 5 drops the kernel-side registration.
+	 * Deallocate our wrap pset (unless it's the caller-owned ident pset).
+	 * Destroying the pset detaches any native EVFILT_MACHPORT knote on it
+	 * kernel-side (ipc_pset_destroy → knlist_clear), so the EV_DELETE the
+	 * caller submits afterwards finds the knote already gone and
+	 * filt_machportdetach (kn_knlist == NULL guard) is a no-op — no UAF,
+	 * regardless of ordering. Requires the kernel knote-teardown hardening
+	 * (nextbsd-kernel #29).
 	 */
-	if (r->wrap_pset != MACH_PORT_NULL)
-		(void)mach_event_bell_unregister(r->wrap_pset);
-	if (r->pipe_r != -1)
-		(void)close(r->pipe_r);
-	if (r->pipe_w != -1)
-		(void)close(r->pipe_w);
 	if (r->wrap_pset != MACH_PORT_NULL &&
 	    r->wrap_pset != (mach_port_name_t)r->ident) {
 		(void)mach_port_deallocate(mach_task_self(), r->wrap_pset);
@@ -377,14 +380,20 @@ machport_change_translate(int kq, const struct kevent_qos_s *src,
 			reg_remove_locked(r);
 		pthread_mutex_unlock(&g_reg_mtx);
 		if (r != NULL) {
-			EV_SET(out, (uintptr_t)r->pipe_r, EVFILT_READ,
-			    EV_DELETE, 0, 0, NULL);
+			/* EV_DELETE the native knote on the wrap pset. (EV_SET
+			 * reads r->wrap_pset before reg_destroy frees r.)
+			 * reg_destroy then deallocates the pset, which already
+			 * detaches the knote kernel-side, so this EV_DELETE is a
+			 * harmless ENOENT for an our-owned pset, or a clean detach
+			 * for the caller-owned ident-pset case. */
+			EV_SET(out, (uintptr_t)r->wrap_pset,
+			    EVFILT_MACHPORT_NATIVE, EV_DELETE, 0, 0, NULL);
 			reg_destroy(r);
 		} else {
 			/* No matching registration — surface ENOENT
-			 * via the real syscall on a sentinel fd. */
-			EV_SET(out, (uintptr_t)-1, EVFILT_READ, EV_DELETE,
-			    0, 0, NULL);
+			 * via the real syscall on a sentinel ident. */
+			EV_SET(out, (uintptr_t)-1, EVFILT_MACHPORT_NATIVE,
+			    EV_DELETE, 0, 0, NULL);
 		}
 		return (0);
 	}
@@ -397,7 +406,10 @@ machport_change_translate(int kq, const struct kevent_qos_s *src,
 		r->qos = src->qos;
 		r->xflags = src->xflags;
 		r->data = src->data;
-		EV_SET(out, (uintptr_t)r->pipe_r, EVFILT_READ,
+		/* Native EVFILT_MACHPORT on the wrap pset, notify mode
+		 * (fflags = 0, no MACH_RCV_MSG): filt_machport signals
+		 * readiness without consuming; we drain via mach_msg on fire. */
+		EV_SET(out, (uintptr_t)r->wrap_pset, EVFILT_MACHPORT_NATIVE,
 		    EV_ADD | EV_CLEAR, 0, 0, r);
 		pthread_mutex_unlock(&g_reg_mtx);
 		return (0);
@@ -412,7 +424,8 @@ machport_change_translate(int kq, const struct kevent_qos_s *src,
 	pthread_mutex_lock(&g_reg_mtx);
 	reg_insert_locked(r);
 	pthread_mutex_unlock(&g_reg_mtx);
-	EV_SET(out, (uintptr_t)r->pipe_r, EVFILT_READ, EV_ADD | EV_CLEAR,
+	EV_SET(out, (uintptr_t)r->wrap_pset, EVFILT_MACHPORT_NATIVE,
+	    EV_ADD | EV_CLEAR,
 	    0, 0, r);
 	return (0);
 }
@@ -514,15 +527,9 @@ backlog_recv_one_locked(struct mach_kev_reg *r)
 static void
 backlog_drain_locked(struct mach_kev_reg *r)
 {
-	char drain_buf[64];
-	ssize_t n;
-
-	/* Drain any pending wakeup bytes (multiple signals can fire
-	 * before userland reads). Non-blocking pipe — EAGAIN means done. */
-	do {
-		n = read(r->pipe_r, drain_buf, sizeof(drain_buf));
-	} while (n > 0);
-
+	/* Woken by the native EVFILT_MACHPORT readiness event on the wrap
+	 * pset (notify mode — the message was NOT consumed by the kernel), so
+	 * drain it here exactly as the pipe-bridge path did. */
 	if (r->fflags & MACH_RCV_MSG) {
 		/* Message mode — pull every available message. */
 		for (;;) {
@@ -765,10 +772,10 @@ kevent_qos(int kq, const struct kevent_qos_s *changelist, int nchanges,
 	for (i = 0; i < n && filled < nevents; i++) {
 		struct mach_kev_reg *r = NULL;
 
-		if (scratch_ev[i].filter == EVFILT_READ) {
+		if (scratch_ev[i].filter == EVFILT_MACHPORT_NATIVE) {
 			pthread_mutex_lock(&g_reg_mtx);
-			r = reg_find_by_pipe_r_locked(
-			    (int)scratch_ev[i].ident);
+			r = reg_find_by_wrap_pset_locked(
+			    (mach_port_name_t)scratch_ev[i].ident);
 			if (r != NULL) {
 				backlog_drain_locked(r);
 				while (r->backlog_head != NULL &&
