@@ -18,6 +18,10 @@
 	<array>
 		<string>/usr/libexec/kextd</string>
 		<string>-w</string>
+		<!-- -v: log the boot daemon's startup push + each load request it
+		     serves, so CI can see whether boot-time autoload actually fires.
+		     It must work with no manual poke (real-hardware shape). -->
+		<string>-v</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>

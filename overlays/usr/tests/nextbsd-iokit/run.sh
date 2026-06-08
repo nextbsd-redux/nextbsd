@@ -134,22 +134,19 @@ if [ ! -c /dev/iocatalogue ]; then
 	exit 0
 fi
 
-# Run kextd ourselves (it flushes then re-pushes, so it's idempotent). kextd is
-# NOT a boot-time launchd daemon yet — running a CF/OSKext-heavy job before the
-# system is up wedges launchd's boot dispatch; the launchd boot-push integration
-# lands with K3 (#216) when kextd becomes persistent and its ordering is
-# designed. Bound it with a watchdog so a hang surfaces as an empty catalogue
-# (-> IOCATALOGUE-FAIL) instead of stalling the whole boot test.
-if [ -x /usr/libexec/kextd ]; then
-	/usr/libexec/kextd -v &
-	kpid=$!
-	( sleep 90; kill "$kpid" 2>/dev/null ) &
-	wpid=$!
-	wait "$kpid" || echo "WARN: kextd exited nonzero or was killed (watchdog)"
-	kill "$wpid" 2>/dev/null
-else
-	echo "WARN: /usr/libexec/kextd missing"
-fi
+# kextd is now a boot-time launchd daemon (com.apple.kextd.plist, RunAtLoad,
+# K3b/#217) that registers HOST_KEXTD_PORT, pushes the repo personalities, and
+# serves load requests. We DO NOT push again here: a manual one-shot `kextd`
+# push used to run at this point and masked a real bug — the *boot daemon's own*
+# push does not result in boot-time autoload (the manual push only worked because
+# it ran against the already-serving daemon). This test now verifies the PURE
+# boot-daemon state — catalogue populated AND devices autoloaded by the boot
+# daemon ALONE, no manual poke — exactly how real hardware behaves.
+echo "=== /var/log/kextd.log (boot daemon, verbose) ==="
+cat /var/log/kextd.log 2>/dev/null
+echo "=== kextstat (what the boot daemon autoloaded) ==="
+kextstat 2>/dev/null
+echo "==="
 
 count=$(sysctl -n hw.iokit.catalogue_count 2>/dev/null || echo 0)
 dump=$(sysctl -n hw.iokit.catalogue 2>/dev/null || echo "")
@@ -158,7 +155,7 @@ echo "hw.iokit.catalogue:"
 echo "${dump}"
 
 if [ "${count}" -lt 1 ] 2>/dev/null; then
-	echo "IOCATALOGUE-FAIL: catalogue is empty after kextd push"
+	echo "IOCATALOGUE-FAIL: catalogue empty — the boot kextd daemon did not push personalities"
 	exit 1
 fi
 
@@ -238,19 +235,26 @@ fi
 # separate loaded file, so the kext-loaded signal cleanly distinguishes the two.
 # em0's address is read with `ipconfig` (Apple IPConfiguration); FreeBSD's
 # ifconfig(8) is NOT on the stripped image, so it must not be used here. Emits:
-#   EM-AUTOLOAD-OK    — IntelEthernet auto-loaded AND em0 has an address
-#   EM-AUTOLOAD-SKIP  — IntelEthernet not loaded -> em is built in (pre-#219)
-#   EM-AUTOLOAD-FAIL  — IntelEthernet loaded but em0 has no address (bind/DHCP failed)
+#
+# No manual kextd poke ran above, so this is the PURE boot-autoload result —
+# em0 must have been brought up by the boot daemon alone (real-hardware shape).
+#   EM-AUTOLOAD-OK    — IntelEthernet auto-loaded by the boot daemon AND em0 has an address
+#   EM-AUTOLOAD-SKIP  — IntelEthernet not loaded but em0 IS up -> em is built into this kernel
+#   EM-AUTOLOAD-FAIL  — IntelEthernet loaded but em0 has no address (bind/DHCP failed), OR
+#                       IntelEthernet not loaded AND em0 has no address (boot autoload did NOT happen)
 em_addr=$(ipconfig getifaddr em0 2>/dev/null || true)
-if kextstat 2>/dev/null | grep -qi intelethernet || \
-   kldstat 2>/dev/null | grep -qi intelethernet; then
+if kextstat 2>/dev/null | grep -qi intelethernet; then
 	if [ -n "$em_addr" ]; then
-		echo "EM-AUTOLOAD-OK: em0 ($em_addr) up via kextd auto-load of IntelEthernet.kext"
+		echo "EM-AUTOLOAD-OK: em0 ($em_addr) up via boot-daemon auto-load of IntelEthernet.kext"
 	else
 		echo "EM-AUTOLOAD-FAIL: IntelEthernet.kext loaded but em0 has no address (bind/DHCP failed)"
 	fi
+elif [ -n "$em_addr" ]; then
+	echo "EM-AUTOLOAD-SKIP: IntelEthernet not loaded but em0 is up — em is built into this kernel"
 else
-	echo "EM-AUTOLOAD-SKIP: IntelEthernet not loaded — em is built into the kernel (pre-#219 nodevice em)"
+	# em is nodevice in the continuous kernel (#219), so "not loaded + no address"
+	# means the boot daemon never autoloaded the NIC — the real-hardware bug.
+	echo "EM-AUTOLOAD-FAIL: boot daemon did NOT autoload IntelEthernet — em0 absent (real-hardware autoload failure)"
 fi
 
 exit 0
