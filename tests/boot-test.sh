@@ -257,6 +257,47 @@ expect {
     }
     "MACH-PORT-OK" { puts "\nOK: mach_port_* round-trip works" }
 }
+# EVFILT-MACHPORT — #168 Phase A discovery probe: does the kernel's NATIVE
+# kqueue Mach-port filter (mach.ko filt_machport, slot -16) deliver a wakeup +
+# inline-receive on a port set, via raw kevent(2) (no libdispatch/libmach
+# bridge)? NON-FATAL — every outcome is reported, none gates the build; the
+# result decides whether the configd KEM-in-process rework (#168) can use the
+# native filter directly or must fall back to the register_event_bell pipe-bridge.
+expect {
+    timeout {
+        puts "\nWARN: EVFILT-MACHPORT marker not seen (pre-#168 run.sh — informational)"
+    }
+    "EVFILT-MACHPORT-FAIL" {
+        puts "\nWARN: EVFILT-MACHPORT-FAIL — native kqueue Mach-port filter did NOT deliver (configd fold must use the pipe-bridge)"
+    }
+    "EVFILT-MACHPORT-SKIP" {
+        puts "\nWARN: EVFILT-MACHPORT-SKIP — native filter unavailable on this kernel image"
+    }
+    "EVFILT-MACHPORT-OK" {
+        puts "\nOK: native EVFILT_MACHPORT delivers (kqueue wakeup + inline receive) — #168 can use it directly"
+    }
+}
+# EVFILT-MACHPORT-CONCURRENT — #168 Stage 0 / #251 concurrency stress: pthreads
+# hammer concurrent knote attach/detach + port-set teardown + move_member churn
+# on a shared set (the PR #250 panic surface: #253 UAF, #252 NULL td_machdata,
+# #148 thread-exit kmsg destroy). A kernel regression panics here — caught by the
+# boot test's panic handling — so a clean OK proves the races stay fixed. WARN on
+# timeout (pre-#251 run.sh / image) and on SKIP (filter unavailable); FAIL on -FAIL.
+expect {
+    timeout {
+        puts "\nWARN: EVFILT-MACHPORT-CONCURRENT marker not seen (pre-#251 run.sh — informational)"
+    }
+    "EVFILT-MACHPORT-CONCURRENT-FAIL" {
+        puts "\nFAIL: EVFILT-MACHPORT-CONCURRENT-FAIL — a stress worker hit an unexpected error"
+        exit 1
+    }
+    "EVFILT-MACHPORT-CONCURRENT-SKIP" {
+        puts "\nWARN: EVFILT-MACHPORT-CONCURRENT-SKIP — native filter unavailable on this kernel image"
+    }
+    "EVFILT-MACHPORT-CONCURRENT-OK" {
+        puts "\nOK: native EVFILT_MACHPORT survives concurrent attach/detach/destroy + move_member churn (#251)"
+    }
+}
 expect {
     timeout {
         puts "\nFAIL: TASK-SPECIAL-PORT marker not seen"

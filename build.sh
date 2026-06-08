@@ -785,6 +785,34 @@ cc -I"$WORK/rootfs/usr/include" \
    -lsystem_kernel
 ls -lh "$WORK/rootfs/usr/tests/freebsd-launchd-mach/test_mach_port"
 
+# test_evfilt_machport — #168 gate: proves the NATIVE kernel EVFILT_MACHPORT
+# kqueue filter (mach.ko filt_machport, patch 0003 slot -16) actually delivers a
+# wakeup + inline-receives a Mach message arriving on a port set. Raw kevent(2),
+# no libdispatch/libmach bridge. Marker EVFILT-MACHPORT-OK / -FAIL / -SKIP.
+echo "==> building test_evfilt_machport"
+cc -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/test_evfilt_machport" \
+   "$ROOT/src/mach_kmod/tests/test_evfilt_machport.c" \
+   -lsystem_kernel
+ls -lh "$WORK/rootfs/usr/tests/freebsd-launchd-mach/test_evfilt_machport"
+
+# test_evfilt_machport_concurrent — #168 Stage 0 / #251: concurrency stress for
+# the native EVFILT_MACHPORT filter. Raw pthreads (no per-thread Mach init)
+# hammer concurrent knote attach/detach + port-set teardown + mach_port_move_member
+# churn on a shared set — the races behind the PR #250 boot panics (#253 UAF,
+# #252 NULL td_machdata, #148 thread-exit kmsg destroy). A regression panics the
+# kernel (CI catches it). Marker EVFILT-MACHPORT-CONCURRENT-OK / -FAIL / -SKIP.
+echo "==> building test_evfilt_machport_concurrent"
+cc -I"$WORK/rootfs/usr/include" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/test_evfilt_machport_concurrent" \
+   "$ROOT/src/mach_kmod/tests/test_evfilt_machport_concurrent.c" \
+   -lsystem_kernel -lpthread
+ls -lh "$WORK/rootfs/usr/tests/freebsd-launchd-mach/test_evfilt_machport_concurrent"
+
 # test_task_special_port — exercises task_get_special_port /
 # task_set_special_port traps (Phase G prerequisite for the bootstrap
 # server's port discovery). Failure surfaces as TASK-SPECIAL-PORT-FAIL.
