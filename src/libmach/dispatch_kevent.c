@@ -42,7 +42,6 @@
 
 #include <sys/types.h>
 #include <sys/event.h>
-#include <sys/sysctl.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -206,63 +205,6 @@ reg_remove_locked(struct mach_kev_reg *target)
 			return;
 		}
 	}
-}
-
-/*
- * Resolve a named mach.ko syscall (lazy, cached per call site).
- * Returns the syscall number or -1 if mach.ko isn't loaded.
- */
-static int
-resolve_mach_syscall(const char *name)
-{
-	int tmp;
-	size_t len = sizeof(tmp);
-	char oid[64];
-
-	if (snprintf(oid, sizeof(oid), "mach.syscall.%s", name) >=
-	    (int)sizeof(oid))
-		return (-1);
-	if (sysctlbyname(oid, &tmp, &len, NULL, 0) != 0)
-		return (-1);
-	return (tmp);
-}
-
-int
-mach_event_bell_register(mach_port_name_t pset_name, int pipe_w)
-{
-	static int num = -2;	/* -2 = unresolved, -1 = unavailable */
-	long ret;
-
-	if (num == -2)
-		num = resolve_mach_syscall("register_event_bell");
-	if (num < 0)
-		return (ENOSYS);
-	ret = syscall(num, (uint64_t)pset_name, (uint64_t)(unsigned)pipe_w);
-	if (ret != 0)
-		return ((int)ret);
-	return (0);
-}
-
-/*
- * mach_event_bell_unregister — dedicated unregister_event_bell syscall.
- * Tears down the bell registered by mach_event_bell_register so the
- * kernel stops writing wakeup bytes to a pipe whose read-end the
- * wrapper is about to close. Returns 0 on success, errno on failure.
- */
-int
-mach_event_bell_unregister(mach_port_name_t pset_name)
-{
-	static int num = -2;	/* -2 = unresolved, -1 = unavailable */
-	long ret;
-
-	if (num == -2)
-		num = resolve_mach_syscall("unregister_event_bell");
-	if (num < 0)
-		return (ENOSYS);
-	ret = syscall(num, (uint64_t)pset_name);
-	if (ret != 0)
-		return ((int)ret);
-	return (0);
 }
 
 /*

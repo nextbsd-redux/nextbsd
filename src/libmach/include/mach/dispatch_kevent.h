@@ -180,24 +180,11 @@ int kevent_qos(int kq, const struct kevent_qos_s *changelist, int nchanges,
     void *data_out, size_t *data_available, unsigned int flags);
 
 /*
- * mach_event_bell_register — userland wrapper around the
- * register_event_bell syscall. Registers `pipe_w` as the wakeup file
- * descriptor for `pset_name`.
- * Returns 0 on success, errno on failure.
- *
- * Exposed in this header so other consumers (tests, future libxpc
- * runloop integration) can register additional psets without going
- * through libdispatch.
+ * The task#39 register_event_bell / unregister_event_bell pipe-bridge
+ * wrappers were removed in #168 Stage 5 (#256): EVFILT_MACHPORT is rerouted
+ * to the native kernel filter (filt_machport), so libdispatch no longer needs
+ * a userland pipe bridge.
  */
-int mach_event_bell_register(mach_port_name_t pset_name, int pipe_w);
-
-/*
- * mach_event_bell_unregister — the unregister_event_bell syscall. Drop
- * the bell register armed so the kernel stops writing wakeup bytes to
- * the pipe.
- * Returns 0 on success, errno on failure.
- */
-int mach_event_bell_unregister(mach_port_name_t pset_name);
 
 #ifdef __cplusplus
 }
