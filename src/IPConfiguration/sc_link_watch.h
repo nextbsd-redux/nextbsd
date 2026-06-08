@@ -37,4 +37,12 @@ typedef void (*sc_link_watch_cb)(const char *ifname, int active,
  */
 int sc_link_watch_start(sc_link_watch_cb cb, uint32_t lease_cap_secs);
 
+/*
+ * Synchronously read State:/Network/Interface/<if>/Link {Active} from configd.
+ * Returns non-zero if the interface's link is Active. The store *value* is
+ * authoritative even when the change *wakeup* was lost — ipconfigd polls this
+ * after admin-up to recover a dropped Active notification (#250).
+ */
+int link_active_in_store(const char *ifname);
+
 #endif /* SC_LINK_WATCH_H */

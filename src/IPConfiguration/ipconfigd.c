@@ -360,6 +360,7 @@ static void
 on_link_event(const char *ifname, int active, uint32_t lease_cap_secs)
 {
 	char already[IFNAMSIZ] = "";
+	int i;
 
 	/* loopback never carries a DHCP service; the watcher filters lo0 too. */
 	if (strncmp(ifname, "lo", 2) == 0)
@@ -367,13 +368,42 @@ on_link_event(const char *ifname, int active, uint32_t lease_cap_secs)
 
 	if (!active) {
 		/* Present but link down — admin-up so the link can negotiate
-		 * (the late-arriving-NIC onboarding path, #219). */
-		if (iface_bring_up(ifname) == 0)
-			xlog("link-seen(%s) — brought admin-up; awaiting "
-			    "link-active to DHCP", ifname);
-		else
+		 * (the late-arriving-NIC onboarding path, #219).
+		 *
+		 * Recovery for the lost-wakeup race (#250): KEM publishes Active:0
+		 * then Active:1 in quick succession for a late NIC. configd sends a
+		 * watcher wakeup only on the empty->non-empty edge, so if the
+		 * Active:1 _configset is demuxed by configd's single serve thread
+		 * between our wakeup and our notifychanges drain, no second wakeup
+		 * is sent and our callout reads the store one instant too early
+		 * (Active:0). The Active:1 value then sits in the store with no
+		 * pending notification and we would wait forever. The store *value*
+		 * is authoritative even when the *wakeup* is not, so poll it a few
+		 * times after admin-up and recover by re-driving the active path.
+		 * This also covers a configd full-queue silent send-drop and any
+		 * future transport change — it does not depend on the wakeup at all. */
+		if (iface_bring_up(ifname) != 0) {
 			xlog("link-seen(%s) — could not bring up: %s", ifname,
 			    strerror(errno));
+			return;
+		}
+		xlog("link-seen(%s) — brought admin-up; polling link state",
+		    ifname);
+		for (i = 0; i < 6; i++) {
+			struct timespec ts = { .tv_sec = 0,
+			    .tv_nsec = 500 * 1000 * 1000 };	/* 500ms */
+
+			(void)nanosleep(&ts, NULL);
+			if (link_active_in_store(ifname)) {
+				xlog("link-seen(%s) — store shows Active after "
+				    "admin-up; recovering missed wakeup, DHCP",
+				    ifname);
+				on_link_event(ifname, 1, lease_cap_secs);
+				return;
+			}
+		}
+		xlog("link-seen(%s) — still down after admin-up poll; "
+		    "awaiting Active wakeup", ifname);
 		return;
 	}
 
