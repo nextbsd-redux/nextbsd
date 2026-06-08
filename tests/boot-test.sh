@@ -818,11 +818,11 @@ expect {
     }
 }
 
-# KEM-LINK — KernelEventMonitor published State:/Network/Interface/<if>/Link
-# = {Active:…} from a PF_ROUTE link-state change. This is the Apple-shaped
-# DHCP-on-link-up trigger that replaced the hwregd attach subscription;
-# ipconfigd's DHCP (IPCFG-BOUND below) now depends on it. run.sh surfaces
-# the marker by cat'ing /var/log/KernelEventMonitor.stderr.
+# KEM-LINK — the in-process KernelEventMonitor (configd's config_link_monitor.c,
+# #257) published State:/Network/Interface/<if>/Link = {Active:…} from a PF_ROUTE
+# link-state change. This is the Apple-shaped DHCP-on-link-up trigger that
+# replaced the hwregd attach subscription; ipconfigd's DHCP (IPCFG-BOUND below)
+# now depends on it. run.sh surfaces the marker by cat'ing /var/log/configd.stderr.
 expect {
     timeout {
         puts "\nFAIL: KEM-LINK marker not seen"

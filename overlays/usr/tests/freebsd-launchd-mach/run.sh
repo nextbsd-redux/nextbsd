@@ -881,7 +881,7 @@ sleep 2
 # /var/log/<daemon>.stderr file. Dump those into the boot console
 # BEFORE the proc check so [T39-bs] / [T39-ll] traces (and any other
 # diagnostic output) survive the halt that follows a PROC-FAIL exit.
-for slog in /var/log/syslogd.stderr /var/log/notifyd.stderr /var/log/aslmanager.stderr /var/log/configd.stderr /var/log/KernelEventMonitor.stderr; do
+for slog in /var/log/syslogd.stderr /var/log/notifyd.stderr /var/log/aslmanager.stderr /var/log/configd.stderr; do
     if [ -s "$slog" ]; then
         echo "=== begin $slog ==="
         cat "$slog" || true
@@ -1197,15 +1197,16 @@ if [ ! -x "$ipconfigtest" ]; then
 fi
 "$ipconfigtest" || true	# marker (IPCFG-BOOT-OK/FAIL) gates in boot-test.sh
 
-# KEM-LINK — KernelEventMonitor publishes State:/Network/Interface/<if>/Link
-# from PF_ROUTE link-state changes. This is the trigger ipconfigd's DHCP
-# now depends on (it replaced the hwregd attach subscription): ipconfigd
-# brings em0 up, KernelEventMonitor sees the link go Active and publishes,
-# ipconfigd's sc_link_watch reacts and runs DHCP. So IPCFG-BOUND below now
-# inherently exercises this path — but gate the monitor's own marker too so
-# a break in the link half is attributed here. Poll its log; cat surfaces
+# KEM-LINK — the in-process KernelEventMonitor (configd's config_link_monitor.c,
+# #257) publishes State:/Network/Interface/<if>/Link from PF_ROUTE link-state
+# changes. This is the trigger ipconfigd's DHCP now depends on (it replaced the
+# hwregd attach subscription): ipconfigd brings em0 up, the monitor sees the link
+# go Active and publishes, ipconfigd's sc_link_watch reacts and runs DHCP. So
+# IPCFG-BOUND below now inherently exercises this path — but gate the monitor's
+# own marker too so a break in the link half is attributed here. The monitor now
+# runs inside configd, so its marker lands in configd's log. Poll it; cat surfaces
 # the marker to the console for boot-test.sh's expect.
-kem_log=/var/log/KernelEventMonitor.stderr
+kem_log=/var/log/configd.stderr
 i=0
 while [ $i -lt 30 ]; do
     if grep -q "KEM-LINK-OK" "$kem_log" 2>/dev/null; then

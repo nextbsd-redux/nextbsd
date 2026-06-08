@@ -62,6 +62,7 @@
 #include "config_store.h"
 #include "config_session.h"
 #include "config_wire.h"	/* keylist / kvmap batch encodings */
+#include "config_link_monitor.h"	/* in-process KernelEventMonitor (#257) */
 #include "configServer.h"	/* MIG: config_server() demux + _config* protos */
 
 /*
@@ -1168,6 +1169,16 @@ main(int argc, char **argv)
 		clog("could not set up the configd port set — exiting");
 		return 1;
 	}
+
+	/*
+	 * Start the in-process KernelEventMonitor: a thread that reads the
+	 * PF_ROUTE socket and publishes State:/Network/Interface/<if>/Link via
+	 * a configd session (so the store write lands on this serve thread).
+	 * Replaces the standalone KernelEventMonitor daemon (#257). The service
+	 * is checked in above, so the thread's configopen resolves; it must
+	 * start before configd_serve() blocks here.
+	 */
+	config_link_monitor_start();
 
 	configd_serve(port_set);
 
