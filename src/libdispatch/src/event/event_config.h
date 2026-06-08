@@ -229,8 +229,10 @@
 #if HAVE_MACH
 /*
  * Apple's original guard: `#if !EV_UDATA_SPECIFIC` -> #error.
- * Removed for FreeBSD: see comment above on event_mach_freebsd.c
- * being the Mach backend instead of event_kevent.c. The
+ * Removed for FreeBSD: under HAVE_MACH the Mach backend is
+ * event_kevent.c (Apple's path), whose EVFILT_MACHPORT kevents
+ * libmach reroutes to mach.ko's native filt_machport (slot -16) —
+ * the old !HAVE_MACH polling stub was retired in #168 Stage 3. The
  * EV_UDATA_SPECIFIC compile-time conditionals below still work
  * because the macro is defined to a sentinel above; they expand to
  * truthy and the resulting flag bits are silently ignored by

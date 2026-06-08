@@ -208,8 +208,8 @@ fi
 # Baseline check that the vendored swift-corelibs-libdispatch (built
 # in our chroot pipeline, installed to /usr/lib/system/) is loadable
 # via rtld and dispatches a function-pointer callback correctly. The
-# Mach IPC backend test (DISPATCH_SOURCE_TYPE_MACH_RECV) lands in a
-# follow-up commit once event_mach_freebsd.c is wired in.
+# Mach IPC backend test (DISPATCH_SOURCE_TYPE_MACH_RECV) is the
+# LIBDISPATCH-MACH gate below.
 if [ -x /usr/tests/freebsd-launchd-mach/test_libdispatch ]; then
     if /usr/tests/freebsd-launchd-mach/test_libdispatch; then
         echo "LIBDISPATCH-OK: libdispatch baseline roundtrip succeeded"
@@ -225,14 +225,15 @@ else
     exit 1
 fi
 
-# 4. Mach IPC backend round-trip: DISPATCH_SOURCE_TYPE_MACH_RECV with
-# the real polling-thread backend (event_mach_freebsd.c) — allocate a
-# port via mach_reply_port, attach a dispatch source, self-send a
-# message, verify the handler fires within 5s and consumes it. Proves:
-# event_mach_freebsd.c spawns a working poll thread; mach_msg(MACH_RCV_
-# LARGE, rcv_size=0) peek path returns TOO_LARGE without consuming;
-# dispatch_source_merge_data wakes the handler; handler's mach_msg(
-# MACH_RCV_MSG) drains the message; clean cancel/release teardown.
+# 4. Mach IPC backend round-trip: DISPATCH_SOURCE_TYPE_MACH_RECV over the
+# NATIVE kernel filter — allocate a port via mach_reply_port, attach a
+# dispatch source, self-send a message, verify the handler fires within 5s
+# and consumes it. Under HAVE_MACH the source registers a real
+# EVFILT_MACHPORT kevent (Apple's event_kevent.c path) that libmach reroutes
+# to mach.ko's filt_machport (slot -16); the kernel filter wakes the source
+# edge-triggered (the old event_mach_freebsd.c poll thread was retired in
+# #168 Stage 3, #254). Handler's mach_msg(MACH_RCV_MSG) drains the message;
+# clean cancel/release teardown.
 if [ -x /usr/tests/freebsd-launchd-mach/test_libdispatch_mach ]; then
     if /usr/tests/freebsd-launchd-mach/test_libdispatch_mach; then
         echo "LIBDISPATCH-MACH-OK: Mach RECV round-trip succeeded"

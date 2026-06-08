@@ -85,19 +85,13 @@ if(HAVE_MACH)
     COMMENT "MIG protocol.defs -> protocol{,Server,User}.{h,c}")
 endif()
 
-# FreeBSD Mach IPC backend stub. Provides definitions for the public
-# DISPATCH_SOURCE_TYPE_MACH_{SEND,RECV} symbols + internal _dispatch_
-# mach_type_* + _dispatch_xpc_type_sigterm so consumers (libxpc,
-# libnotify, configd, etc.) can link against libsystem_dispatch.so on
-# FreeBSD. Stub-level: dst_create returns DISPATCH_UNOTE_NULL (clean
-# failure, no crash). Real polling-thread receive lands in a follow-up.
-# Gated on FreeBSD AND HAVE_MACH unset (so on a future hypothetical
-# FreeBSD with HAVE_MACH defined, this file is excluded and Apple's
-# event_kevent.c definitions take over).
-if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD" AND NOT HAVE_MACH)
-  target_sources(dispatch PRIVATE
-    event/event_mach_freebsd.c)
-endif()
+# NextBSD builds libdispatch with HAVE_MACH=ON (full XNU Mach userland), so
+# the Mach-recv dispatch sources come from Apple's event_kevent.c, registering
+# a real EVFILT_MACHPORT kevent that libmach reroutes to mach.ko's native
+# filt_machport (slot -16). The old FreeBSD per-source polling backend
+# (event/event_mach_freebsd.c, the !HAVE_MACH stub with a 100ms mach_msg poll
+# thread) was retired once native delivery was proven (#168 Stages 0-2: probe
+# #249, reroute #250) and the file deleted in Stage 3 (#254).
 
 if(DISPATCH_USE_INTERNAL_WORKQUEUE)
   target_sources(dispatch PRIVATE
