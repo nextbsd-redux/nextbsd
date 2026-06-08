@@ -80,6 +80,19 @@ else
     echo "EVFILT-MACHPORT-SKIP: test_evfilt_machport binary not installed"
 fi
 
+# 2b''. EVFILT_MACHPORT concurrency stress (#168 Stage 0 / #251). Raw pthreads
+# hammer concurrent knote attach/detach + port-set teardown + mach_port_move_member
+# churn on a shared set — the races behind the PR #250 boot panics (#253 UAF in
+# filt_machportattach, #252 NULL td_machdata on non-mach-init threads, #148
+# kmsg-destroy on thread exit). A regression panics the kernel and the boot test's
+# panic detection fails CI; a clean run prints EVFILT-MACHPORT-CONCURRENT-OK. The
+# gate WARNs on SKIP (filter unavailable) and FAILs CI on -FAIL.
+if [ -x /usr/tests/freebsd-launchd-mach/test_evfilt_machport_concurrent ]; then
+    /usr/tests/freebsd-launchd-mach/test_evfilt_machport_concurrent || true
+else
+    echo "EVFILT-MACHPORT-CONCURRENT-SKIP: binary not installed"
+fi
+
 # 2c. userland: task_get_special_port / task_set_special_port. Phase G
 # prerequisite — the bootstrap server uses task_set_bootstrap_port on
 # each client task to publish its receive port, and clients read it
