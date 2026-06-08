@@ -87,7 +87,7 @@ eval spawn qemu-system-x86_64 \
     -bios $env(OVMF) \
     $accel_flags \
     -drive file=$img,format=raw,if=virtio \
-    -nic user,model=e1000 \
+    -nic user,model=e1000e \
     -display none -serial stdio \
     -no-reboot
 
