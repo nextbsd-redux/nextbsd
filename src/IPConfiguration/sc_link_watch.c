@@ -60,6 +60,49 @@ mkstr(const char *s)
 	return (CFStringCreateWithCString(NULL, s, kCFStringEncodingUTF8));
 }
 
+/*
+ * Read State:/Network/Interface/<if>/Link {Active} straight from configd via a
+ * synchronous SCDynamicStoreCopyValue. Authoritative even when the change
+ * *wakeup* was lost (#250 recovery): configd sends a watcher notification only
+ * on the empty->non-empty edge, so for a late NIC's rapid Active:0 -> Active:1
+ * the second wakeup can be raced away — but the *value* is always committed to
+ * the store. ipconfigd polls this after admin-up so a dropped wakeup still
+ * recovers. Uses a private throwaway session (no notification registration) so
+ * it cannot perturb the linkwatch session's notify state. Returns 1 if Active.
+ */
+int
+link_active_in_store(const char *ifname)
+{
+	SCDynamicStoreRef store;
+	CFStringRef key;
+	CFDictionaryRef dict;
+	CFBooleanRef active;
+	int is_active = 0;
+
+	store = SCDynamicStoreCreate(NULL, CFSTR("ipconfigd-linkpoll"),
+	    NULL, NULL);
+	if (store == NULL)
+		return (0);
+	key = CFStringCreateWithFormat(NULL, NULL,
+	    CFSTR("State:/Network/Interface/%s/Link"), ifname);
+	if (key != NULL) {
+		dict = SCDynamicStoreCopyValue(store, key);
+		if (dict != NULL) {
+			if (CFGetTypeID(dict) == CFDictionaryGetTypeID()) {
+				active = CFDictionaryGetValue(dict,
+				    CFSTR("Active"));
+				is_active = (active != NULL &&
+				    CFGetTypeID(active) == CFBooleanGetTypeID() &&
+				    CFBooleanGetValue(active));
+			}
+			CFRelease(dict);
+		}
+		CFRelease(key);
+	}
+	CFRelease(store);
+	return (is_active);
+}
+
 /* Trampoline payload — heap-allocated, freed by the trampoline. */
 struct link_event {
 	char		ifname[IFNAMSIZ];
