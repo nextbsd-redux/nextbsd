@@ -1,12 +1,12 @@
 /*
  * IOKitNotify.c — libIOKit: K2 device-arrival / departure notifications.
  *
- * Each IONotificationPort owns one Mach receive right and one private pthread
- * that drives a raw mach_msg(MACH_RCV_MSG|MACH_RCV_TIMEOUT, 500ms) loop on it.
- * Events fan in on the one port and the receive thread re-matches each event's
- * device fields against the per-watch criteria stored client-side, then fires
- * each matching IOServiceMatchingCallback (via dispatch_async_f if a queue is
- * set, inline on the receive thread otherwise).
+ * Each IONotificationPort owns one Mach receive right and a
+ * DISPATCH_SOURCE_TYPE_MACH_RECV source on it (running on a private serial
+ * queue). Events fan in on the one port; the source handler self-drains the
+ * port and re-matches each event's device fields against the per-watch criteria
+ * stored client-side, then fires each matching IOServiceMatchingCallback (via
+ * dispatch_async_f if a callback queue is set, inline otherwise).
  *
  * Backend (#218): watch registration uses the kernel notify channel —
  * ioctl(/dev/ioregistry, IOREGIOCWATCH) registers the recv port directly with
@@ -15,10 +15,11 @@
  * eventhandlers. The kernel is the registry; hwregd has been retired, so there
  * is no userland fallback.
  *
- * Why raw mach_msg and not a libdispatch MACH_RECV source: task #41 + the
- * libSystemConfiguration iter-2 notes confirm DISPATCH_SOURCE_TYPE_MACH_RECV
- * does not reliably deliver in this repo; libSystemConfiguration's SCNotify and
- * this facade both use the same pthread+timed-mach_msg pattern.
+ * Delivery is the native EVFILT_MACHPORT filter (mach.ko filt_machport, slot
+ * -16) that libmach reroutes the source's kevent onto. task #41's "MACH_RECV
+ * doesn't reliably deliver" was the module-era register_event_bell pipe bridge,
+ * retired in #168 Stages 2-3 (#250/#254); SCNotify converted alongside this in
+ * Stage 4 (#255).
  */
 #include <IOKit/IOKitLib.h>
 #include "IOKitInternal.h"
@@ -59,8 +60,10 @@ struct __io_watch {
 
 struct IONotificationPort {
 	mach_port_t		 recv_port;	/* receive right we own */
-	pthread_t		 thread;
-	atomic_int		 stop;
+	dispatch_source_t	 source;	/* MACH_RECV source on recv_port */
+	dispatch_queue_t	 recv_queue;	/* private serial queue the source
+						 * runs on (distinct from `queue`,
+						 * the callback target) */
 	pthread_mutex_t		 lock;		/* guards `watches` + queue */
 	struct __io_watch	*watches;
 	dispatch_queue_t	 queue;		/* optional callback target */
@@ -204,12 +207,21 @@ decode_event(const union event_rcv_buf *buf, uint32_t *evt, uint64_t *id,
 	}
 }
 
-static void *
-receive_thread(void *arg)
+/*
+ * MACH_RECV source event handler. The kernel notify channel pushes binary
+ * ioreg_event_msg events to recv_port; the native EVFILT_MACHPORT source wakes
+ * us here (the task-#41 "doesn't reliably deliver" was the retired module-era
+ * pipe bridge — native delivery works, #168/#250). The source registers in
+ * notify mode and carries no message, so drain recv_port ourselves in a loop:
+ * several events can coalesce into one fire, and a left-over message would
+ * re-fire the source forever. Runs on the private recv_queue.
+ */
+static void
+io_source_handler(void *arg)
 {
 	struct IONotificationPort *port = arg;
 
-	while (atomic_load(&port->stop) == 0) {
+	for (;;) {
 		union event_rcv_buf buf;
 		mach_msg_return_t mr;
 		uint64_t id;
@@ -221,11 +233,9 @@ receive_thread(void *arg)
 		mr = mach_msg(&buf.hdr,
 		    MACH_RCV_MSG | MACH_RCV_TIMEOUT,
 		    0, sizeof(buf), port->recv_port,
-		    500, MACH_PORT_NULL);
-		if (mr == MACH_RCV_TIMED_OUT)
-			continue;
+		    0 /* non-blocking */, MACH_PORT_NULL);
 		if (mr != MACH_MSG_SUCCESS)
-			continue;	/* transient — keep looping */
+			break;		/* drained (RCV_TIMED_OUT) or transient */
 		if (!decode_event(&buf, &evt, &id, name, sizeof(name),
 		    klass, sizeof(klass)))
 			continue;
@@ -247,7 +257,35 @@ receive_thread(void *arg)
 		for (i = 0; i < n_snap; i++)
 			fire_callback(port, snap[i], id);
 	}
-	return (NULL);
+}
+
+/*
+ * MACH_RECV source cancel handler. Runs asynchronously after cancellation and
+ * any in-flight event handler complete, so recv_port and the lock stay valid
+ * until the source is truly done. Frees the watch list, drops the port's send +
+ * receive rights (the kernel prunes this port's watches on its next emission),
+ * releases the callback + receive queues, destroys the lock, and frees the port.
+ */
+static void
+io_source_cancel(void *arg)
+{
+	struct IONotificationPort *port = arg;
+	struct __io_watch *w, *next;
+
+	for (w = port->watches; w != NULL; w = next) {
+		next = w->next;
+		free(w);
+	}
+	(void)mach_port_mod_refs(mach_task_self(), port->recv_port,
+	    MACH_PORT_RIGHT_SEND, -1);
+	(void)mach_port_mod_refs(mach_task_self(), port->recv_port,
+	    MACH_PORT_RIGHT_RECEIVE, -1);
+	if (port->queue != NULL)
+		dispatch_release(port->queue);
+	if (port->recv_queue != NULL)
+		dispatch_release(port->recv_queue);
+	(void)pthread_mutex_destroy(&port->lock);
+	free(port);
 }
 
 IONotificationPortRef
@@ -287,9 +325,20 @@ IONotificationPortCreate(mach_port_t mainPort __unused)
 		return (NULL);
 	}
 	p->recv_port = mp;
-	atomic_store(&p->stop, 0);
 	(void)pthread_mutex_init(&p->lock, NULL);
-	if (pthread_create(&p->thread, NULL, receive_thread, p) != 0) {
+
+	/*
+	 * libIOKit has no caller queue at create time (IONotificationPortSet-
+	 * DispatchQueue sets the *callback* target, separately), so drive the
+	 * MACH_RECV source from a private serial queue.
+	 */
+	p->recv_queue = dispatch_queue_create("com.apple.iokit.notify", NULL);
+	if (p->recv_queue != NULL)
+		p->source = dispatch_source_create(DISPATCH_SOURCE_TYPE_MACH_RECV,
+		    mp, 0, p->recv_queue);
+	if (p->recv_queue == NULL || p->source == NULL) {
+		if (p->recv_queue != NULL)
+			dispatch_release(p->recv_queue);
 		(void)pthread_mutex_destroy(&p->lock);
 		(void)mach_port_mod_refs(mach_task_self(), mp,
 		    MACH_PORT_RIGHT_SEND, -1);
@@ -298,6 +347,10 @@ IONotificationPortCreate(mach_port_t mainPort __unused)
 		free(p);
 		return (NULL);
 	}
+	dispatch_set_context(p->source, p);
+	dispatch_source_set_event_handler_f(p->source, io_source_handler);
+	dispatch_source_set_cancel_handler_f(p->source, io_source_cancel);
+	dispatch_resume(p->source);
 	return (p);
 }
 
@@ -328,35 +381,22 @@ IONotificationPortGetMachPort(IONotificationPortRef port)
 void
 IONotificationPortDestroy(IONotificationPortRef port)
 {
-	struct __io_watch *w, *next;
-
 	if (port == NULL)
 		return;
 
-	/* Stop the receive thread before tearing the port down. */
-	atomic_store(&port->stop, 1);
-	(void)pthread_join(port->thread, NULL);
-
-	/* Kernel-channel watches need no explicit teardown — the kernel prunes
-	 * the watch when the recv right is dropped below. */
-	for (w = port->watches; w != NULL; w = next) {
-		next = w->next;
-		free(w);
-	}
-
-	/* Dropping the recv right signals the kernel notify channel to prune this
-	 * port's watches on its next emission (iokit_notify_port_dead). The local
-	 * send right inserted at create time (MAKE_SEND) is released too so the
-	 * name is fully reclaimed; the kernel holds its own copied send ref
-	 * independent of ours, so this does not race its pending sends. */
-	(void)mach_port_mod_refs(mach_task_self(), port->recv_port,
-	    MACH_PORT_RIGHT_SEND, -1);
-	(void)mach_port_mod_refs(mach_task_self(), port->recv_port,
-	    MACH_PORT_RIGHT_RECEIVE, -1);
-	if (port->queue != NULL)
-		dispatch_release(port->queue);
-	(void)pthread_mutex_destroy(&port->lock);
-	free(port);
+	/*
+	 * Cancel the MACH_RECV source. The cancel handler (io_source_cancel,
+	 * async, after any in-flight event handler) frees the watch list, drops
+	 * the port's send + receive rights — which signals the kernel notify
+	 * channel to prune this port's watches on its next emission
+	 * (iokit_notify_port_dead) — releases the callback + receive queues,
+	 * destroys the lock, and frees the port. Doing teardown there (not here)
+	 * keeps recv_port and the lock valid until the source is truly done, so a
+	 * concurrent in-flight event can't use-after-free. We drop only our own
+	 * source ref here.
+	 */
+	dispatch_source_cancel(port->source);
+	dispatch_release(port->source);
 }
 
 /*
