@@ -125,7 +125,18 @@ as the design doc:
   `LIBDISPATCH-MACH-OK`.
 
 **Phase E** &mdash; *real `DISPATCH_SOURCE_TYPE_MACH_RECV` backend* &mdash;
-*done.* The stub `event_mach_freebsd.c` is now a working polling-thread
+*done, later superseded.*
+
+> **Superseded (#168 Stages 0&ndash;3):** the polling-thread backend below
+> was a `!HAVE_MACH` stopgap. Once the kernel's native `EVFILT_MACHPORT`
+> filter (`mach.ko` `filt_machport`, slot -16) was proven to deliver (probe
+> #249) and libmach was rerouted onto it (#250), the image builds
+> `HAVE_MACH=ON` so Mach-recv sources come from Apple's `event_kevent.c`
+> (edge-triggered, no poll thread). `event_mach_freebsd.c` was deleted in
+> Stage 3 (#254). The description below is retained as a historical record
+> of the interim design.
+
+The stub `event_mach_freebsd.c` is now a working polling-thread
 implementation. `dispatch_source_create(DISPATCH_SOURCE_TYPE_MACH_RECV,
 port, 0, q)` returns a live source backed by:
 
