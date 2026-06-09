@@ -3005,8 +3005,13 @@ cp "$WORK/rootfs.uzip" "$ISOROOT/rootfs.uzip"
 #     (extracted from src.txz at step 3a).
 ISO_NAME="NextBSD-${ARCH}-${IMG_DATE}.iso"
 echo "==> mkisoimages.sh: bootable cd9660 (BIOS + UEFI)"
-sh "$WORK/freebsd-src/release/${ARCH}/mkisoimages.sh" -b NEXTBSD \
-    "$WORK/$ISO_NAME" "$ISOROOT"
+# src.txz extracts under usr/src/, so the release script lands at
+# $WORK/freebsd-src/usr/src/release/$ARCH/mkisoimages.sh -- locate it by glob
+# rather than hardcoding the nesting. It sources ../../tools/boot/install-boot.sh
+# (also in the extracted tree).
+MKISO=$(find "$WORK/freebsd-src" -path "*/release/${ARCH}/mkisoimages.sh" 2>/dev/null | head -1)
+[ -n "$MKISO" ] || { echo "ERROR: mkisoimages.sh not found under $WORK/freebsd-src" >&2; exit 1; }
+sh "$MKISO" -b NEXTBSD "$WORK/$ISO_NAME" "$ISOROOT"
 ls -lh "$WORK/$ISO_NAME"
 echo "==> zip live ISO"
 (cd "$WORK" && zip -9 "$OUT/${ISO_NAME}.zip" "$ISO_NAME")
