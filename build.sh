@@ -2950,6 +2950,71 @@ echo "==> zip disk image"
 ls -lh "$OUT/${IMG_NAME}.zip"
 sha256 "$OUT/${IMG_NAME}.zip" 2>/dev/null || sha256sum "$OUT/${IMG_NAME}.zip"
 
+#
+# 7. live ISO (nextbsd #70 + the live-root overlay). A bootable cd9660 the
+#    loader reads /boot from; it md-preloads rootfs.uzip, and geom_uzip + the
+#    kernel's vfs.root.overlay hook (nextbsd-kernel #39) stack a writable
+#    tmpfs/unionfs over the read-only uzip root BEFORE launchd -- so the live /
+#    is read-write, while the installed rw-UFS disk image above never unions.
+#    First proof: md-preloaded (RAM-resident) uzip; on-demand/isohybrid + the
+#    tarfs bake-off are follow-ons. launchd needs no change: its
+#    launchd_root_make_writable() already skips the remount when / is not
+#    MNT_RDONLY (the live union is already writable).
+#
+echo "==> live ISO: building compressed read-only root"
+
+# 7a. The kernel overlay hook mounts the writable tmpfs at /.overlay, which must
+#     already exist (empty) in the read-only root -- the kernel can't mkdir on a
+#     RO fs. Added only to the ISO's root image (after the disk image's makefs).
+mkdir -p "$WORK/rootfs/.overlay"
+
+# 7b. Compact UFS image of rootfs (no rw headroom -- it is read-only), then
+#     mkuzip (zlib; geom_uzip reads it). Separate from the disk image's padded
+#     rootfs.ufs.
+echo "==> makefs ffs (compact) + mkuzip"
+makefs -t ffs -B little -o version=2,label=NBROOT \
+    "$WORK/rootfs.iso.ufs" "$WORK/rootfs"
+mkuzip -o "$WORK/rootfs.uzip" "$WORK/rootfs.iso.ufs"
+ls -lh "$WORK/rootfs.uzip"
+
+# 7c. ISO bits dir: /boot (loader + kernel, copied from rootfs) + a live loader
+#     config + the uzip. mkisoimages.sh needs boot/cdboot (BIOS El Torito) and
+#     boot/loader.efi (UEFI; it builds the El Torito ESP from it).
+ISOROOT="$WORK/isoroot"
+rm -rf "$ISOROOT"
+mkdir -p "$ISOROOT/boot/loader.conf.d" "$ISOROOT/etc"
+cp -R "$WORK/rootfs/boot/." "$ISOROOT/boot/"
+for f in cdboot loader.efi; do
+    [ -f "$ISOROOT/boot/$f" ] || { echo "ERROR: live ISO needs rootfs/boot/$f" >&2; exit 1; }
+done
+# Live loader config (zz- => read last, wins). Preload the uzip as md0, mount it
+# through geom_uzip, and set the vfs.root.overlay kenv the kernel hook gates on.
+# vfs.root.mountfrom overrides the kernel's baked ROOTDEVNAME (ufs:/dev/ufs/
+# ROOTFS); the installed disk image has no such file, so it boots plain rw-UFS.
+cat > "$ISOROOT/boot/loader.conf.d/zz-live.conf" <<'LIVEEOF'
+# NextBSD live ISO: compressed read-only root + writable overlay.
+mdroot_load="YES"
+mdroot_type="md_image"
+mdroot_name="/rootfs.uzip"
+vfs.root.mountfrom="ufs:/dev/md0.uzip"
+vfs.root.overlay="tmpfs"
+LIVEEOF
+cp "$WORK/rootfs.uzip" "$ISOROOT/rootfs.uzip"
+
+# 7d. Build the bootable cd9660 (BIOS cdboot + UEFI ESP) via the release script
+#     (extracted from src.txz at step 3a).
+ISO_NAME="NextBSD-${ARCH}-${IMG_DATE}.iso"
+echo "==> mkisoimages.sh: bootable cd9660 (BIOS + UEFI)"
+sh "$WORK/freebsd-src/release/${ARCH}/mkisoimages.sh" -b NEXTBSD \
+    "$WORK/$ISO_NAME" "$ISOROOT"
+ls -lh "$WORK/$ISO_NAME"
+echo "==> zip live ISO"
+(cd "$WORK" && zip -9 "$OUT/${ISO_NAME}.zip" "$ISO_NAME")
+ls -lh "$OUT/${ISO_NAME}.zip"
+sha256 "$OUT/${ISO_NAME}.zip" 2>/dev/null || sha256sum "$OUT/${ISO_NAME}.zip"
+rm -rf "$ISOROOT"
+rm -f "$WORK/rootfs.iso.ufs" "$WORK/rootfs.uzip" "$WORK/$ISO_NAME"
+
 # trim the multi-GB image intermediates — only out/ needs to survive
 # the post-build copyback.
 rm -f "$WORK/$IMG_NAME" "$WORK/rootfs.ufs" "$WORK/esp.img"

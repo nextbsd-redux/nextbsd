@@ -231,8 +231,9 @@ jobs:
         run: |
           ls -lh out/
           IMG="NextBSD-${{ matrix.arch }}-${{ steps.meta.outputs.date }}.img.zip"
-          ( cd out && sha256sum "$IMG" > "$IMG.sha256" )
-          cat "out/$IMG.sha256"
+          ISO="NextBSD-${{ matrix.arch }}-${{ steps.meta.outputs.date }}.iso.zip"
+          ( cd out && sha256sum "$IMG" > "$IMG.sha256" && sha256sum "$ISO" > "$ISO.sha256" )
+          cat "out/$IMG.sha256" "out/$ISO.sha256"
 
       # compression-level: 0 — the .img.zip is already DEFLATE-9; the outer
       # artifact wrapper just stores it (no recompression). GitHub always
@@ -245,6 +246,8 @@ jobs:
           path: |
             out/NextBSD-${{ matrix.arch }}-${{ steps.meta.outputs.date }}.img.zip
             out/NextBSD-${{ matrix.arch }}-${{ steps.meta.outputs.date }}.img.zip.sha256
+            out/NextBSD-${{ matrix.arch }}-${{ steps.meta.outputs.date }}.iso.zip
+            out/NextBSD-${{ matrix.arch }}-${{ steps.meta.outputs.date }}.iso.zip.sha256
           compression-level: 0
           retention-days: 14
           if-no-files-found: error
@@ -356,7 +359,7 @@ jobs:
           merge-multiple: true
 
       - name: list release assets
-        run: ls -lh out/NextBSD-*.img.zip out/NextBSD-*.img.zip.sha256
+        run: ls -lh out/NextBSD-*.img.zip out/NextBSD-*.img.zip.sha256 out/NextBSD-*.iso.zip out/NextBSD-*.iso.zip.sha256
 
       # `gh release create` wedges silently on big ISO uploads (single PUT,
       # no chunking, no retry). softprops/action-gh-release uses Octokit's
@@ -391,3 +394,5 @@ jobs:
           files: |
             out/NextBSD-*.img.zip
             out/NextBSD-*.img.zip.sha256
+            out/NextBSD-*.iso.zip
+            out/NextBSD-*.iso.zip.sha256

@@ -5,3 +5,5 @@ repos/
 *.iso
 *.iso.sha256
 SHA256SUMS
+
+.claude/
