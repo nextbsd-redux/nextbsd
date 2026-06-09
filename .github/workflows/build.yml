@@ -184,15 +184,19 @@ jobs:
           # Driver-kext tarballs, extracted + installed inside the VM by build.sh
           # (the build.sh loop installs every kext-dl/*.tar.gz it finds). Each is
           # non-fatal if absent (ISO just ships without that driver kext).
+          # Iterate over full asset stems: most are <driver>-kext, but the
+          # drm-kmod graphics stack ships as one graphics-kexts (plural — it is
+          # IOGraphics/DMABuf/TTM drm core + IntelGraphics/AMDGraphics/
+          # RadeonGraphics, each with its bundled vendor firmware).
           mkdir -p kext-dl
-          for k in intelwifi intelethernet; do
+          for asset in intelwifi-kext intelethernet-kext graphics-kexts; do
             if gh release download continuous \
                  -R nextbsd-redux/nextbsd-kernel-modules \
-                 --pattern "${k}-kext.tar.gz" \
-                 --output "kext-dl/${k}-kext.tar.gz" --clobber; then
-              echo "kext tarball: $(ls -lh kext-dl/${k}-kext.tar.gz | awk '{print $5}')"
+                 --pattern "${asset}.tar.gz" \
+                 --output "kext-dl/${asset}.tar.gz" --clobber; then
+              echo "kext tarball: $(ls -lh kext-dl/${asset}.tar.gz | awk '{print $5}')"
             else
-              echo "WARN: no ${k}-kext asset; ISO ships without ${k} kext"
+              echo "WARN: no ${asset}.tar.gz asset; ISO ships without it"
             fi
           done
 
