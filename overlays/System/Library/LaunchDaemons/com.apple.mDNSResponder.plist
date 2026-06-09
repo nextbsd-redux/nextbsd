@@ -25,14 +25,29 @@
     <array>
         <string>/usr/sbin/mDNSResponder</string>
         <!--
-          -foreground: tell PosixDaemon.c's ParseCmdLineArgs to skip
-          daemon(0, 0). Without this, daemon() closes stdin/stdout/
-          stderr and we lose all fprintf-to-stderr output (including
-          the iter-2 MDNS-ENGINE-OK marker). launchd already manages
-          the daemon's lifecycle via KeepAlive, so the self-
-          backgrounding is redundant anyway.
+          -debug: tell PosixDaemon.c's ParseCmdLineArgs to set
+          mDNS_DebugMode. This does two things:
+
+          (1) skips daemon(0, 0) just like -foreground did — without
+              that, daemon() closes stdin/stdout/stderr and we lose all
+              fprintf-to-stderr output (including the iter-2
+              MDNS-ENGINE-OK marker). launchd already manages the
+              daemon's lifecycle via KeepAlive, so self-backgrounding is
+              redundant anyway.
+
+          (2) routes mDNSPlatformWriteLogMsg through fprintf(stderr)
+              instead of syslog(). The engine logs at NOTICE volume
+              (mDNS_LoggingEnabled is on), and feeding that into the
+              shared asl/syslog pipeline leaks the chatter onto
+              /dev/console at boot, papering over the getty login
+              prompt. With -debug it goes straight to StandardErrorPath
+              (/var/log/mDNSResponder.stderr) — mDNS keeps its full log
+              in its own file, off the console and off syslogd.
+
+          Note: PosixDaemon.c only inspects argv[1], so -debug must be
+          the sole argument (it supersedes -foreground).
         -->
-        <string>-foreground</string>
+        <string>-debug</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
