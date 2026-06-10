@@ -140,8 +140,12 @@ rc=$?
 set -e
 
 echo "==> verdict"
-if grep -q "PIVOT-OK" "$LOG" && grep -q "LOGIN-OK" "$LOG"; then
-    echo "PASS: live ISO booted — pivot to writable union + launchd login reached"
+# The PIVOT-OK/LOGIN-OK `puts` lines go to expect's stdout (captured by CI), not
+# the spawn transcript ($LOG). Assert against the markers that ARE in the serial
+# transcript: the kernel's vfs.pivot adoption + the getty login prompt (launchd
+# PID 1 reached getty on the union).
+if grep -q "vfs.pivot: / is now unionfs" "$LOG" && grep -q "login:" "$LOG"; then
+    echo "PASS: live ISO booted — vfs.pivot to writable union + launchd reached the login prompt"
     exit 0
 fi
 echo "FAIL: live ISO did not complete the pivot+login sequence (rc=$rc)"
