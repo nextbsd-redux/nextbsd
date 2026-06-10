@@ -1,0 +1,10 @@
+# /etc/profile - system-wide setup sourced by sh(1) login shells.
+#
+# PATH for login shells currently comes from login.conf. It is slated to move
+# to Apple-style path_helper + /etc/paths (nextbsd #277); when that lands, this
+# file gains:
+#   if [ -x /usr/libexec/path_helper ]; then
+#       eval "$(/usr/libexec/path_helper -s)"
+#   fi
+# Until then this is an intentionally minimal stub so login shells have a
+# system-wide profile to source.
