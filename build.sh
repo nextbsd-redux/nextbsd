@@ -2977,7 +2977,7 @@ rm -f "$WORK/$IMG_NAME" "$WORK/rootfs.ufs" "$WORK/esp.img"
 #      - rootfs.uzip   : a cd9660 FILE, geom_uzip block-random-access, decompressed
 #                        ON READ (NO preload — the 2 GB-into-RAM model is rejected).
 #      - a tiny mfsroot (initramfs analog) is the ONLY thing the loader preloads
-#        (~14 MB of static /rescue). Its /rescue/init assembles, in userland:
+#        (a few MB of rootfs tools + their lib closure). Its /init assembles:
 #            mdconfig -t vnode rootfs.uzip  -> geom_uzip -> /dev/md1.uzip -> /rofs (RO lower)
 #            mount -t tmpfs                 -> /cow  (writable upper, swap-backed)
 #            mount_unionfs /cow /rofs       -> merged rw view at /rofs
@@ -3002,32 +3002,58 @@ makefs -t ffs -B little -o version=2,label=NBROOT \
 mkuzip -o "$WORK/rootfs.uzip" "$WORK/rootfs.iso.ufs"
 ls -lh "$WORK/rootfs.uzip"
 
-# 7c. mfsroot (initramfs): the loader preloads ONLY this. It is the VM's static
-#     /rescue crunch binary (sh, mount, mount_cd9660, mount_unionfs, mdconfig,
-#     sysctl, df — everything /rescue/init needs; tmpfs mounts via nmount(2) with
-#     no helper) plus the init script. tar (not cp -R) so the ~150 /rescue names
-#     stay HARDLINKS to the one binary -> ~14 MB, not 150 copies.
-echo "==> staging mfsroot (static /rescue + init)"
+# 7c. mfsroot (initramfs): the loader preloads ONLY this. The vmactions FreeBSD
+#     VM ships an EMPTY /rescue, so we can't crib the static crunch toolset from
+#     it. Instead build a minimal DYNAMIC root from the shipped rootfs's own
+#     tools (so they link the rootfs libc we copy alongside): the exact binaries
+#     /init needs plus their transitive shared-library closure (flattened into
+#     /lib, which is on ld-elf.so.1's default search path). tmpfs/ufs mount via
+#     nmount(2) (no helper); cd9660/unionfs use mount_<fs> helpers, which mount(8)
+#     execs from _PATH_SYSPATH=/sbin:/bin — both real binaries here.
+echo "==> staging mfsroot (rootfs tools + lib closure)"
 MFS="$WORK/mfsroot"
+RF="$WORK/rootfs"
 rm -rf "$MFS"
-mkdir -p "$MFS/dev" "$MFS/media" "$MFS/rofs" "$MFS/cow" "$MFS/usr"
-( cd / && tar -cf - rescue ) | ( cd "$MFS" && tar -xf - )
-# mount(8) execs its fs helpers (mount_cd9660, mount_unionfs) via _PATH_SYSPATH
-# = /sbin:/bin:/usr/sbin:/usr/bin — point all four at /rescue so they resolve.
-ln -s rescue "$MFS/sbin"
-ln -s rescue "$MFS/bin"
-ln -s ../rescue "$MFS/usr/sbin"
-ln -s ../rescue "$MFS/usr/bin"
-cat > "$MFS/rescue/init" <<'INITEOF'
-#!/rescue/sh
+mkdir -p "$MFS/dev" "$MFS/media" "$MFS/rofs" "$MFS/cow" \
+         "$MFS/bin" "$MFS/sbin" "$MFS/lib" "$MFS/libexec"
+cp -p "$RF/libexec/ld-elf.so.1" "$MFS/libexec/"
+MFS_TOOLS="bin/sh bin/sleep bin/ls sbin/mount sbin/umount sbin/mount_cd9660 sbin/mount_unionfs sbin/mdconfig sbin/sysctl"
+for t in $MFS_TOOLS; do
+    if [ -f "$RF/$t" ]; then cp -p "$RF/$t" "$MFS/$t"
+    else echo "    WARN: mfsroot tool missing in rootfs: $t"; fi
+done
+# Transitive .so closure: BFS over readelf NEEDED, pulling each soname from the
+# rootfs lib dirs into the flat mfsroot /lib.
+needed() { readelf -d "$1" 2>/dev/null | sed -n 's/.*(NEEDED).*\[\(.*\)\].*/\1/p'; }
+seen=" "
+work=$(for t in $MFS_TOOLS; do [ -f "$MFS/$t" ] && needed "$MFS/$t"; done | sort -u)
+while [ -n "$work" ]; do
+    nextwork=""
+    for so in $work; do
+        case "$seen" in *" $so "*) continue ;; esac
+        seen="$seen$so "
+        src=$(find "$RF/lib" "$RF/usr/lib" -name "$so" 2>/dev/null | head -1)
+        if [ -n "$src" ]; then
+            cp -p "$src" "$MFS/lib/$so"
+            nextwork="$nextwork $(needed "$src")"
+        else
+            echo "    WARN: mfsroot lib not found in rootfs: $so"
+        fi
+    done
+    work=$(printf '%s\n' $nextwork | sort -u)
+done
+echo "    mfsroot: $(ls "$MFS"/bin "$MFS"/sbin 2>/dev/null | grep -vc :) tools, $(ls "$MFS"/lib 2>/dev/null | wc -l | tr -d ' ') libs"
+cat > "$MFS/init" <<'INITEOF'
+#!/bin/sh
 #
 # NextBSD live-ISO init (initramfs analog). Runs as PID 1 from the preloaded
 # mfsroot (md0). Assembles a writable overlay over the on-demand compressed
 # read-only root, then sysctl vfs.pivot adopts the union as / and execs
 # launchd (PID 1 is preserved across exec).
 #
-PATH=/rescue
-export PATH
+PATH=/sbin:/bin
+LD_LIBRARY_PATH=/lib
+export PATH LD_LIBRARY_PATH
 
 echo "[init] NextBSD live root: assembling overlay"
 mount -t devfs devfs /dev 2>/dev/null
@@ -3039,27 +3065,31 @@ if [ -e /dev/iso9660/NEXTBSD ]; then
 else
 	mount -t cd9660 -o ro /dev/cd0 /media
 fi
+echo "[init] media: $(ls /media/rootfs.uzip 2>/dev/null || echo rootfs.uzip-MISSING)"
 
 # On-demand compressed root: vnode-back the uzip FILE on the CD (no preload),
 # geom_uzip auto-tastes md1 -> /dev/md1.uzip (decompressed on read).
 mdconfig -a -t vnode -f /media/rootfs.uzip -u 1
 # Wait for geom_uzip to taste md1 and publish the decompressing provider
 # /dev/md1.uzip (the GEOM taste runs async on the event queue after mdconfig
-# returns). /rescue ships sleep, so this is a real bounded wait, not a spin.
+# returns). Bounded ~20 s wait so a slow taste doesn't race the mount.
 n=0
 while [ ! -c /dev/md1.uzip ] && [ "$n" -lt 20 ]; do n=$((n + 1)); sleep 1; done
+echo "[init] uzip dev: $(ls -l /dev/md1.uzip 2>/dev/null || echo md1.uzip-ABSENT)"
 mount -o ro /dev/md1.uzip /rofs
+echo "[init] rofs lower: $(ls -d /rofs/sbin 2>/dev/null || echo /rofs-EMPTY)"
 
 # Writable upper (tmpfs: dynamic, swap-backed) then union lower=/rofs over it.
 mount -t tmpfs tmpfs /cow
 mount_unionfs /cow /rofs
+echo "[init] union assembled; launchd: $(ls /rofs/sbin/launchd 2>/dev/null || echo launchd-MISSING)"
 
 # Adopt the union as the real / (repoints every proc's root) and hand off.
 sysctl vfs.pivot=/rofs
 echo "[init] pivot complete; exec launchd"
 exec /sbin/launchd
 INITEOF
-chmod 0755 "$MFS/rescue/init"
+chmod 0755 "$MFS/init"
 makefs -t ffs -B little -o version=2,label=MFSROOT -b 3m \
     "$WORK/mfsroot.img" "$MFS"
 ls -lh "$WORK/mfsroot.img"
@@ -3087,7 +3117,7 @@ cat > "$ISOROOT/boot/loader.conf.d/zz-live.conf" <<'LIVEEOF'
 mfsroot_load="YES"
 mfsroot_type="md_image"
 mfsroot_name="/boot/mfsroot.img"
-init_path="/rescue/init"
+init_path="/init"
 vfs.root.mountfrom="ufs:/dev/md0"
 LIVEEOF
 cp "$WORK/rootfs.uzip" "$ISOROOT/rootfs.uzip"
