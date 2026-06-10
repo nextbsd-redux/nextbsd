@@ -1,0 +1,28 @@
+#!/bin/sh
+#
+# WORKAROUND (nextbsd #280; to be removed by #281). NextBSD has no rc.d boot
+# sequence -- launchd is PID 1 and nothing runs /etc/rc.d at boot. This script
+# exists ONLY so the FreeBSD ports tree's shared-library post-installs (which
+# hardcode `service ldconfig restart`) SUCCEED, and so the linker hints refresh
+# on package install. It is invoked solely on-demand by service(8) from a pkg
+# post-install -- never at boot. #281 replaces service(8) with a launchd-native
+# shim and drops this file.
+#
+# PROVIDE: ldconfig
+
+. /etc/rc.subr
+
+name=ldconfig
+start_cmd=ldconfig_start
+stop_cmd=:
+restart_cmd=ldconfig_start
+status_cmd=:
+
+ldconfig_start()
+{
+	/sbin/ldconfig -elf /lib /usr/lib /usr/lib/system /usr/local/lib \
+	    $(cat /usr/local/libdata/ldconfig/* 2>/dev/null)
+}
+
+load_rc_config $name 2>/dev/null
+run_rc_command "$1"
