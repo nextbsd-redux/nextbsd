@@ -2894,6 +2894,27 @@ echo "==> [libscan] ELF shared-library closure over rootfs"
 )
 echo "==> [libscan] end"
 
+# 5y. Prebuilt linker hints — the "shipped cache" (the analog of Apple's
+#     prebuilt dyld shared cache baked into the OS image). The builder has no
+#     launchd, so this is the ONE place the hints are generated for the shipped
+#     image: run ONCE, after every pkg + Apple lib is in place, writing rtld's
+#     compiled-in default /var/run/ld-elf.so.hints. rtld (the per-exec program
+#     interpreter, not a service) reads that path automatically on every exec,
+#     so there is no boot step and no env var. Hints are DIRECTORY-based, so
+#     baking /usr/local/lib here means any port-installed lib that later lands
+#     there is found at runtime with no rebuild; the libdata/ldconfig drop-in
+#     dirs (perl5 CORE, gccNN, pkg compat) are folded in too. mkdir guarantees
+#     /usr/local/lib is listed even if empty in the base image.
+#     EXPERIMENT (issue #278): does this prebuilt baseline alone suffice for the
+#     common case? Tail dirs added by post-boot pkg installs still need a refresh
+#     (the planned org.freebsd.ldconfig WatchPaths daemon); this PR tests the floor.
+echo "==> generating /var/run/ld-elf.so.hints (prebuilt linker cache)"
+mkdir -p "$WORK/rootfs/usr/local/lib"
+chroot "$WORK/rootfs" /bin/sh -c \
+    '/sbin/ldconfig /lib /usr/lib /usr/lib/system /usr/local/lib $(cat /usr/local/libdata/ldconfig/* 2>/dev/null)'
+ls -l "$WORK/rootfs/var/run/ld-elf.so.hints"
+chroot "$WORK/rootfs" ldconfig -r 2>/dev/null | grep -i 'search director' || true
+
 # 6a. root UFS — content plus ~1.5 GB read-write headroom. UFS label
 #     "ROOTFS" matches loader.conf.d's vfs.root.mountfrom and the
 #     overlays/etc/fstab entry. softupdates for crash resilience.
