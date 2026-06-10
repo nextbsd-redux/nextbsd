@@ -3054,7 +3054,16 @@ cat > "$MFS/init" <<'INITEOF'
 # read-only root, then sysctl vfs.pivot adopts the union as / and execs
 # launchd (PID 1 is preserved across exec).
 #
-PATH=/sbin:/bin
+# Export the standard default PATH (what the kernel normally hands init), not
+# just the mfsroot's /sbin:/bin — launchd inherits this across the exec below and
+# propagates it to every login/ssh session, so a truncated PATH here means the
+# live shell can't find pkg, /usr tools, etc. The mfsroot's own tools still
+# resolve (they're in /sbin:/bin, searched first; the /usr* dirs simply don't
+# exist until the pivot, then they're the real union dirs).
+# This matches /etc/login.conf's `default` path (minus the per-user ~/bin, which
+# the shell expands itself) so the live session's PATH is what the installed
+# system would give.
+PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/libexec
 LD_LIBRARY_PATH=/lib
 export PATH LD_LIBRARY_PATH
 
@@ -3089,6 +3098,22 @@ echo "[init] uzip dev: $(ls -l /dev/md1.uzip 2>/dev/null || echo md1.uzip-ABSENT
 mount -o ro /dev/md1.uzip /rofs
 echo "[init] rofs lower: $(ls -d /rofs/sbin 2>/dev/null || echo /rofs-EMPTY)"
 
+# Single-user (boot -s): the kernel passes "-s" to init (us). Stop HERE, in the
+# miniroot, with the read-only compressed base mounted at /rofs so you can
+# inspect its contents (the cd9660 is at /media; the uzip provider is
+# /dev/md1.uzip). This is BEFORE the tmpfs upper, the unionfs, and the pivot --
+# the base is pristine read-only. Exit the shell (^D) to continue the normal
+# boot: assemble the writable union, vfs.pivot, and exec launchd.
+case " $* " in
+*" -s "*)
+	echo "[init] ==== single-user (miniroot) ===="
+	echo "[init] read-only base: /rofs   boot media: /media   provider: /dev/md1.uzip"
+	echo "[init] ^D (exit) continues to multi-user boot."
+	/bin/sh </dev/console >/dev/console 2>&1
+	echo "[init] resuming boot to multi-user"
+	;;
+esac
+
 # Writable upper (tmpfs: dynamic, swap-backed) then union lower=/rofs over it.
 mount -t tmpfs tmpfs /cow
 mount_unionfs /cow /rofs
@@ -3102,6 +3127,10 @@ mount -t devfs devfs /rofs/dev
 # Adopt the union as the real / (repoints every proc's root) and hand off.
 sysctl vfs.pivot=/rofs
 echo "[init] pivot complete; exec launchd"
+# Drop the mfsroot-only LD_LIBRARY_PATH so launchd + every daemon it spawns use
+# the union's normal ld-elf resolution (/lib + /usr/lib via hints), as on a
+# regular boot. PATH stays exported (the full default set above).
+unset LD_LIBRARY_PATH
 exec /sbin/launchd
 # If we get here, exec failed — keep PID 1 alive so the panic message is the
 # exec error above, not "Going nowhere without my init!".
