@@ -3032,12 +3032,15 @@ while [ -n "$work" ]; do
     for so in $work; do
         case "$seen" in *" $so "*) continue ;; esac
         seen="$seen$so "
-        src=$(find "$RF/lib" "$RF/usr/lib" -name "$so" 2>/dev/null | head -1)
+        # Prefer the shipped rootfs libs; fall back to the build VM's base libs
+        # for anything the curated from-source base omits (e.g. libkiconv.so.4,
+        # which mount_cd9660 hard-NEEDs but the base srclist doesn't build).
+        src=$(find "$RF/lib" "$RF/usr/lib" /lib /usr/lib -name "$so" 2>/dev/null | head -1)
         if [ -n "$src" ]; then
             cp -p "$src" "$MFS/lib/$so"
             nextwork="$nextwork $(needed "$src")"
         else
-            echo "    WARN: mfsroot lib not found in rootfs: $so"
+            echo "    WARN: mfsroot lib STILL not found (rootfs or VM): $so"
         fi
     done
     work=$(printf '%s\n' $nextwork | sort -u)
@@ -3061,13 +3064,17 @@ mount -t devfs devfs /dev 2>/dev/null
 exec >/dev/console 2>&1
 echo "[init] NextBSD live root: assembling overlay"
 
-# Boot media (cd9660). mkisoimages.sh -b NEXTBSD sets the volume label, so the
-# GEOM_LABEL node /dev/iso9660/NEXTBSD is stable across cd0/cd1; fall back to cd0.
-if [ -e /dev/iso9660/NEXTBSD ]; then
-	mount -t cd9660 -o ro /dev/iso9660/NEXTBSD /media
-else
-	mount -t cd9660 -o ro /dev/cd0 /media
-fi
+# Boot media (cd9660). Wait for the CD device / GEOM_LABEL node to settle, then
+# try the volume-label node (mkisoimages.sh -b NEXTBSD) first, then raw cd0/cd1.
+n=0
+while [ ! -e /dev/iso9660/NEXTBSD ] && [ ! -e /dev/cd0 ] && [ "$n" -lt 10 ]; do n=$((n + 1)); sleep 1; done
+for dev in /dev/iso9660/NEXTBSD /dev/cd0 /dev/cd1; do
+	[ -e "$dev" ] || continue
+	if mount -t cd9660 -o ro "$dev" /media 2>&1; then
+		echo "[init] media mounted from $dev"; break
+	fi
+done
+echo "[init] cd nodes: $(ls -d /dev/iso9660/* /dev/cd* 2>/dev/null) | /media: $(ls /media 2>/dev/null)"
 echo "[init] media: $(ls /media/rootfs.uzip 2>/dev/null || echo rootfs.uzip-MISSING)"
 
 # On-demand compressed root: vnode-back the uzip FILE on the CD (no preload),
