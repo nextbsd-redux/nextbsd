@@ -2966,10 +2966,150 @@ echo "==> zip disk image"
 ls -lh "$OUT/${IMG_NAME}.zip"
 sha256 "$OUT/${IMG_NAME}.zip" 2>/dev/null || sha256sum "$OUT/${IMG_NAME}.zip"
 
-# trim the multi-GB image intermediates — only out/ needs to survive
-# the post-build copyback.
+# trim the GPT image intermediates (the rw rootfs.ufs); $WORK/rootfs itself
+# survives — the live ISO below re-uses it for the compressed read-only root.
 rm -f "$WORK/$IMG_NAME" "$WORK/rootfs.ufs" "$WORK/esp.img"
+
+#
+# 7. live ISO (nextbsd #70 — on-demand compressed root + writable overlay).
+#
+#    Model (Linux squashfs+overlayfs analog, FreeBSD-native):
+#      - rootfs.uzip   : a cd9660 FILE, geom_uzip block-random-access, decompressed
+#                        ON READ (NO preload — the 2 GB-into-RAM model is rejected).
+#      - a tiny mfsroot (initramfs analog) is the ONLY thing the loader preloads
+#        (~14 MB of static /rescue). Its /rescue/init assembles, in userland:
+#            mdconfig -t vnode rootfs.uzip  -> geom_uzip -> /dev/md1.uzip -> /rofs (RO lower)
+#            mount -t tmpfs                 -> /cow  (writable upper, swap-backed)
+#            mount_unionfs /cow /rofs       -> merged rw view at /rofs
+#        then `sysctl vfs.pivot=/rofs` (nextbsd-kernel vfs_pivot.c) adopts the
+#        union as the real / — repointing EVERY process's root via the kernel's
+#        own mountcheckdirs() — and `exec /sbin/launchd` (PID 1 preserved).
+#    The installed rw-UFS disk image (step 6) never unions; only the ISO does.
+#
+echo "==> live ISO: building on-demand compressed root + mfsroot"
+
+# 7a. Overlay mountpoints must exist (empty) in the read-only uzip root so the
+#     post-pivot union has valid /rofs + /cow paths (the kernel can't mkdir on a
+#     RO fs). Added only now, after the disk image's makefs.
+mkdir -p "$WORK/rootfs/rofs" "$WORK/rootfs/cow"
+
+# 7b. Compact UFS image of rootfs (no rw headroom — it is read-only), then
+#     mkuzip (zlib; geom_uzip reads it on demand). Separate from the disk
+#     image's padded rootfs.ufs.
+echo "==> makefs ffs (compact) + mkuzip"
+makefs -t ffs -B little -o version=2,label=NBROOT \
+    "$WORK/rootfs.iso.ufs" "$WORK/rootfs"
+mkuzip -o "$WORK/rootfs.uzip" "$WORK/rootfs.iso.ufs"
+ls -lh "$WORK/rootfs.uzip"
+
+# 7c. mfsroot (initramfs): the loader preloads ONLY this. It is the VM's static
+#     /rescue crunch binary (sh, mount, mount_cd9660, mount_unionfs, mdconfig,
+#     sysctl, df — everything /rescue/init needs; tmpfs mounts via nmount(2) with
+#     no helper) plus the init script. tar (not cp -R) so the ~150 /rescue names
+#     stay HARDLINKS to the one binary -> ~14 MB, not 150 copies.
+echo "==> staging mfsroot (static /rescue + init)"
+MFS="$WORK/mfsroot"
+rm -rf "$MFS"
+mkdir -p "$MFS/dev" "$MFS/media" "$MFS/rofs" "$MFS/cow" "$MFS/usr"
+( cd / && tar -cf - rescue ) | ( cd "$MFS" && tar -xf - )
+# mount(8) execs its fs helpers (mount_cd9660, mount_unionfs) via _PATH_SYSPATH
+# = /sbin:/bin:/usr/sbin:/usr/bin — point all four at /rescue so they resolve.
+ln -s rescue "$MFS/sbin"
+ln -s rescue "$MFS/bin"
+ln -s ../rescue "$MFS/usr/sbin"
+ln -s ../rescue "$MFS/usr/bin"
+cat > "$MFS/rescue/init" <<'INITEOF'
+#!/rescue/sh
+#
+# NextBSD live-ISO init (initramfs analog). Runs as PID 1 from the preloaded
+# mfsroot (md0). Assembles a writable overlay over the on-demand compressed
+# read-only root, then sysctl vfs.pivot adopts the union as / and execs
+# launchd (PID 1 is preserved across exec).
+#
+PATH=/rescue
+export PATH
+
+echo "[init] NextBSD live root: assembling overlay"
+mount -t devfs devfs /dev 2>/dev/null
+
+# Boot media (cd9660). mkisoimages.sh -b NEXTBSD sets the volume label, so the
+# GEOM_LABEL node /dev/iso9660/NEXTBSD is stable across cd0/cd1; fall back to cd0.
+if [ -e /dev/iso9660/NEXTBSD ]; then
+	mount -t cd9660 -o ro /dev/iso9660/NEXTBSD /media
+else
+	mount -t cd9660 -o ro /dev/cd0 /media
+fi
+
+# On-demand compressed root: vnode-back the uzip FILE on the CD (no preload),
+# geom_uzip auto-tastes md1 -> /dev/md1.uzip (decompressed on read).
+mdconfig -a -t vnode -f /media/rootfs.uzip -u 1
+# Wait for geom_uzip to taste md1 and publish the decompressing provider
+# /dev/md1.uzip (the GEOM taste runs async on the event queue after mdconfig
+# returns). /rescue ships sleep, so this is a real bounded wait, not a spin.
+n=0
+while [ ! -c /dev/md1.uzip ] && [ "$n" -lt 20 ]; do n=$((n + 1)); sleep 1; done
+mount -o ro /dev/md1.uzip /rofs
+
+# Writable upper (tmpfs: dynamic, swap-backed) then union lower=/rofs over it.
+mount -t tmpfs tmpfs /cow
+mount_unionfs /cow /rofs
+
+# Adopt the union as the real / (repoints every proc's root) and hand off.
+sysctl vfs.pivot=/rofs
+echo "[init] pivot complete; exec launchd"
+exec /sbin/launchd
+INITEOF
+chmod 0755 "$MFS/rescue/init"
+makefs -t ffs -B little -o version=2,label=MFSROOT -b 3m \
+    "$WORK/mfsroot.img" "$MFS"
+ls -lh "$WORK/mfsroot.img"
+
+# 7d. ISO bits dir: /boot (loader + kernel, copied from rootfs) + the mfsroot +
+#     a live loader config + the uzip. mkisoimages.sh needs boot/cdboot (BIOS El
+#     Torito) and boot/loader.efi (UEFI; it builds the El Torito ESP from it).
+ISOROOT="$WORK/isoroot"
+rm -rf "$ISOROOT"
+mkdir -p "$ISOROOT/boot/loader.conf.d" "$ISOROOT/etc"
+cp -R "$WORK/rootfs/boot/." "$ISOROOT/boot/"
+for f in cdboot loader.efi; do
+    [ -f "$ISOROOT/boot/$f" ] || { echo "ERROR: live ISO needs rootfs/boot/$f" >&2; exit 1; }
+done
+cp "$WORK/mfsroot.img" "$ISOROOT/boot/mfsroot.img"
+# mkisoimages.sh runs `makefs -N $ISOROOT/etc` to map owner names -> uid/gid.
+for f in passwd group master.passwd; do
+    [ -f "$WORK/rootfs/etc/$f" ] && cp "$WORK/rootfs/etc/$f" "$ISOROOT/etc/$f"
+done
+# Live loader config (zz- => read last, wins). Preload ONLY the mfsroot as md0,
+# boot it as the (temporary) root, and run /rescue/init instead of launchd.
+# /rescue/init does the on-demand uzip + union + vfs.pivot, then execs launchd.
+cat > "$ISOROOT/boot/loader.conf.d/zz-live.conf" <<'LIVEEOF'
+# NextBSD live ISO: tiny mfsroot assembles an on-demand compressed root + overlay.
+mfsroot_load="YES"
+mfsroot_type="md_image"
+mfsroot_name="/boot/mfsroot.img"
+init_path="/rescue/init"
+vfs.root.mountfrom="ufs:/dev/md0"
+LIVEEOF
+cp "$WORK/rootfs.uzip" "$ISOROOT/rootfs.uzip"
+
+# 7e. Build the bootable cd9660 (BIOS cdboot + UEFI ESP) via the release script
+#     (extracted from src.txz at step 3a; lands under usr/src/ — locate by glob).
+ISO_NAME="NextBSD-${ARCH}-${IMG_DATE}.iso"
+echo "==> mkisoimages.sh: bootable cd9660 (BIOS + UEFI)"
+MKISO=$(find "$WORK/freebsd-src" -path "*/release/${ARCH}/mkisoimages.sh" 2>/dev/null | head -1)
+[ -n "$MKISO" ] || { echo "ERROR: mkisoimages.sh not found under $WORK/freebsd-src" >&2; exit 1; }
+sh "$MKISO" -b NEXTBSD "$WORK/$ISO_NAME" "$ISOROOT"
+ls -lh "$WORK/$ISO_NAME"
+echo "==> zip live ISO"
+(cd "$WORK" && zip -9 "$OUT/${ISO_NAME}.zip" "$ISO_NAME")
+ls -lh "$OUT/${ISO_NAME}.zip"
+sha256 "$OUT/${ISO_NAME}.zip" 2>/dev/null || sha256sum "$OUT/${ISO_NAME}.zip"
+
+# trim ISO intermediates.
+rm -rf "$ISOROOT" "$MFS"
+rm -f "$WORK/rootfs.iso.ufs" "$WORK/rootfs.uzip" "$WORK/mfsroot.img" "$WORK/$ISO_NAME"
 
 echo
 echo "==> disk image:    $(ls -lh "$OUT/${IMG_NAME}.zip" | awk '{print $5}')  (${IMG_NAME}.zip, DEFLATE-9)"
+echo "==> live ISO:      $(ls -lh "$OUT/${ISO_NAME}.zip" | awk '{print $5}')  (${ISO_NAME}.zip, DEFLATE-9)"
 echo "==> DONE"
