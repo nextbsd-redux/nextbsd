@@ -3055,8 +3055,11 @@ PATH=/sbin:/bin
 LD_LIBRARY_PATH=/lib
 export PATH LD_LIBRARY_PATH
 
-echo "[init] NextBSD live root: assembling overlay"
 mount -t devfs devfs /dev 2>/dev/null
+# PID 1 starts with no controlling terminal; wire stdout/stderr to the console
+# so these progress lines + any command errors land on the (serial) console.
+exec >/dev/console 2>&1
+echo "[init] NextBSD live root: assembling overlay"
 
 # Boot media (cd9660). mkisoimages.sh -b NEXTBSD sets the volume label, so the
 # GEOM_LABEL node /dev/iso9660/NEXTBSD is stable across cd0/cd1; fall back to cd0.
@@ -3084,10 +3087,19 @@ mount -t tmpfs tmpfs /cow
 mount_unionfs /cow /rofs
 echo "[init] union assembled; launchd: $(ls /rofs/sbin/launchd 2>/dev/null || echo launchd-MISSING)"
 
+# launchd (the next PID 1) needs a populated /dev on the NEW root. The kernel's
+# auto-devfs is on the mfsroot's /dev, which the pivot orphans, so mount a fresh
+# devfs on the union's /dev (reachable as /rofs/dev before the pivot) here.
+mount -t devfs devfs /rofs/dev
+
 # Adopt the union as the real / (repoints every proc's root) and hand off.
 sysctl vfs.pivot=/rofs
 echo "[init] pivot complete; exec launchd"
 exec /sbin/launchd
+# If we get here, exec failed — keep PID 1 alive so the panic message is the
+# exec error above, not "Going nowhere without my init!".
+echo "[init] FATAL: exec /sbin/launchd failed ($?)"
+while : ; do sleep 60; done
 INITEOF
 chmod 0755 "$MFS/init"
 makefs -t ffs -B little -o version=2,label=MFSROOT -b 3m \
