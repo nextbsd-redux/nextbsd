@@ -2987,6 +2987,11 @@ cp -R "$WORK/rootfs/boot/." "$ISOROOT/boot/"
 for f in cdboot loader.efi; do
     [ -f "$ISOROOT/boot/$f" ] || { echo "ERROR: live ISO needs rootfs/boot/$f" >&2; exit 1; }
 done
+# mkisoimages.sh runs `makefs -N $ISOROOT/etc` to map owner names -> uid/gid, so
+# the bits dir's etc needs passwd + group (it writes etc/fstab itself).
+for f in passwd group master.passwd; do
+    [ -f "$WORK/rootfs/etc/$f" ] && cp "$WORK/rootfs/etc/$f" "$ISOROOT/etc/$f"
+done
 # Live loader config (zz- => read last, wins). Preload the uzip as md0, mount it
 # through geom_uzip, and set the vfs.root.overlay kenv the kernel hook gates on.
 # vfs.root.mountfrom overrides the kernel's baked ROOTDEVNAME (ufs:/dev/ufs/
