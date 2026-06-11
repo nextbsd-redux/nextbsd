@@ -243,6 +243,18 @@ if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
     }
     trap cleanup_chroot EXIT INT TERM
 
+    # CA trust store: build the hashed /etc/ssl/certs dir (+ the canonical
+    # cert.pem and untrusted/) with certctl(8). That hashed dir is the CApath
+    # the PORTS OpenSSL/curl read — the bare cert.pem bundle made above is NOT
+    # enough on its own, so without certs/ a pkg-installed git/curl fails TLS
+    # verify ("unable to get local issuer certificate (20)") even though the
+    # bundle is present and valid. Do it before pkg bootstrap so the in-chroot
+    # pkg phase gets a proper trust store too. certctl now ships in the base
+    # (nextbsd-freebsd-compat usr.sbin/certctl); it's a C program needing only
+    # libcrypto + /usr/share/certs, no shell.
+    chroot "$WORK/rootfs" certctl rehash
+    echo "    certs/: $(ls "$WORK/rootfs/etc/ssl/certs" 2>/dev/null | wc -l | tr -d ' ') hashed CA entries"
+
     # Bootstrap the real pkg(8) ON our from-source base: our /usr/sbin/pkg
     # (the base pkg(7) bootstrap) reads /etc/pkg/FreeBSD.conf (PORTS repo) and
     # fetches+verifies pkg(8) against our /usr/share/keys/pkg fingerprints.
