@@ -2835,6 +2835,13 @@ if [ -d "$ROOT/overlays" ]; then
     cp -aR "$ROOT/overlays/." "$WORK/rootfs/"
 fi
 
+# Force root:wheel on the overlayed /etc. cp -aR preserves the build user's
+# uid (the freebsd-vm overlay files inherit it — same mechanism as the / chown
+# in step 6a). A non-root-owned /etc/login.conf makes login(1)'s _secure_path()
+# reject it, which breaks login_getclass() -> "unknown class root" (nextbsd#293).
+# Do this BEFORE pwd_mkdb/cap_mkdb so the regenerated .db indices inherit it too.
+chown -R 0:0 "$WORK/rootfs/etc"
+
 # rc.local needs to be executable
 [ -f "$WORK/rootfs/etc/rc.local" ] && chmod +x "$WORK/rootfs/etc/rc.local"
 
