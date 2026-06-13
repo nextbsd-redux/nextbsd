@@ -125,7 +125,7 @@ jobs:
       # artifact name, and the published continuous asset all agree.
       - name: compute build date
         id: meta
-        run: echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+        run: echo "date=$(date -u +%Y%m%d-%H%M%S)" >> "$GITHUB_OUTPUT"
 
       # Pull the from-source base artifact from nextbsd-freebsd-compat into the
       # workspace ($ROOT/base-artifact/), which vmactions rsyncs into the VM.

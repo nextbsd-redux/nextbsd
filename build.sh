@@ -15,11 +15,15 @@ set -eu
 : "${FREEBSD_VERSION:=15.0}"
 : "${LABEL:=LIVECD}"
 ARCH=${ARCH:-amd64}
-# Datestamp baked into the image name so the build output IS the final
-# published name (NextBSD-<arch>-<date>.img.zip) — no rename in the
-# release job. CI passes IMG_DATE so the workflow artifact name and the
-# file agree; a local build defaults to today.
-: "${IMG_DATE:=$(date -u +%Y%m%d)}"
+# UTC build timestamp (YYYYMMDD-HHMMSS) baked into the image name so the
+# build output IS the final published name (NextBSD-<arch>-<stamp>.img.zip)
+# — no rename in the release job. Second resolution so multiple builds the
+# same day don't collide. This is the SINGLE source of truth for the build
+# version: CI passes IMG_DATE (computed once in the workflow) so the artifact
+# name, the image file, nextbsd-version, and /etc/os-release all share the
+# exact same value; a local build defaults to now. Computed once here — every
+# consumer expands $IMG_DATE, never re-reads the clock, so they can't drift.
+: "${IMG_DATE:=$(date -u +%Y%m%d-%H%M%S)}"
 
 # pkgbase ABI: pkg.freebsd.org organizes repos under FreeBSD:<major>:<arch>.
 # Strip any minor version (15.0 -> 15) so the URL resolves.
@@ -2873,6 +2877,31 @@ if [ -f /usr/share/misc/termcap ]; then
 else
     echo "    WARN: VM has no /usr/share/misc/termcap to ship as stopgap"
 fi
+
+# 5y. NextBSD version identity. /bin/nextbsd-version (-u userland) and
+#     /etc/os-release both carry the SAME single build stamp -- $IMG_DATE,
+#     the very value baked into the image/ISO name above. They are written
+#     here as plain expansions of that one variable (NO second `date` call),
+#     so the userland version, the os-release version, the image name, and
+#     the checksums can never drift apart. nextbsd-version -k/-r read the
+#     running/installed kernel live (kernel build time, which legitimately
+#     differs from the userland build time).
+echo "==> baking nextbsd-version + /etc/os-release (version=$IMG_DATE)"
+sed "s/@@VERSION@@/${IMG_DATE}/" \
+    "$ROOT/src/nextbsd-version/nextbsd-version.sh.in" \
+    > "$WORK/rootfs/bin/nextbsd-version"
+chmod 0555 "$WORK/rootfs/bin/nextbsd-version"
+cat > "$WORK/rootfs/etc/os-release" <<EOF
+NAME=NextBSD
+VERSION="${IMG_DATE}"
+VERSION_ID="${IMG_DATE}"
+ID=nextbsd
+ANSI_COLOR="0;36"
+PRETTY_NAME="NextBSD ${IMG_DATE}"
+CPE_NAME="cpe:/o:nextbsd:nextbsd:${IMG_DATE}"
+HOME_URL="https://nextbsd.org/"
+BUG_REPORT_URL="https://github.com/nextbsd-redux/nextbsd/issues"
+EOF
 
 #
 # 6. assemble the bootable GPT disk image (BIOS + UEFI, rw UFS root).
