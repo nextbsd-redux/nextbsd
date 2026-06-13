@@ -309,7 +309,7 @@ FBSDGLUE_FAIL=0
 # RETIRED (#193) — macOS ships kextload/kextstat, not kldload. The kld*(2)
 # SYSCALLS stay; kextload/kextstat (src/kext_tools) drive them. They are
 # asserted ABSENT below.
-for fbin in /bin/freebsd-version /bin/kenv \
+for fbin in /bin/nextbsd-version /bin/kenv \
             /sbin/devfs /sbin/fsck /sbin/fsck_ffs \
             /sbin/ldconfig /sbin/mount /sbin/newfs /sbin/tunefs /sbin/umount; do
     if [ ! -x "$fbin" ]; then
