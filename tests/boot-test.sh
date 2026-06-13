@@ -153,7 +153,10 @@ send "boot\r"
 
 # Stage 1a: capture getty's boot banner. PAM port iter 4 (issue #99)
 # restored RunAtLoad on com.apple.hostnamed.plist so hostnamed runs
-# at boot. Banner format: "FreeBSD/amd64 (HOSTNAME) (console)".
+# at boot. Banner format: "<ostype>/<arch> (HOSTNAME) (console)", from getty's
+# \s/\m -- ostype is NextBSD after the kernel rebrand (FreeBSD upstream) and
+# arch follows the target (amd64/arm64/powerpc/...). Matched brand- AND
+# arch-agnostically so neither a rebrand nor a new arch breaks this check.
 #
 # This check is INFORMATIONAL, not gating. Both daemons (hostnamed
 # + getty) have RunAtLoad=true and launchd dispatches them in
@@ -177,10 +180,10 @@ expect {
         puts "\nFAIL: boot banner not seen within 8 minutes"
         exit 1
     }
-    -re "FreeBSD/amd64 \\(Amnesiac\\) \\(console\\)" {
+    -re "\[A-Za-z\]*BSD/\[A-Za-z0-9_\]+ \\(Amnesiac\\) \\(console\\)" {
         puts "\nWARN: BOOT-BANNER — first-boot banner shows 'Amnesiac' (getty/hostnamed race; cosmetic only)"
     }
-    -re "FreeBSD/amd64 \\(\(\[A-Za-z0-9._-\]+\)\\) \\(console\\)" {
+    -re "\[A-Za-z\]*BSD/\[A-Za-z0-9_\]+ \\(\(\[A-Za-z0-9._-\]+\)\\) \\(console\\)" {
         puts "\nOK: BOOT-BANNER-OK — synthesized hostname '$expect_out(1,string)' visible to getty (hostnamed won the race this run)"
     }
 }
