@@ -30,8 +30,10 @@
 #     UTC build timestamp (YYYYMMDD-HHMMSS) baked in at build time from the
 #     one IMG_DATE value the nextbsd build also uses for the ISO/img names and
 #     /etc/os-release -- so all of them share the exact same value.
-#   - The kernel-banner type token is pinned to "NextBSD" (the rebranded
-#     ostype) so -k parses /boot/kernel/kernel correctly.
+#   - -k extracts the YYYYMMDD-HHMMSS build-timestamp pattern from the kernel
+#     banner (not a positional token after a fixed prefix), so it's robust to
+#     the banner wording -- matches both "NextBSD <ts> #N ..." and the newer
+#     "NextBSD Kernel Version <ts>; ...".
 # -u (userland) reflects the world/ISO build time; -k/-r (installed/running
 # kernel) reflect the kernel build time. These legitimately differ -- the
 # kernel is built in a separate repo at a different time -- and exposing that
@@ -47,7 +49,7 @@ USERLAND_VERSION="@@VERSION@@"
 : ${LOADER_CONF_FILES:=$LOADER_DIR/defaults/loader.conf $LOADER_DIR/loader.conf $LOADER_DIR/loader.conf.local}
 LOADER_RE1='^\([A-Z_a-z][0-9A-Z_a-z]*=[-./0-9A-Z_a-z]\{1,\}\).*$'
 LOADER_RE2='^\([A-Z_a-z][0-9A-Z_a-z]*="[-./0-9A-Z_a-z]\{1,\}"\).*$'
-KERNEL_RE='^NextBSD \([-.0-9A-Za-z]\{1,\}\) .*$'
+KERNEL_RE='^[^0-9]*\([0-9]\{8\}-[0-9]\{6\}\).*$'
 
 progname=${0##*/}
 
