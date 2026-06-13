@@ -1,18 +1,13 @@
-# freebsd-launchd-mach
+# NextBSD
 
-A FreeBSD where the low-level system plumbing has been quietly
-swapped out for the macOS-style equivalents: **Apple's `launchd`
-runs as PID 1**, services are described by `.plist` files, hardware
-events flow through a Mach-IPC bus, and the network stack is
-configured by Apple's `IPConfiguration` daemon talking to Apple's
-`configd`. The whole thing is still FreeBSD &mdash; same kernel,
-same ELF binaries, same `pkg(8)`, same packages &mdash; but with
-the modern parts of macOS's service model lifted over.
-
-> **Project name update in flight.** The current repo name reflects
-> this project's origin; a rebrand to either **NextBSD** or
-> **machstep** is queued (issue #78). The technical content here is
-> the same either way.
+A FreeBSD-derived operating system whose low-level system plumbing is the
+**macOS-style** equivalents: **Apple's `launchd` runs as PID 1**, services
+are described by `.plist` files, hardware events flow through an in-kernel
+IOKit registry over a Mach-IPC bus, and the network stack is configured by
+Apple's `IPConfiguration` daemon talking to Apple's `configd`. It is built on
+the FreeBSD 15 kernel and ELF userland — rebranded as NextBSD (`uname -s` is
+`NextBSD`) — with the modern parts of macOS's service model lifted over and,
+increasingly, Apple-source command-line tools in the base.
 
 If you just want to try it, jump to [Try it in 5 minutes](#try-it-in-5-minutes).
 If you want the long technical answer to *what got ported and how*,
@@ -20,7 +15,7 @@ see [PORTING.md](PORTING.md).
 
 ## What's different from stock FreeBSD
 
-| Stock FreeBSD | This image |
+| Stock FreeBSD | NextBSD |
 |---|---|
 | `init(8)` is PID 1 | **`launchd(8)`** is PID 1 |
 | Services configured in `/etc/rc.conf` + `rc.d/*` scripts | Services configured in **`.plist` files** under `/System/Library/LaunchDaemons/` |
@@ -28,18 +23,20 @@ see [PORTING.md](PORTING.md).
 | Hardware events surfaced via `devd(8)` (when present) | **In-kernel IORegistry** (`/dev/ioregistry`) with an IOKit-shaped notification channel, browsed via Apple's `libIOKit` / `ioreg` |
 | `dhclient(8)` brings up network interfaces | **`ipconfigd`** (Apple's IPConfiguration) handles DHCPv4 + ARP probing + lease renewal + publishes to `SCDynamicStore` |
 | `mdnsd` (if installed) for Bonjour | **Apple's `mDNSResponder`** with its full client API |
-| Nothing equivalent | **`configd`** + `SCDynamicStore` &mdash; the system-wide key/value store every Apple-source daemon expects |
+| Nothing equivalent | **`configd`** + `SCDynamicStore` — the system-wide key/value store every Apple-source daemon expects |
 | Nothing equivalent | **Mach IPC** in-kernel via `mach.ko`, plus `libsystem_kernel` / `libdispatch` / `libxpc` / `liblaunch` / `libCoreFoundation` in userland |
+| `uname -s` is `FreeBSD`; `freebsd-version` | `uname -s` is **`NextBSD`**; **`nextbsd-version`** (see [Versioning](#versioning)) |
 
 ## Try it in 5 minutes
 
 1. Grab the latest [continuous release][release]. Download
-   `FreeBSD-15.0-RELEASE-amd64-mach-<DATE>.img.zip`.
-2. Unzip it (any platform's native tools work &mdash; macOS Finder,
+   `NextBSD-amd64-<STAMP>.img.zip` (the raw disk image; there's also an
+   `.iso.zip`).
+2. Unzip it (any platform's native tools work — macOS Finder,
    Windows Explorer, `unzip` on Linux/BSD):
 
    ```sh
-   unzip FreeBSD-15.0-RELEASE-amd64-mach-*.img.zip
+   unzip NextBSD-amd64-*.img.zip
    ```
 
 3. Boot it in [QEMU](https://www.qemu.org/) (easiest), or `dd` to a
@@ -47,10 +44,11 @@ see [PORTING.md](PORTING.md).
 
    ```sh
    # QEMU, UEFI boot, user-mode network (gives the guest 10.0.2.0/24)
+   img=$(echo NextBSD-amd64-*.img)
    qemu-system-x86_64 \
      -accel kvm -cpu host -m 2048 \
      -bios /usr/share/OVMF/OVMF_CODE.fd \
-     -drive file=disk.img,format=raw,if=virtio \
+     -drive file="$img",format=raw,if=virtio \
      -nic user,model=e1000 \
      -nographic
    ```
@@ -59,7 +57,7 @@ see [PORTING.md](PORTING.md).
    on `em0`, syslog come up, and the `login:` prompt land. Log in
    as `root` (no password, hit Enter).
 
-[release]: https://github.com/pkgdemon/freebsd-launchd-mach/releases/tag/continuous
+[release]: https://github.com/nextbsd-redux/nextbsd/releases/tag/continuous
 
 ## Networking just works
 
@@ -80,7 +78,7 @@ ipconfig ifcount                # prints the count of interfaces
 shape, not FreeBSD's `ifconfig(8)`. Both exist on the image.)
 
 If you want to see the routing table, default route, and so on,
-standard FreeBSD `netstat -rn` works as you'd expect.
+standard `netstat -rn` works as you'd expect.
 
 ## Try some commands
 
@@ -105,7 +103,12 @@ ioreg -n hostb0                      # find by name
 syslog -F bsd                        # tail the system log in BSD format
 syslog -k Sender ipconfigd           # filter by sender
 
-# Standard FreeBSD tools are all still here
+# version identity — NextBSD's own
+uname -a                             # ostype reads NextBSD
+nextbsd-version                      # userland build version (a timestamp)
+nextbsd-version -k                   # the installed kernel's version
+
+# Standard tools are all still here
 top
 ps aux
 pkg info
@@ -133,13 +136,6 @@ pkg info
                                             |  ipconfigd       |
                                             |  (DHCP + lease)  |
                                             +------------------+
-                                                     |
-                                                     | + ARP, RA, MIG RPC
-                                                     v
-                                            +------------------+
-                                            |  mDNSResponder   |
-                                            |  (Bonjour)       |
-                                            +------------------+
 ```
 
 All of these talk to each other over **Mach IPC** (in-kernel via
@@ -147,47 +143,62 @@ All of these talk to each other over **Mach IPC** (in-kernel via
 that need a property-list store talk to `configd`'s `SCDynamicStore`
 via `libSystemConfiguration.so`.
 
-## Build it yourself
+## Versioning
 
-CI builds in a FreeBSD VM via `vmactions/freebsd-vm@v1`, runs the
-boot test, and publishes a [continuous release][release] on every
-green merge to `main`.
-
-To build locally on FreeBSD:
+NextBSD stamps every build with a single UTC timestamp
+(`YYYYMMDD-HHMMSS`), computed once and shared by the image/ISO names,
+`/etc/os-release`, and `nextbsd-version` — so they always agree.
 
 ```sh
-sh build.sh
+nextbsd-version          # userland build version, e.g. 20260613-224731
+nextbsd-version -k       # installed kernel version (its own build time)
+nextbsd-version -r       # running kernel version (= uname -r)
+cat /etc/os-release      # NAME=NextBSD, VERSION_ID=<same timestamp>, ...
 ```
 
-You'll get `out/disk.img.zip` &mdash; a DEFLATE-9 zip wrapping a
-bootable GPT disk image (BIOS + UEFI, read-write UFS root). Unzip
-with any platform's native tools.
+Userland and kernel build in separate repos at different times, so
+`nextbsd-version` (userland) and `-k`/`-r` (kernel) legitimately differ;
+that gap is exactly what the command exists to show.
+
+## How it's built
+
+NextBSD is assembled from a small chain of repositories, each publishing a
+rolling `continuous` release that the next stage ingests:
+
+- **[nextbsd-kernel](https://github.com/nextbsd-redux/nextbsd-kernel)** —
+  the NextBSD kernel, built as a patch + overlay set on top of FreeBSD
+  `releng/15.0` (the FreeBSD source tree is never forked in place).
+- **[nextbsd-freebsd-compat](https://github.com/nextbsd-redux/nextbsd-freebsd-compat)** —
+  the curated FreeBSD-source base userland, built from a srclist.
+- **[nextbsd-kernel-modules](https://github.com/nextbsd-redux/nextbsd-kernel-modules)** —
+  driver kexts (KPI-matched to the kernel).
+- **this repo** — assembles the bootable image/ISO: it lays the from-source
+  base, builds the Apple-source userland and the Mach/launchd stack on top,
+  ingests the kernel + driver kexts, and packages a GPT disk image (BIOS +
+  UEFI, read-write UFS root) plus a cd9660 ISO.
+
+CI runs the build in a FreeBSD VM, boot-tests the result, and refreshes the
+`continuous` release on a successful `main` build. Because the kernel and base
+are pulled in as published artifacts, `build.sh` is a CI orchestration step,
+not a standalone local-build command.
 
 ## Releases
 
-Every push to `main` that passes build + boot test is published as a
-dated continuous release &mdash; the zip-wrapped GPT disk image.
-Older builds are kept for two weeks; the latest is always on the
-[continuous release page][release].
+Each successful `main` build publishes dated assets to the
+[continuous release][release] — the zip-wrapped GPT disk image
+(`NextBSD-<arch>-<stamp>.img.zip`) and ISO (`NextBSD-<arch>-<stamp>.iso.zip`),
+each with a matching `.sha256`. The latest is always at that tag.
 
 ## Going deeper
 
-- **[PORTING.md](PORTING.md)** &mdash; full technical history of
+- **[PORTING.md](PORTING.md)** — full technical history of
   what's been ported and why. Phase-by-phase, with per-component
   rationale.
-- **[Plan](https://pkgdemon.github.io/freebsd-launchd-mach-plan.html)**
-  &mdash; the design doc this project was built from.
-- **[Issues](https://github.com/pkgdemon/freebsd-launchd-mach/issues)**
-  &mdash; open work items, scoping questions, planned ports.
+- **[Issues](https://github.com/nextbsd-redux/nextbsd/issues)**
+  — open work items, scoping questions, planned ports.
 
 ## License
 
 [BSD-2-Clause](LICENSE), with per-component Apache 2.0 / LGPL / MIT /
-OSF / CMU headers preserved on imported files &mdash; see
+OSF / CMU headers preserved on imported files — see
 [NOTICE](NOTICE).
-
-## Companion
-
-The [`freebsd-launchd`](https://github.com/pkgdemon/freebsd-launchd)
-repo is the AF_UNIX-only track; this repo is the pure Mach-IPC port
-track.
