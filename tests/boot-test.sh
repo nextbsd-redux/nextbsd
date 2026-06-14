@@ -1203,17 +1203,19 @@ expect {
 # surfaces (kernel + Setup:/System + Setup:/Network/HostNames) carry
 # <fixture>-2.
 #
-# Non-gating WARN for now: the conflict round-trip (mDNS probe timing +
-# the multi-hop State->SCPrefs->Setup->sethostname convergence) is
-# timing-sensitive under CI, and it builds on the mDNS tier that is itself
-# non-gating above. Promote to a hard gate (FAIL -> exit 1) once it has
-# proven stable across CI runs.
+# Hard gate (#156 follow-up): #314 merged green only because this was a
+# non-gating WARN, but the conflict-rename never actually fired. Gate it so
+# a non-working feature fails CI and cannot be merged. Reads got a -SKIP
+# escape only if the fixture itself can't claim the name (infra), not for a
+# missing -2 suffix.
 expect {
     timeout {
-        puts "\nWARN: HOSTNAMED-BONJOUR-RENAME marker not seen (conflict round-trip did not converge in the CI window)"
+        puts "\nFAIL: HOSTNAMED-BONJOUR-RENAME marker not seen (conflict round-trip did not converge)"
+        exit 1
     }
     "HOSTNAMED-BONJOUR-RENAME-FAIL" {
-        puts "\nWARN: hostnamed Bonjour conflict-rename feedback did not persist the -2 suffix in the CI window (#156)"
+        puts "\nFAIL: hostnamed Bonjour conflict-rename feedback did not persist the -2 suffix (#156)"
+        exit 1
     }
     "HOSTNAMED-BONJOUR-RENAME-OK" {
         puts "\nOK: hostnamed persisted mDNSResponder's Bonjour conflict-rename (<fixture>.local collision -> <fixture>-2 in SCPrefs + kernel)"

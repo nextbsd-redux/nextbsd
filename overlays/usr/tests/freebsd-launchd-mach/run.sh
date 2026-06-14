@@ -1692,6 +1692,13 @@ if [ -x /usr/tests/freebsd-launchd-mach/hostnamedbonjourset ] && \
             sleep 1
         done
         hostnamed_dump_log "ROUND 5"
+        # mDNSResponder-side diagnostics: did the recompute fire (calling
+        # mDNS_SetFQDN), did mDNS detect a collision (Local Hostname ...
+        # already in use), did the publisher run (MDNS-RENAME-PUBLISHED)?
+        # run.sh does not otherwise dump this file after boot.
+        echo "    --- /var/log/mDNSResponder.stderr (last 80 lines, ROUND 5) ---"
+        tail -80 /var/log/mDNSResponder.stderr 2>/dev/null || true
+        echo "    --- end mDNSResponder.stderr ---"
         echo "    kernel hostname = '$(hostname 2>/dev/null)' " \
             "(expected '$HOSTNAMED_BONJOUR_RESOLVED')"
         /usr/tests/freebsd-launchd-mach/hostnametest \

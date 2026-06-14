@@ -409,18 +409,25 @@ mDNSConfigStorePublishResolvedHostName(void)
 	(void)fflush(stderr);
 }
 
-/* Schedule (or re-schedule) the debounce-fire timer. Any SCDS
- * callback within DEBOUNCE_MS coalesces into a single re-announce. */
+/* Run the hostname recompute for an SCDS change.
+ *
+ * This previously armed a 25ms one-shot dispatch timer (g_debounce_timer)
+ * whose handler ran mDNSConfigStoreRecompute, to coalesce bursts. But in
+ * our libdispatch the one-shot timer did not re-fire when re-armed, so the
+ * recompute ran at most once (a boot-time no-op) and m->hostlabel was never
+ * updated afterwards — mDNSResponder stayed on "localhost.local" and never
+ * re-probed a configured name, so no Bonjour collision ever occurred (#156).
+ *
+ * Call the recompute directly instead. It is cheap (two SCDS reads + a
+ * label compare) and idempotent under the g_desired_host guard, so running
+ * it inline on every SCDS callback is fine and removes the timer
+ * dependency. We stay on the SCDS dispatch queue (g_queue) — the same
+ * context the timer handler used — so this changes nothing about the
+ * existing cross-thread mDNS_SetFQDN note above. */
 static void
 mDNSConfigStoreDebounce(void)
 {
-	if (g_debounce_timer == NULL)
-		return;
-	dispatch_source_set_timer(g_debounce_timer,
-	    dispatch_time(DISPATCH_TIME_NOW,
-	        DEBOUNCE_MS * (uint64_t)NSEC_PER_MSEC),
-	    DISPATCH_TIME_FOREVER, /* one-shot until next schedule */
-	    DEBOUNCE_MS * (uint64_t)NSEC_PER_MSEC / 10);
+	mDNSConfigStoreRecompute(NULL);
 }
 
 /* Post an interface-refresh request from the SCDS dispatch queue to the
