@@ -1678,10 +1678,13 @@ if [ -x /usr/tests/freebsd-launchd-mach/hostnamedbonjourset ] && \
         # same name; its probe will collide and mDNSCore will rename it.
         /usr/tests/freebsd-launchd-mach/hostnameprefset \
             "$HOSTNAMED_BONJOUR_FIXTURE"
-        # Poll up to 15s for the full round-trip (probe + conflict-rename +
-        # State: publish + observer persist + prefs republish + sethostname)
-        # to converge on the -2 suffix, rather than a fixed sleep.
-        for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        # Poll up to 30s for the full round-trip to converge on the -2
+        # suffix, rather than a fixed sleep. Each hop (mDNS adopt+probe ->
+        # conflict-rename -> State: publish -> observer persist -> prefs
+        # republish -> sethostname) is gated on the periodic IPv4 churn that
+        # drives the recompute (Setup: change-notify is unreliable in our
+        # configd), so allow several churn cycles.
+        for i in $(seq 1 30); do
             if [ "$(hostname 2>/dev/null)" = \
                 "$HOSTNAMED_BONJOUR_RESOLVED" ]; then
                 break
