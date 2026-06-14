@@ -58,6 +58,9 @@
 #include <sys/ioctl.h>
 #include <linux/sockios.h>
 #endif
+#if defined(__FreeBSD__)
+#include <kenv.h>                   // SMBIOS system-product name -> _device-info "model="
+#endif
 
 #include "mDNSUNP.h"
 #include "GenLinkedList.h"
@@ -1924,6 +1927,41 @@ mDNSlocal mDNSBool mDNSPlatformInit_CanReceiveUnicast(void)
     return(err == 0);
 }
 
+// Fill in m->HIHardware with the machine model, used by mDNSResponder to
+// build the host's _device-info "model=" TXT (this mirrors Apple's macOS
+// platform layer, which populates HIHardware from the hardware model).
+// On NextBSD the model comes from the SMBIOS system-product name (kenv
+// smbios.system.product) — the Mac model identifier on real Apple hardware
+// (e.g. "MacBookPro15,1"), the hypervisor product in a VM. When SMBIOS is
+// empty or unavailable we fall back to "NextBSD". HIHardware is a
+// length-prefixed string (c[0] = length); clamp it so "model=" + model
+// fits an inline-storage TXT record (see UpdateDeviceInfoRecord).
+mDNSlocal void SetupDeviceModel(mDNS *const m)
+{
+    // 6 bytes for "model=" plus the model, all inside one TXT string that
+    // must fit InlineCacheRDSize bytes of inline rdata (1 length byte too).
+    enum { kMaxModelLen = InlineCacheRDSize - 1 - 6 };
+    char model[256];
+    int len = 0;
+
+#if defined(__FreeBSD__)
+    if (kenv(KENV_GET, "smbios.system.product", model, (int)sizeof(model)) > 0)
+        for (len = 0; len < (int)sizeof(model) && model[len] != '\0'; len++)
+            continue;
+#endif
+
+    if (len <= 0)
+    {
+        static const char fallback[] = "NextBSD";
+        len = (int)(sizeof(fallback) - 1);
+        mDNSPlatformMemCopy(model, fallback, (mDNSu32)len);
+    }
+    if (len > kMaxModelLen) len = kMaxModelLen;
+
+    m->HIHardware.c[0] = (mDNSu8)len;
+    mDNSPlatformMemCopy(&m->HIHardware.c[1], model, (mDNSu32)len);
+}
+
 // mDNS core calls this routine to initialise the platform-specific data.
 mDNSexport mStatus mDNSPlatformInit(mDNS *const m)
 {
@@ -1944,6 +1982,9 @@ mDNSexport mStatus mDNSPlatformInit(mDNS *const m)
     m->hostlabel.c[0] = 0;
     GetUserSpecifiedRFC1034ComputerName(&m->hostlabel);
     if (m->hostlabel.c[0] == 0) MakeDomainLabelFromLiteralString(&m->hostlabel, "Computer");
+
+    // Machine model for the _device-info "model=" TXT record.
+    SetupDeviceModel(m);
 
     mDNS_SetFQDN(m);
 
