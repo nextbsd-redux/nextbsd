@@ -3142,9 +3142,67 @@ mDNSlocal void SetPrefsBrowseDomains(mDNS *m, DNameListElem *browseDomains, mDNS
     }
 }
 
+// Build the _device-info TXT rdata ("model=<HIHardware>") into ptr and
+// return its length. The TXT holds a single length-prefixed key/value
+// string. Returns 0 (advertise nothing) when no model string is set.
+mDNSexport mDNSu32 initializeDeviceInfoTXT(mDNS *m, mDNSu8 *ptr)
+{
+    static const char key[] = "model=";       // 6 bytes, no NUL
+    const mDNSu8 modellen = m->HIHardware.c[0];
+    mDNSu8 *const start = ptr;
+
+    if (modellen == 0) return 0;
+
+    *ptr++ = (mDNSu8)((sizeof(key) - 1) + modellen);   // TXT string length
+    mDNSPlatformMemCopy(ptr, key, sizeof(key) - 1);
+    ptr += sizeof(key) - 1;
+    mDNSPlatformMemCopy(ptr, &m->HIHardware.c[1], modellen);
+    ptr += modellen;
+    return (mDNSu32)(ptr - start);
+}
+
+// Register/refresh (or tear down) the host's _device-info._tcp TXT record,
+// which carries "model=" for Bonjour browsers. Apple ties this record to
+// the presence of autoname services: it is advertised whenever at least
+// one service is registered under the host's default (nice) name, and is
+// renamed/removed in lockstep with that name. We mirror that here rather
+// than advertising _device-info from any single daemon. Called from the
+// service register/deregister paths.
 mDNSlocal void UpdateDeviceInfoRecord(mDNS *const m)
 {
-    (void)m; // unused
+    int num_autoname = 0;
+    request_state *req;
+
+    for (req = all_requests; req; req = req->next)
+        if (req->terminate == regservice_termination_callback &&
+            req->servicereg && req->servicereg->autoname)
+            num_autoname++;
+
+    // Deregister if we have it but no longer should, or the host name changed.
+    if (m->DeviceInfo.resrec.RecordType != kDNSRecordTypeUnregistered)
+        if (num_autoname == 0 ||
+            !SameDomainLabelCS(m->DeviceInfo.resrec.name->c, m->nicelabel.c))
+        {
+            LogOperation("UpdateDeviceInfoRecord Deregister %##s", m->DeviceInfo.resrec.name->c);
+            mDNS_Deregister(m, &m->DeviceInfo);
+        }
+
+    // Register if we should have it but don't.
+    if (m->DeviceInfo.resrec.RecordType == kDNSRecordTypeUnregistered && num_autoname > 0)
+    {
+        mDNSu8 txt[256];
+        mDNSu32 len = initializeDeviceInfoTXT(m, txt);
+        if (len == 0) return;                  // no model -> nothing to advertise
+
+        mDNS_SetupResourceRecord(&m->DeviceInfo, mDNSNULL, mDNSInterface_Any, kDNSType_TXT,
+            kStandardTTL, kDNSRecordTypeAdvisory, AuthRecordAny, mDNSNULL, mDNSNULL);
+        ConstructServiceName(&m->DeviceInfo.namestorage, &m->nicelabel, &DeviceInfoName, &localdomain);
+        if (len > m->DeviceInfo.resrec.rdata->MaxRDLength) return;   // paranoia: never overrun inline rdata
+        m->DeviceInfo.resrec.rdlength = len;
+        mDNSPlatformMemCopy(m->DeviceInfo.resrec.rdata->u.txt.c, txt, len);
+        LogOperation("UpdateDeviceInfoRecord   Register %##s", m->DeviceInfo.resrec.name->c);
+        mDNS_Register(m, &m->DeviceInfo);
+    }
 }
 
 mDNSexport void udsserver_handle_configchange(mDNS *const m)
