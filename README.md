@@ -6,8 +6,8 @@ are described by `.plist` files, hardware events flow through an in-kernel
 IOKit registry over a Mach-IPC bus, and the network stack is configured by
 the `IPConfiguration` daemon talking to `configd`. It is built on
 the FreeBSD 15 kernel and ELF userland — rebranded as NextBSD (`uname -s` is
-`NextBSD`) — with the modern parts of macOS's service model lifted over and,
-increasingly, Darwin-source command-line tools in the base.
+`NextBSD`) — with ports of Darwin command-line tools making up the majority of
+the userland.
 
 If you just want to try it, jump to [Try it in 5 minutes](#try-it-in-5-minutes).
 If you want the long technical answer to *what got ported and how*,
