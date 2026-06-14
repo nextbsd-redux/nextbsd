@@ -3036,10 +3036,13 @@ rm -f "$WORK/$IMG_NAME" "$WORK/rootfs.ufs" "$WORK/esp.img"
 #
 echo "==> live ISO: building on-demand compressed root + mfsroot"
 
-# 7a. Overlay mountpoints must exist (empty) in the read-only uzip root so the
-#     post-pivot union has valid /rofs + /cow paths (the kernel can't mkdir on a
-#     RO fs). Added only now, after the disk image's makefs.
-mkdir -p "$WORK/rootfs/rofs" "$WORK/rootfs/cow"
+# 7a. Do NOT bake /rofs + /cow mountpoints into the uzip root. The live init
+#     mounts the components on the MFSROOT's own /rofs + /cow (created below),
+#     and `sysctl vfs.pivot` only repoints rootvnode to the union -- it never
+#     relocates those component mounts into the new root (see nextbsd-kernel
+#     sys/kern/vfs_pivot.c). Baking them here would just leave empty, orphaned
+#     /rofs + /cow dirs in the pivoted / (nextbsd#283); omit them so the live
+#     root is clean.
 
 # 7b. Compact UFS image of rootfs (no rw headroom — it is read-only), then
 #     mkuzip (zlib; geom_uzip reads it on demand). Separate from the disk
