@@ -2856,7 +2856,23 @@ mkdir -p "$WORK/rootfs/var/empty" 2>/dev/null || true
 #
 if [ -d "$ROOT/overlays" ]; then
     echo "==> applying overlays"
-    cp -aR "$ROOT/overlays/." "$WORK/rootfs/"
+    # Merge per top-level entry instead of `cp -aR overlays/. rootfs/`. With the
+    # Apple /private layout (nextbsd#296) rootfs/etc is now a symlink into
+    # private/etc, and BSD `cp -aR srcdir/. dstdir/` aborts with "Not a
+    # directory" when it tries to merge a source directory (overlays/etc) onto a
+    # destination that is a symlink. Copying the overlay subdir's *contents* into
+    # "rootfs/<name>/" (trailing slash) makes cp resolve the symlink to its
+    # target dir first, so the files land in private/etc and the symlink stays
+    # intact. Non-symlinked entries (boot, usr, System) copy as before.
+    for _ov in "$ROOT/overlays"/* "$ROOT/overlays"/.[!.]*; do
+        [ -e "$_ov" ] || continue            # no-match globs expand literally
+        _name=$(basename "$_ov")
+        if [ -d "$_ov" ] && [ -L "$WORK/rootfs/$_name" ]; then
+            cp -aR "$_ov/." "$WORK/rootfs/$_name/"
+        else
+            cp -aR "$_ov" "$WORK/rootfs/"
+        fi
+    done
 fi
 
 # Force root:wheel on the overlayed /etc. cp -aR preserves the build user's
