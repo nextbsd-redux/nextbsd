@@ -1,15 +1,33 @@
 # One pkg per line; lines starting with # are ignored.
-# Runtime packages — installed in the chroot and shipped in the ISO.
+# Runtime packages — installed in the chroot and shipped (read-only) in the ISO.
 #
-# Currently empty — phase B test ISO ships only what pkglist-base.txt
-# provides plus mach.ko. The entries below are intentionally commented
-# out and to be restored in a future commit when the use cases come
-# back. Each block was dropped because the test scope didn't need it
-# and every byte counts on the cd9660.
+# The ACTIVE SET below is intentionally minimal: git plus a minimal XLibre
+# X server with only the input/video drivers needed on real laptops and VMs.
+# Shipping X in the read-only compressed base (/rofs) — instead of having the
+# user `pkg install` it at runtime — keeps multi-GB installs OUT of the
+# swapless RAM-backed tmpfs overlay, which OOM-kills the system otherwise
+# (see #326). NOTE: do not add the full `xlibre`/`xorg` metaport here; it is
+# multi-GB and blows up the cd9660 image.
 #
-# Also previously here (removed alongside the gershwin chroot build on
-# 2026-05-12, restore when libdispatch + GNUstep return — see memory
-# freebsd_launchd_mach_gershwin_removed): libxml2, icu, libffi.
+# Everything below the active set is intentionally commented out (disabled);
+# uncomment to re-enable. Also previously here, removed alongside the gershwin
+# chroot build on 2026-05-12 (restore when libdispatch + GNUstep return — see
+# memory freebsd_launchd_mach_gershwin_removed): libxml2, icu, libffi.
+
+# ---- active set ----
+git
+
+# Minimal XLibre X server (NOT the full xlibre/xorg metaport) + the input and
+# video drivers for laptops (synaptics/libinput-era) and VMs (vmmouse/vesa/scfb).
+xlibre-minimal
+xlibre-xf86-input-evdev
+xlibre-xf86-input-joystick
+xlibre-xf86-input-keyboard
+xlibre-xf86-input-mouse
+xlibre-xf86-input-synaptics
+xlibre-xf86-input-vmmouse
+xlibre-xf86-video-scfb
+xlibre-xf86-video-vesa
 
 # ---- firmware blobs (restore for real-hardware drivers) ----
 #
