@@ -166,7 +166,15 @@ sh_try_kenv_slug(const char *key, char *out, size_t outsz)
 	return (out[0] != '\0');
 }
 
-static void
+/*
+ * Derive the host slug. Returns 1 when the slug is an identifying per-model
+ * name (from smbios.system.version, e.g. "ThinkPad-T460s") that is unique
+ * enough to use bare; returns 0 when it is a GENERIC fallback
+ * (smbios.system.product such as "VirtualBox", shared by every guest of
+ * that hypervisor, or the "freebsd" last resort) that the caller should
+ * make unique with a per-machine suffix.
+ */
+static int
 sh_derive_slug(char *out, size_t outsz)
 {
 	/*
@@ -176,11 +184,47 @@ sh_derive_slug(char *out, size_t outsz)
 	 * is the last resort.
 	 */
 	if (sh_try_kenv_slug("smbios.system.version", out, outsz))
-		return;
+		return (1);	/* real model name → unique enough, use bare */
 	if (sh_try_kenv_slug("smbios.system.product", out, outsz))
-		return;
+		return (0);	/* generic product (e.g. VirtualBox) → add suffix */
 	(void)strncpy(out, "freebsd", outsz - 1);
 	out[outsz - 1] = '\0';
+	return (0);		/* last resort → add suffix */
+}
+
+/*
+ * Derive a short, stable, per-machine uniqueness suffix from the SMBIOS
+ * system UUID (e.g. "68f9a871-8e8b-..." -> "68f9a871"). Two VMs of the same
+ * hypervisor share smbios.system.product ("VirtualBox") but each gets a
+ * distinct UUID, so this makes their synthesized hostnames unique at boot
+ * without relying on Bonjour conflict-rename. Writes lowercase hex,
+ * NUL-terminated; returns its length, or 0 if no usable (present, non-zero)
+ * UUID is available.
+ */
+static size_t
+sh_derive_uuid_suffix(char *out, size_t outsz)
+{
+	char buf[256];
+	size_t i, j;
+
+	if (outsz == 0)
+		return (0);
+	out[0] = '\0';
+	if (sh_read_kenv("smbios.system.uuid", buf, sizeof(buf)) <= 0)
+		return (0);
+	/* Take up to the 8 leading hex digits (the UUID's first group). */
+	j = 0;
+	for (i = 0; buf[i] != '\0' && buf[i] != '-' && j < 8 && j < outsz - 1;
+	    i++) {
+		unsigned char c = (unsigned char)buf[i];
+		if (isxdigit(c))
+			out[j++] = (char)tolower(c);
+	}
+	out[j] = '\0';
+	/* Reject an all-zero UUID (some firmware reports 00000000-...). */
+	if (j > 0 && strspn(out, "0") == j)
+		out[0] = '\0';
+	return (strlen(out));
 }
 
 /* Public synthesis entry — used by set-hostname.c's localhost carry
@@ -191,14 +235,30 @@ freebsd_synthesize_hostname(void)
 {
 	char slug[SLUG_MAX + 1];
 	char name[HOSTNAMED_MAX];
+	int identifying;
 
-	/* slug only — derived from the SMBIOS system version/product
-	 * (e.g. "ThinkPad-T460s"). No serial/MAC suffix is appended: the
-	 * name is the bare model slug. sh_derive_slug always yields a
-	 * non-empty value ("freebsd" as a last resort). */
-	sh_derive_slug(slug, sizeof(slug));
+	/*
+	 * Identifying model names (e.g. "ThinkPad-T460s" from
+	 * smbios.system.version) are used bare. Generic fallbacks
+	 * (smbios.system.product like "VirtualBox", or "freebsd") get a short
+	 * per-machine suffix from the SMBIOS UUID appended — otherwise every
+	 * guest of the same hypervisor would synthesize the identical hostname
+	 * (e.g. all VirtualBox guests -> "VirtualBox", or "1-2" before the
+	 * identifying-version fix). See sh_derive_slug / sh_derive_uuid_suffix.
+	 */
+	identifying = sh_derive_slug(slug, sizeof(slug));
 	(void)strncpy(name, slug, sizeof(name) - 1);
 	name[sizeof(name) - 1] = '\0';
+	if (!identifying) {
+		char suffix[16];
+
+		if (sh_derive_uuid_suffix(suffix, sizeof(suffix)) > 0) {
+			size_t len = strlen(name);
+
+			(void)snprintf(name + len, sizeof(name) - len, "-%s",
+			    suffix);
+		}
+	}
 	if (strlen(name) > 63)
 		name[63] = '\0';
 	xlog("freebsd_synthesize_hostname -> '%s'", name);
