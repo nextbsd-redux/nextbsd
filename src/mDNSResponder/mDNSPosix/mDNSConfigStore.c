@@ -472,17 +472,26 @@ mDNSConfigStoreWake(int fd, void *context)
 	(void)mDNSPlatformPosixRefreshInterfaceList(&mDNSStorage);
 }
 
-/* SCDS callback — every registered key + pattern routes here. We log
- * the change(s) and dispatch: HostNames changes arm the debounced
- * hostname recompute (mDNS_SetFQDN); interface / service IPv4 changes
- * wake the main thread to re-walk the interface list. A single callback
- * can carry both kinds, so we track them independently. */
+/* SCDS callback — every registered key + pattern routes here. We log the
+ * change(s), ALWAYS arm the debounced hostname recompute, and wake the main
+ * thread to re-walk the interface list when an interface / service IPv4 key
+ * changed.
+ *
+ * The recompute is armed unconditionally rather than only on the exact
+ * HostNames key because in our configd the Setup:/Network/HostNames
+ * change-notification is not reliably delivered to this subscriber, while
+ * the frequent State:/Network/.../IPv4 churn (DHCP renewals) is. Gating the
+ * recompute on the HostNames key therefore left it dormant and
+ * mDNSResponder never re-adopted a changed LocalHostName (#156). The
+ * recompute is idempotent — the g_desired_host guard makes it a no-op
+ * unless the desired name actually changed — so riding the IPv4 churn is
+ * cheap and mirrors how the vendored set-hostname.c engine already relies
+ * on the same churn to re-read its inputs. */
 static void
 mDNSConfigStoreCallback(SCDynamicStoreRef store, CFArrayRef changedKeys,
     void *info)
 {
 	CFIndex i, count;
-	Boolean hostname_changed = FALSE;
 	Boolean interface_changed = FALSE;
 
 	(void)store;
@@ -497,21 +506,21 @@ mDNSConfigStoreCallback(SCDynamicStoreRef store, CFArrayRef changedKeys,
 		(void)fprintf(stderr, "mDNSResponder mDNSConfigStore: "
 		    "key changed -> %s\n", kk);
 
-		/* Classify: the exact HostNames key drives the hostname
-		 * recompute; everything else we subscribe to is interface /
-		 * service IPv4 (State:/Network/Global/IPv4 or the
+		/* Anything that is not the exact HostNames key is an interface /
+		 * service IPv4 change (State:/Network/Global/IPv4 or the
 		 * State:/Network/Service/.+/IPv4 pattern) and drives the
-		 * interface re-walk. */
-		if (g_hostnames_key[0] != '\0' &&
-		    strcmp(kk, g_hostnames_key) == 0)
-			hostname_changed = TRUE;
-		else
+		 * interface re-walk. The hostname recompute is armed
+		 * unconditionally below, so no separate hostname flag is kept. */
+		if (!(g_hostnames_key[0] != '\0' &&
+		    strcmp(kk, g_hostnames_key) == 0))
 			interface_changed = TRUE;
 	}
 	(void)fflush(stderr);
 
-	if (hostname_changed)
-		mDNSConfigStoreDebounce();
+	/* Always arm the hostname recompute (see the function comment): the
+	 * Setup: HostNames notify is unreliable here, so we ride the IPv4
+	 * churn; the recompute is idempotent under the g_desired_host guard. */
+	mDNSConfigStoreDebounce();
 	if (interface_changed)
 		mDNSConfigStorePostInterfaceRefresh();
 }
