@@ -2801,13 +2801,15 @@ test -x "$WORK/rootfs/usr/bin/ssh-keygen" \
 echo "==> OpenSSH built + installed (sshd, ssh, ssh-keygen)"
 
 # sshd-mdns-register — tiny libdns_sd co-process that advertises
-# _ssh._tcp so mDNSResponder publishes the host's <name>.local record
-# (mDNSCore only advertises host records when an AutoTarget service is
-# registered; a headless box otherwise advertises nothing). Started by
-# sshd-keygen-wrapper just before `exec sshd -D` and tied to sshd's
-# lifetime via getppid(). Depends on libdns_sd + dns_sd.h built in
-# Phase K (above). Same link shape as dnssdtest.
-echo "==> building sshd-mdns-register (src/ssh-bonjour, _ssh._tcp advertiser)"
+# _ssh._tcp + _sftp-ssh._tcp so mDNSResponder publishes the host's
+# <name>.local record (mDNSCore only advertises host records when an
+# AutoTarget service is registered; a headless box otherwise advertises
+# nothing) and the box surfaces in both Network Browser (_ssh) and
+# Workspace (_sftp-ssh). Started by sshd-keygen-wrapper just before
+# `exec sshd -D` and tied to sshd's lifetime via getppid(). Depends on
+# libdns_sd + dns_sd.h built in Phase K (above). Same link shape as
+# dnssdtest.
+echo "==> building sshd-mdns-register (src/ssh-bonjour, _ssh + _sftp-ssh advertiser)"
 cc -I"$WORK/rootfs/usr/include" \
    -L"$WORK/rootfs/usr/lib/system" \
    -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
