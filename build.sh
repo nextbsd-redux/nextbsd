@@ -2998,13 +2998,18 @@ echo "==> [libscan] end"
 # 6a. root UFS — content plus ~1.5 GB read-write headroom. UFS label
 #     "ROOTFS" matches loader.conf.d's vfs.root.mountfrom and the
 #     overlays/private/etc/fstab entry. softupdates for crash resilience.
-# Ensure the root directory (and the SLE chain) is root:wheel so it bakes into
-# the image as uid/gid 0. Otherwise / inherits the build user's id and OSKext's
-# cache-dir walk warns "Can't create kext cache under / - owner not root."
-chown 0:0 "$WORK/rootfs"
-[ -d "$WORK/rootfs/System/Library/Extensions" ] && \
-    chown 0:0 "$WORK/rootfs/System" "$WORK/rootfs/System/Library" \
-              "$WORK/rootfs/System/Library/Extensions"
+# Force the ENTIRE staged tree to root:wheel (uid/gid 0) before makefs records
+# it. makefs bakes in the staging tree's on-disk ownership, but the tree is
+# assembled by the unprivileged build user: mkdir'd top-level dirs (/, /usr,
+# /boot, /private) take the builder's gid via BSD parent-group inheritance, and
+# anything cp'd/extracted from build-user-owned sources keeps its 1001:1001
+# ownership. Both leaked into shipped images (e.g. / as root:1001, /usr /boot
+# /private as 1001:1001). A blanket recursive chown fixes them all. We run as
+# root, so setuid/setgid bits on already-0:0 files are preserved. This also
+# subsumes the old narrow chown of / + System/Library/Extensions (OSKext's
+# cache-dir walk requires / owned by root, else "Can't create kext cache
+# under / - owner not root").
+chown -R 0:0 "$WORK/rootfs"
 echo "==> makefs ffs (rw root, +1.5G headroom)"
 makefs -t ffs -B little \
     -o version=2,label=ROOTFS,softupdates=1 \
@@ -3242,6 +3247,10 @@ echo "[init] FATAL: exec /sbin/launchd failed ($?)"
 while : ; do sleep 60; done
 INITEOF
 chmod 0755 "$MFS/init"
+# Same root:wheel normalization as the main rootfs: $MFS is assembled by the
+# unprivileged build user (mkdir'd dirs + the cat-generated init), so force the
+# miniroot tree to uid/gid 0 before makefs bakes it in.
+chown -R 0:0 "$MFS"
 makefs -t ffs -B little -o version=2,label=MFSROOT -b 3m \
     "$WORK/mfsroot.img" "$MFS"
 ls -lh "$WORK/mfsroot.img"

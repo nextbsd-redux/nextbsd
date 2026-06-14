@@ -53,6 +53,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>		/* sethostname */
 
 /* hostnamed.c's logger. */
 extern void	xlog(const char *fmt, ...);
@@ -196,10 +197,24 @@ reconcile(SCDynamicStoreRef store)
 	if (current != NULL)
 		CFRelease(current);
 
-	if (persist_computer_name(resolved) == 0)
-		xlog("hostname_observer: persisted conflict-resolved hostname "
-		    "'%s' to SCPrefs ComputerName (State:/Network/HostNames -> "
-		    "SCPreferences); set-hostname.c will adopt it", rbuf);
+	if (persist_computer_name(resolved) == 0) {
+		/*
+		 * Persisting to SCPrefs is the durable record, but set-hostname.c
+		 * only re-reads ComputerName when configd notifies it of the
+		 * Setup:/System change — and in our configd Setup: notifications
+		 * are not reliably delivered (the engine wakes on State:/IPv4
+		 * churn instead), so the kernel hostname can lag the rename until
+		 * the next churn. Apply the resolved name to the kernel directly
+		 * here so it takes effect promptly. set-hostname.c converges on the
+		 * same value on its next run (ComputerName now equals rbuf), so
+		 * this does not fight the engine.
+		 */
+		if (rbuf[0] != '\0' &&
+		    sethostname(rbuf, (int)strlen(rbuf)) != 0)
+			xlog("hostname_observer: sethostname('%s') failed", rbuf);
+		xlog("hostname_observer: persisted + applied conflict-resolved "
+		    "hostname '%s' (SCPrefs ComputerName + kernel)", rbuf);
+	}
 	CFRelease(resolved);
 }
 

@@ -243,7 +243,14 @@ launchd_runtime_init(void)
 	os_assert_zero(pthread_create(&kqueue_demand_thread, NULL, kqueue_demand_loop, NULL));
 	os_assert_zero(pthread_detach(kqueue_demand_thread));
 
-	(void)posix_assumes_zero(sysctlbyname("vfs.generic.noremotehang", NULL, NULL, &p, sizeof(p)));
+	/*
+	 * vfs.generic.noremotehang is a macOS-only sysctl (keeps a process from
+	 * hanging on a dead remote/NFS mount). The NextBSD kernel has no such
+	 * knob, so the call always fails with ENOENT; wrapping it in
+	 * posix_assumes_zero spammed a soft-assertion to the console at every
+	 * boot. Call it best-effort and ignore the result.
+	 */
+	(void)sysctlbyname("vfs.generic.noremotehang", NULL, NULL, &p, sizeof(p));
 }
 
 void
@@ -728,7 +735,9 @@ runtime_fork(mach_port_t bsport)
 		(void)os_assumes_zero(launchd_set_bport(MACH_PORT_NULL));
 	} else {
 		pid_t p = -getpid();
-		(void)posix_assumes_zero(sysctlbyname("vfs.generic.noremotehang", NULL, NULL, &p, sizeof(p)));
+		/* macOS-only sysctl; absent on the NextBSD kernel (see the note at
+		 * the other call site). Best-effort, ignore the ENOENT. */
+		(void)sysctlbyname("vfs.generic.noremotehang", NULL, NULL, &p, sizeof(p));
 		(void)posix_assumes_zero(sigprocmask(SIG_SETMASK, &emptyset, NULL));
 	}
 
