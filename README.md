@@ -16,10 +16,10 @@ see [PORTING.md](PORTING.md).
 ## Heritage
 
 This project is a re-implementation of the original
-[NextBSD](https://github.com/NextBSD/NextBSD), not a fork of it. It is built
-entirely differently than those original solutions. It reuses some of the
+[NextBSD](https://github.com/NextBSD/NextBSD), not a fork of it. It reuses some of the
 original's solutions, such as `libxpc`, and those carry enhancements from
-[RavynOS](https://ravynos.com).
+[RavynOS](https://ravynos.com).  It is however built
+entirely differently than those original solutions. 
 
 ## What's different from other BSDs?
 
