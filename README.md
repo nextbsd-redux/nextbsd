@@ -175,7 +175,7 @@ rolling `continuous` release that the next stage ingests:
 
 - **[nextbsd-kernel](https://github.com/nextbsd-redux/nextbsd-kernel)** —
   the NextBSD kernel, built as a patch + overlay set on top of FreeBSD
-  `releng/15.0` (the FreeBSD source tree is never forked in place).
+  (the FreeBSD source tree is never forked in place).
 - **[nextbsd-freebsd-compat](https://github.com/nextbsd-redux/nextbsd-freebsd-compat)** —
   the curated FreeBSD-source base userland, built from a srclist.
 - **[nextbsd-kernel-modules](https://github.com/nextbsd-redux/nextbsd-kernel-modules)** —
