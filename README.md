@@ -1,13 +1,13 @@
 # NextBSD
 
 A FreeBSD-derived operating system whose low-level system plumbing is the
-**macOS-style** equivalents: **Apple's `launchd` runs as PID 1**, services
+**macOS-style** equivalents: **Darwin's `launchd` runs as PID 1**, services
 are described by `.plist` files, hardware events flow through an in-kernel
 IOKit registry over a Mach-IPC bus, and the network stack is configured by
-Apple's `IPConfiguration` daemon talking to Apple's `configd`. It is built on
+Darwin's `IPConfiguration` daemon talking to Darwin's `configd`. It is built on
 the FreeBSD 15 kernel and ELF userland — rebranded as NextBSD (`uname -s` is
 `NextBSD`) — with the modern parts of macOS's service model lifted over and,
-increasingly, Apple-source command-line tools in the base.
+increasingly, Darwin-source command-line tools in the base.
 
 If you just want to try it, jump to [Try it in 5 minutes](#try-it-in-5-minutes).
 If you want the long technical answer to *what got ported and how*,
@@ -19,11 +19,12 @@ see [PORTING.md](PORTING.md).
 |---|---|
 | `init(8)` is PID 1 | **`launchd(8)`** is PID 1 |
 | Services configured in `/etc/rc.conf` + `rc.d/*` scripts | Services configured in **`.plist` files** under `/System/Library/LaunchDaemons/` |
-| `syslogd(8)` is the FreeBSD-base one | **Apple's `syslogd`** (Apple System Logger / ASL) plus `notifyd` for the cross-process event bus |
-| Hardware events surfaced via `devd(8)` (when present) | **In-kernel IORegistry** (`/dev/ioregistry`) with an IOKit-shaped notification channel, browsed via Apple's `libIOKit` / `ioreg` |
-| `dhclient(8)` brings up network interfaces | **`ipconfigd`** (Apple's IPConfiguration) handles DHCPv4 + ARP probing + lease renewal + publishes to `SCDynamicStore` |
-| `mdnsd` (if installed) for Bonjour | **Apple's `mDNSResponder`** with its full client API |
-| Nothing equivalent | **`configd`** + `SCDynamicStore` — the system-wide key/value store every Apple-source daemon expects |
+| `syslogd(8)` is the FreeBSD-base one | **Darwin's `syslogd`** (Apple System Logger / ASL) plus `notifyd` for the cross-process event bus |
+| Hardware events surfaced via `devd(8)` (when present) | **In-kernel IORegistry** (`/dev/ioregistry`) with an IOKit-shaped notification channel, browsed via Darwin's `libIOKit` / `ioreg` |
+| Kernel **modules** loaded with `kldload(8)` / `kldstat(8)` (`.ko` files) | Kernel **extensions** loaded with **`kextload` / `kextstat`** (Darwin `kext_tools` driving `OSKext`); the `kld*` CLIs are retired (the `kld` syscalls remain) |
+| `dhclient(8)` brings up network interfaces | **`ipconfigd`** (Darwin's IPConfiguration) handles DHCPv4 + ARP probing + lease renewal + publishes to `SCDynamicStore` |
+| `mdnsd` (if installed) for Bonjour | **Darwin's `mDNSResponder`** with its full client API |
+| Nothing equivalent | **`configd`** + `SCDynamicStore` — the system-wide key/value store every Darwin-source daemon expects |
 | Nothing equivalent | **Mach IPC** in-kernel via `mach.ko`, plus `libsystem_kernel` / `libdispatch` / `libxpc` / `liblaunch` / `libCoreFoundation` in userland |
 | `uname -s` is `FreeBSD`; `freebsd-version` | `uname -s` is **`NextBSD`**; **`nextbsd-version`** (see [Versioning](#versioning)) |
 
@@ -61,20 +62,20 @@ see [PORTING.md](PORTING.md).
 
 ## Networking just works
 
-When the image boots, `ipconfigd` (Apple's DHCPv4 client) DHCPs
+When the image boots, `ipconfigd` (Darwin's DHCPv4 client) DHCPs
 the first Ethernet interface it finds. In QEMU's default user-mode
 network you'll get `10.0.2.15/24`, gateway `10.0.2.2`, DNS via
 `10.0.2.3`. On real hardware you'll get whatever your DHCP server
 hands out.
 
-Check it the Apple way:
+Check it the Darwin way:
 
 ```sh
 ipconfig getifaddr em0          # prints the IP address
 ipconfig ifcount                # prints the count of interfaces
 ```
 
-(`ipconfig(8)` here is Apple's tool with the same name and CLI
+(`ipconfig(8)` here is Darwin's tool with the same name and CLI
 shape, not FreeBSD's `ifconfig(8)`. Both exist on the image.)
 
 If you want to see the routing table, default route, and so on,
@@ -82,24 +83,24 @@ standard `netstat -rn` works as you'd expect.
 
 ## Try some commands
 
-These are the visible-to-users pieces of the Apple-source stack
+These are the visible-to-users pieces of the Darwin-source stack
 that's running. All work today on this image:
 
 ```sh
-# launchctl — the Apple service-control tool, manages launchd jobs.
+# launchctl — the Darwin service-control tool, manages launchd jobs.
 launchctl list                       # show every job launchd knows about
 launchctl list com.apple.syslogd     # plist for one specific job
 
-# ipconfig — Apple's IP-config CLI (NOT the same as ifconfig)
+# ipconfig — Darwin's IP-config CLI (NOT the same as ifconfig)
 ipconfig getifaddr em0
 ipconfig ifcount
 
-# ioreg — Apple's hardware-registry browser, over the in-kernel IORegistry
+# ioreg — Darwin's hardware-registry browser, over the in-kernel IORegistry
 ioreg -l                             # the full registry tree
 ioreg -c PCIDevice                   # filter by class
 ioreg -n hostb0                      # find by name
 
-# syslog — Apple's log-query tool, served by syslogd's ASL store
+# syslog — Darwin's log-query tool, served by syslogd's ASL store
 syslog -F bsd                        # tail the system log in BSD format
 syslog -k Sender ipconfigd           # filter by sender
 
@@ -173,14 +174,20 @@ rolling `continuous` release that the next stage ingests:
 - **[nextbsd-kernel-modules](https://github.com/nextbsd-redux/nextbsd-kernel-modules)** —
   driver kexts (KPI-matched to the kernel).
 - **this repo** — assembles the bootable image/ISO: it lays the from-source
-  base, builds the Apple-source userland and the Mach/launchd stack on top,
+  base, builds the Darwin-source userland and the Mach/launchd stack on top,
   ingests the kernel + driver kexts, and packages a GPT disk image (BIOS +
   UEFI, read-write UFS root) plus a cd9660 ISO.
 
-CI runs the build in a FreeBSD VM, boot-tests the result, and refreshes the
-`continuous` release on a successful `main` build. Because the kernel and base
-are pulled in as published artifacts, `build.sh` is a CI orchestration step,
-not a standalone local-build command.
+It all runs on GitHub Actions' **Linux (Ubuntu) runners** — there's no FreeBSD
+hardware in the loop. The kernel and the from-source base are **cross-compiled
+on Linux** with a FreeBSD cross-toolchain (clang `-target …-freebsd`, in a
+prebuilt toolchain container), so those stages never need a FreeBSD host. The
+final image assembly (`build.sh`) then runs inside a **FreeBSD VM**
+(`vmactions/freebsd-vm`) on that same Linux runner — it needs a real FreeBSD
+userland to run `makefs`/`mkimg` and lay the image down — which also boot-tests
+the result and refreshes the `continuous` release on a successful `main` build.
+Because the kernel and base arrive as published artifacts, `build.sh` is a CI
+orchestration step, not a standalone local-build command.
 
 ## Releases
 
