@@ -254,6 +254,28 @@ echo "    /bin/sh -> $(readlink "$WORK/rootfs/bin/sh" 2>/dev/null || echo real) 
 #    exit 1
 #fi
 
+# Apply the overlay BEFORE installing packages, so package post-install
+# scripts find the config files we ship. e.g. git's post-install hook
+# appends to /etc/shells (overlays/private/etc/shells); when the overlay was
+# applied AFTER pkg install (historically), that hook failed with
+# "/etc/shells: No such file or directory". Applying it here also means any
+# pkg that appends to a shipped /etc file (git -> /etc/shells) keeps its
+# addition, because the overlay is no longer re-copied later. Safe to apply
+# early: the overlay ships only /System, /private, /boot and a few /usr files
+# (none under /usr/local where ports install, and nothing any later pkg or
+# from-source build step writes), so it is not clobbered by what follows.
+if [ -d "$ROOT/overlays" ]; then
+    echo "==> applying overlays (before pkg install)"
+    # The overlay tree mirrors the image's PHYSICAL layout, so /etc files live
+    # under overlays/private/etc (not overlays/etc). With the Apple /private
+    # layout (nextbsd#296) rootfs/etc is a symlink into private/etc; shipping the
+    # overlay under private/etc means this stays a plain dir-onto-dir merge
+    # (overlays/private -> rootfs/private, both real dirs) and never tries to
+    # `cp -aR` a directory onto the /etc symlink, which BSD cp rejects with
+    # "Not a directory". New /etc overlay files MUST go under overlays/private/etc.
+    cp -aR "$ROOT/overlays/." "$WORK/rootfs/"
+fi
+
 RUNTIME_PKGS=$(grep -v '^[[:space:]]*#' "$ROOT/pkglist.txt"        2>/dev/null | grep -v '^[[:space:]]*$' || true)
 DRIVER_PKGS=""  # re-enable: grep -v '^[[:space:]]*#' "$DRIVER_PKGS_FILE" 2>/dev/null | grep -v '^[[:space:]]*$' || true
 BUILD_PKGS=$(  grep -v '^[[:space:]]*#' "$ROOT/buildpkgs.txt"      2>/dev/null | grep -v '^[[:space:]]*$' || true)
@@ -2877,17 +2899,12 @@ mkdir -p "$WORK/rootfs/var/empty" 2>/dev/null || true
 #    unwanted shows up, drop the pkg from pkglist-base.txt rather
 #    than deleting files post-install.
 #
-if [ -d "$ROOT/overlays" ]; then
-    echo "==> applying overlays"
-    # The overlay tree mirrors the image's PHYSICAL layout, so /etc files live
-    # under overlays/private/etc (not overlays/etc). With the Apple /private
-    # layout (nextbsd#296) rootfs/etc is a symlink into private/etc; shipping the
-    # overlay under private/etc means this stays a plain dir-onto-dir merge
-    # (overlays/private -> rootfs/private, both real dirs) and never tries to
-    # `cp -aR` a directory onto the /etc symlink, which BSD cp rejects with
-    # "Not a directory". New /etc overlay files MUST go under overlays/private/etc.
-    cp -aR "$ROOT/overlays/." "$WORK/rootfs/"
-fi
+# NOTE: the overlay is now applied EARLIER — before the chroot pkg install —
+# so package post-install hooks find shipped /etc files (e.g. git ->
+# /etc/shells). See the "applying overlays (before pkg install)" block above.
+# It is intentionally NOT re-copied here, so pkg appends (git_shell ->
+# /etc/shells) survive. The /etc ownership + pwd_mkdb/cap_mkdb finalization
+# below still runs at this point, after the overlay and the builds.
 
 # Force root:wheel on the overlayed /etc. cp -aR preserves the build user's
 # uid (the freebsd-vm overlay files inherit it — same mechanism as the / chown
