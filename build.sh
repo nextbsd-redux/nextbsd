@@ -276,6 +276,17 @@ if [ -d "$ROOT/overlays" ]; then
     cp -aR "$ROOT/overlays/." "$WORK/rootfs/"
 fi
 
+# Finalize the overlay's /etc BEFORE pkg install so package post-install hooks
+# see a complete, correct /etc. pwd.db is already built above (line ~143) from
+# the same master.passwd, so here we add the two that weren't yet done before
+# pkg: force root:wheel (cp -aR preserved the build user's uid) and regenerate
+# login.conf.db. Host tools (chroot tools may not be fully in place this early,
+# same reason the master.passwd pwd_mkdb above is host-side). -H follows the
+# /etc -> private/etc symlink. Idempotent with the end-of-build finalization,
+# which still re-runs after pkg + the from-source builds.
+chown -RH 0:0 "$WORK/rootfs/etc"
+[ -f "$WORK/rootfs/etc/login.conf" ] && cap_mkdb "$WORK/rootfs/etc/login.conf"
+
 RUNTIME_PKGS=$(grep -v '^[[:space:]]*#' "$ROOT/pkglist.txt"        2>/dev/null | grep -v '^[[:space:]]*$' || true)
 DRIVER_PKGS=""  # re-enable: grep -v '^[[:space:]]*#' "$DRIVER_PKGS_FILE" 2>/dev/null | grep -v '^[[:space:]]*$' || true
 BUILD_PKGS=$(  grep -v '^[[:space:]]*#' "$ROOT/buildpkgs.txt"      2>/dev/null | grep -v '^[[:space:]]*$' || true)
