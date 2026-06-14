@@ -138,8 +138,8 @@ chmod 1777 "$WORK/rootfs/tmp" "$WORK/rootfs/var/tmp"
 chmod 644 "$WORK/rootfs/var/run/utx.active" \
           "$WORK/rootfs/var/log/utx.lastlogin" "$WORK/rootfs/var/log/utx.log"
 # user/group db so pkg's install chown(root:wheel) resolves names.
-cp "$ROOT/overlays/etc/master.passwd" "$WORK/rootfs/etc/master.passwd"
-cp "$ROOT/overlays/etc/group"         "$WORK/rootfs/etc/group"
+cp "$ROOT/overlays/private/etc/master.passwd" "$WORK/rootfs/etc/master.passwd"
+cp "$ROOT/overlays/private/etc/group"         "$WORK/rootfs/etc/group"
 pwd_mkdb -p -d "$WORK/rootfs/etc" "$WORK/rootfs/etc/master.passwd"
 # root's home dir. master.passwd points root at /root; without the directory
 # login falls back with "No home directory. Logging in with home = /".
@@ -153,7 +153,7 @@ echo "    cert.pem: $(grep -c 'BEGIN CERT' "$WORK/rootfs/etc/ssl/cert.pem" 2>/de
 # work (without these, name/service lookup fails -> pkg connects to a bad
 # address -> "Can't assign requested address"). nsswitch.conf=files+dns,
 # hosts=localhost, services=port names (https->443), protocols. Transient
-# build config (nextbsd's overlays/etc owns the shipped ones).
+# build config (nextbsd's overlays/private/etc owns the shipped ones).
 for f in nsswitch.conf hosts services protocols gettytab ttys; do
     [ -e "$WORK/rootfs/etc/$f" ] || cp -p "/etc/$f" "$WORK/rootfs/etc/$f" 2>/dev/null || true
 done
@@ -619,7 +619,7 @@ ls -lh "$WORK/rootfs/bin/sync" "$WORK/rootfs/bin/wait4path" \
        "$WORK/rootfs/usr/sbin/vipw"
 
 # Note: the earlier `pw usermod root -s /bin/sh` step is no longer
-# needed. overlays/etc/master.passwd already ships with /bin/sh as
+# needed. overlays/private/etc/master.passwd already ships with /bin/sh as
 # root's shell, applied later in the build via the overlay copy step.
 # (We previously needed pw usermod because FreeBSD-runtime's stock
 # master.passwd named /bin/csh and we dropped FreeBSD-csh.)
@@ -2844,7 +2844,7 @@ echo "==> sshd-mdns-register built + installed"
 # `make install-nokeys` re-creates it, so we do NOT chmod it: a chmod by
 # the non-root build user fails EPERM and aborts the build. Belt-and-
 # braces ensure it exists; never fatal. (sshd privsep user is in
-# overlays/etc/master.passwd.)
+# overlays/private/etc/master.passwd.)
 mkdir -p "$WORK/rootfs/var/empty" 2>/dev/null || true
 
 #
@@ -2856,23 +2856,14 @@ mkdir -p "$WORK/rootfs/var/empty" 2>/dev/null || true
 #
 if [ -d "$ROOT/overlays" ]; then
     echo "==> applying overlays"
-    # Merge per top-level entry instead of `cp -aR overlays/. rootfs/`. With the
-    # Apple /private layout (nextbsd#296) rootfs/etc is now a symlink into
-    # private/etc, and BSD `cp -aR srcdir/. dstdir/` aborts with "Not a
-    # directory" when it tries to merge a source directory (overlays/etc) onto a
-    # destination that is a symlink. Copying the overlay subdir's *contents* into
-    # "rootfs/<name>/" (trailing slash) makes cp resolve the symlink to its
-    # target dir first, so the files land in private/etc and the symlink stays
-    # intact. Non-symlinked entries (boot, usr, System) copy as before.
-    for _ov in "$ROOT/overlays"/* "$ROOT/overlays"/.[!.]*; do
-        [ -e "$_ov" ] || continue            # no-match globs expand literally
-        _name=$(basename "$_ov")
-        if [ -d "$_ov" ] && [ -L "$WORK/rootfs/$_name" ]; then
-            cp -aR "$_ov/." "$WORK/rootfs/$_name/"
-        else
-            cp -aR "$_ov" "$WORK/rootfs/"
-        fi
-    done
+    # The overlay tree mirrors the image's PHYSICAL layout, so /etc files live
+    # under overlays/private/etc (not overlays/etc). With the Apple /private
+    # layout (nextbsd#296) rootfs/etc is a symlink into private/etc; shipping the
+    # overlay under private/etc means this stays a plain dir-onto-dir merge
+    # (overlays/private -> rootfs/private, both real dirs) and never tries to
+    # `cp -aR` a directory onto the /etc symlink, which BSD cp rejects with
+    # "Not a directory". New /etc overlay files MUST go under overlays/private/etc.
+    cp -aR "$ROOT/overlays/." "$WORK/rootfs/"
 fi
 
 # Force root:wheel on the overlayed /etc. cp -aR preserves the build user's
@@ -2944,7 +2935,7 @@ EOF
 
 #
 # 6. assemble the bootable GPT disk image (BIOS + UEFI, rw UFS root).
-#    No /etc/fstab heredoc — overlays/etc/fstab carries the real root
+#    No /etc/fstab heredoc — overlays/private/etc/fstab carries the real root
 #    entry, and overlays/boot/loader.conf.d/ carries the loader
 #    settings. The kernel mounts the freebsd-ufs partition read-only;
 #    launchd PID 1 remounts it read-write before starting any daemon.
@@ -2983,7 +2974,7 @@ echo "==> [libscan] end"
 
 # 6a. root UFS — content plus ~1.5 GB read-write headroom. UFS label
 #     "ROOTFS" matches loader.conf.d's vfs.root.mountfrom and the
-#     overlays/etc/fstab entry. softupdates for crash resilience.
+#     overlays/private/etc/fstab entry. softupdates for crash resilience.
 # Ensure the root directory (and the SLE chain) is root:wheel so it bakes into
 # the image as uid/gid 0. Otherwise / inherits the build user's id and OSKext's
 # cache-dir walk warns "Can't create kext cache under / - owner not root."
