@@ -33,7 +33,7 @@ entirely differently than those original solutions.
 | A base DHCP client — `dhclient` (FreeBSD), `dhcpcd` (NetBSD), `dhcpleased` (OpenBSD) | **`ipconfigd`** (Darwin's IPConfiguration) handles DHCPv4 + ARP probing + lease renewal + publishes to `SCDynamicStore` |
 | `mdnsd` (if installed) for Bonjour | **Darwin's `mDNSResponder`** with its full client API |
 | Nothing equivalent | **`configd`** + `SCDynamicStore` — the system-wide key/value store every Darwin-source daemon expects |
-| Nothing equivalent | **Mach IPC** in-kernel via `mach.ko`, plus `libsystem_kernel` / `libdispatch` / `libxpc` / `liblaunch` / `libCoreFoundation` in userland |
+| Nothing equivalent | **Mach IPC** in-kernel, plus `libsystem_kernel` / `libdispatch` / `libxpc` / `liblaunch` / `libCoreFoundation` in userland |
 | `uname -s` names the upstream BSD; its own `*-version` tool | `uname -s` is **`NextBSD`**; **`nextbsd-version`** (see [Versioning](#versioning)) |
 
 ## Try it in 5 minutes
