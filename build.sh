@@ -97,6 +97,26 @@ fi
 echo "==> overlay-first: laying from-source base into $WORK/rootfs"
 mkdir -p "$WORK/rootfs"
 tar -xzf "$NEXTBSD_BASE_ARTIFACT" -C "$WORK/rootfs"
+# Apple /private layout (nextbsd#296): /private/{etc,var,tmp} are the REAL dirs
+# and /etc, /var, /tmp are relative symlinks into them, exactly as macOS lays
+# it out. Done FIRST so every /etc, /var, /tmp write below follows the symlinks
+# into /private. This makes launchd's hard-coded /private/var/... paths resolve
+# -- notably the launchctl -w job-overrides DB at
+# /private/var/db/launchd.db/com.apple.launchd, which otherwise errors on a
+# fresh image. Relative targets ("private/etc") resolve identically on the
+# build host and at runtime.
+mkdir -p "$WORK/rootfs/private"
+for _pd in etc var tmp; do
+    if [ -d "$WORK/rootfs/$_pd" ] && [ ! -L "$WORK/rootfs/$_pd" ]; then
+        mv "$WORK/rootfs/$_pd" "$WORK/rootfs/private/$_pd"   # relocate if shipped
+    else
+        mkdir -p "$WORK/rootfs/private/$_pd"
+    fi
+    ln -s "private/$_pd" "$WORK/rootfs/$_pd"
+done
+# Pre-create the launchd job-overrides DB dir (0755 root:wheel) so `launchctl -w`
+# works out of the box, no manual mkdir (nextbsd#296).
+mkdir -p "$WORK/rootfs/private/var/db/launchd.db/com.apple.launchd"
 # Minimal /etc + /var the in-chroot pkg needs (our artifact ships no /etc,/var).
 mkdir -p "$WORK/rootfs/etc/ssl" "$WORK/rootfs/etc/pkg" \
          "$WORK/rootfs/var/db/pkg" "$WORK/rootfs/var/cache/pkg" \
@@ -2844,7 +2864,10 @@ fi
 # in step 6a). A non-root-owned /etc/login.conf makes login(1)'s _secure_path()
 # reject it, which breaks login_getclass() -> "unknown class root" (nextbsd#293).
 # Do this BEFORE pwd_mkdb/cap_mkdb so the regenerated .db indices inherit it too.
-chown -R 0:0 "$WORK/rootfs/etc"
+# -H so the recursion follows the /etc -> private/etc symlink (Apple /private
+# layout, nextbsd#296); without it BSD chown -R defaults to -P and would only
+# touch the symlink, leaving /private/etc's contents unchowned.
+chown -RH 0:0 "$WORK/rootfs/etc"
 
 # rc.local needs to be executable
 [ -f "$WORK/rootfs/etc/rc.local" ] && chmod +x "$WORK/rootfs/etc/rc.local"
