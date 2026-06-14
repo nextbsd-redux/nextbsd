@@ -97,6 +97,26 @@ fi
 echo "==> overlay-first: laying from-source base into $WORK/rootfs"
 mkdir -p "$WORK/rootfs"
 tar -xzf "$NEXTBSD_BASE_ARTIFACT" -C "$WORK/rootfs"
+# Apple /private layout (nextbsd#296): /private/{etc,var,tmp} are the REAL dirs
+# and /etc, /var, /tmp are relative symlinks into them, exactly as macOS lays
+# it out. Done FIRST so every /etc, /var, /tmp write below follows the symlinks
+# into /private. This makes launchd's hard-coded /private/var/... paths resolve
+# -- notably the launchctl -w job-overrides DB at
+# /private/var/db/launchd.db/com.apple.launchd, which otherwise errors on a
+# fresh image. Relative targets ("private/etc") resolve identically on the
+# build host and at runtime.
+mkdir -p "$WORK/rootfs/private"
+for _pd in etc var tmp; do
+    if [ -d "$WORK/rootfs/$_pd" ] && [ ! -L "$WORK/rootfs/$_pd" ]; then
+        mv "$WORK/rootfs/$_pd" "$WORK/rootfs/private/$_pd"   # relocate if shipped
+    else
+        mkdir -p "$WORK/rootfs/private/$_pd"
+    fi
+    ln -s "private/$_pd" "$WORK/rootfs/$_pd"
+done
+# Pre-create the launchd job-overrides DB dir (0755 root:wheel) so `launchctl -w`
+# works out of the box, no manual mkdir (nextbsd#296).
+mkdir -p "$WORK/rootfs/private/var/db/launchd.db/com.apple.launchd"
 # Minimal /etc + /var the in-chroot pkg needs (our artifact ships no /etc,/var).
 mkdir -p "$WORK/rootfs/etc/ssl" "$WORK/rootfs/etc/pkg" \
          "$WORK/rootfs/var/db/pkg" "$WORK/rootfs/var/cache/pkg" \
@@ -118,8 +138,8 @@ chmod 1777 "$WORK/rootfs/tmp" "$WORK/rootfs/var/tmp"
 chmod 644 "$WORK/rootfs/var/run/utx.active" \
           "$WORK/rootfs/var/log/utx.lastlogin" "$WORK/rootfs/var/log/utx.log"
 # user/group db so pkg's install chown(root:wheel) resolves names.
-cp "$ROOT/overlays/etc/master.passwd" "$WORK/rootfs/etc/master.passwd"
-cp "$ROOT/overlays/etc/group"         "$WORK/rootfs/etc/group"
+cp "$ROOT/overlays/private/etc/master.passwd" "$WORK/rootfs/etc/master.passwd"
+cp "$ROOT/overlays/private/etc/group"         "$WORK/rootfs/etc/group"
 pwd_mkdb -p -d "$WORK/rootfs/etc" "$WORK/rootfs/etc/master.passwd"
 # root's home dir. master.passwd points root at /root; without the directory
 # login falls back with "No home directory. Logging in with home = /".
@@ -133,7 +153,7 @@ echo "    cert.pem: $(grep -c 'BEGIN CERT' "$WORK/rootfs/etc/ssl/cert.pem" 2>/de
 # work (without these, name/service lookup fails -> pkg connects to a bad
 # address -> "Can't assign requested address"). nsswitch.conf=files+dns,
 # hosts=localhost, services=port names (https->443), protocols. Transient
-# build config (nextbsd's overlays/etc owns the shipped ones).
+# build config (nextbsd's overlays/private/etc owns the shipped ones).
 for f in nsswitch.conf hosts services protocols gettytab ttys; do
     [ -e "$WORK/rootfs/etc/$f" ] || cp -p "/etc/$f" "$WORK/rootfs/etc/$f" 2>/dev/null || true
 done
@@ -599,7 +619,7 @@ ls -lh "$WORK/rootfs/bin/sync" "$WORK/rootfs/bin/wait4path" \
        "$WORK/rootfs/usr/sbin/vipw"
 
 # Note: the earlier `pw usermod root -s /bin/sh` step is no longer
-# needed. overlays/etc/master.passwd already ships with /bin/sh as
+# needed. overlays/private/etc/master.passwd already ships with /bin/sh as
 # root's shell, applied later in the build via the overlay copy step.
 # (We previously needed pw usermod because FreeBSD-runtime's stock
 # master.passwd named /bin/csh and we dropped FreeBSD-csh.)
@@ -2824,7 +2844,7 @@ echo "==> sshd-mdns-register built + installed"
 # `make install-nokeys` re-creates it, so we do NOT chmod it: a chmod by
 # the non-root build user fails EPERM and aborts the build. Belt-and-
 # braces ensure it exists; never fatal. (sshd privsep user is in
-# overlays/etc/master.passwd.)
+# overlays/private/etc/master.passwd.)
 mkdir -p "$WORK/rootfs/var/empty" 2>/dev/null || true
 
 #
@@ -2836,6 +2856,13 @@ mkdir -p "$WORK/rootfs/var/empty" 2>/dev/null || true
 #
 if [ -d "$ROOT/overlays" ]; then
     echo "==> applying overlays"
+    # The overlay tree mirrors the image's PHYSICAL layout, so /etc files live
+    # under overlays/private/etc (not overlays/etc). With the Apple /private
+    # layout (nextbsd#296) rootfs/etc is a symlink into private/etc; shipping the
+    # overlay under private/etc means this stays a plain dir-onto-dir merge
+    # (overlays/private -> rootfs/private, both real dirs) and never tries to
+    # `cp -aR` a directory onto the /etc symlink, which BSD cp rejects with
+    # "Not a directory". New /etc overlay files MUST go under overlays/private/etc.
     cp -aR "$ROOT/overlays/." "$WORK/rootfs/"
 fi
 
@@ -2844,7 +2871,10 @@ fi
 # in step 6a). A non-root-owned /etc/login.conf makes login(1)'s _secure_path()
 # reject it, which breaks login_getclass() -> "unknown class root" (nextbsd#293).
 # Do this BEFORE pwd_mkdb/cap_mkdb so the regenerated .db indices inherit it too.
-chown -R 0:0 "$WORK/rootfs/etc"
+# -H so the recursion follows the /etc -> private/etc symlink (Apple /private
+# layout, nextbsd#296); without it BSD chown -R defaults to -P and would only
+# touch the symlink, leaving /private/etc's contents unchowned.
+chown -RH 0:0 "$WORK/rootfs/etc"
 
 # rc.local needs to be executable
 [ -f "$WORK/rootfs/etc/rc.local" ] && chmod +x "$WORK/rootfs/etc/rc.local"
@@ -2905,7 +2935,7 @@ EOF
 
 #
 # 6. assemble the bootable GPT disk image (BIOS + UEFI, rw UFS root).
-#    No /etc/fstab heredoc — overlays/etc/fstab carries the real root
+#    No /etc/fstab heredoc — overlays/private/etc/fstab carries the real root
 #    entry, and overlays/boot/loader.conf.d/ carries the loader
 #    settings. The kernel mounts the freebsd-ufs partition read-only;
 #    launchd PID 1 remounts it read-write before starting any daemon.
@@ -2944,7 +2974,7 @@ echo "==> [libscan] end"
 
 # 6a. root UFS — content plus ~1.5 GB read-write headroom. UFS label
 #     "ROOTFS" matches loader.conf.d's vfs.root.mountfrom and the
-#     overlays/etc/fstab entry. softupdates for crash resilience.
+#     overlays/private/etc/fstab entry. softupdates for crash resilience.
 # Ensure the root directory (and the SLE chain) is root:wheel so it bakes into
 # the image as uid/gid 0. Otherwise / inherits the build user's id and OSKext's
 # cache-dir walk warns "Can't create kext cache under / - owner not root."
