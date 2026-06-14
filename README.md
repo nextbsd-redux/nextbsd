@@ -147,8 +147,7 @@ pkg info
                                             +------------------+
 ```
 
-All of these talk to each other over **Mach IPC** (in-kernel via
-`mach.ko`, in userland via `libsystem_kernel.so`). All the daemons
+All of these talk to each other over **Mach IPC** (in-kernel), in userland via `libsystem_kernel.so`). All the daemons
 that need a property-list store talk to `configd`'s `SCDynamicStore`
 via `libSystemConfiguration.so`.
 
