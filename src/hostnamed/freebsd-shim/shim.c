@@ -128,25 +128,57 @@ sh_sanitize_slug(char *s)
 	return (j);
 }
 
-static void
-sh_derive_slug(char *out, size_t outsz)
+/*
+ * An SMBIOS field is "identifying" only if it carries at least one
+ * letter. Real OEMs put the model name in smbios.system.version
+ * (e.g. "ThinkPad T460s"), but synthetic firmware such as VirtualBox
+ * stuffs the bare SMBIOS table revision there ("1.2"), which sanitizes
+ * to the useless slug "1-2". A model name always contains an alpha
+ * character; a dotted revision never does — so a single isalpha scan
+ * cleanly separates the two without hard-coding vendor strings.
+ */
+static int
+sh_value_is_identifying(const char *raw)
+{
+	size_t i;
+
+	if (raw == NULL)
+		return (0);
+	for (i = 0; raw[i] != '\0'; i++) {
+		if (isalpha((unsigned char)raw[i]))
+			return (1);
+	}
+	return (0);
+}
+
+static int
+sh_try_kenv_slug(const char *key, char *out, size_t outsz)
 {
 	char buf[256];
 
-	if (sh_read_kenv("smbios.system.version", buf, sizeof(buf)) > 0) {
-		(void)strncpy(out, buf, outsz - 1);
-		out[outsz - 1] = '\0';
-		(void)sh_sanitize_slug(out);
-		if (out[0] != '\0')
-			return;
-	}
-	if (sh_read_kenv("smbios.system.product", buf, sizeof(buf)) > 0) {
-		(void)strncpy(out, buf, outsz - 1);
-		out[outsz - 1] = '\0';
-		(void)sh_sanitize_slug(out);
-		if (out[0] != '\0')
-			return;
-	}
+	if (sh_read_kenv(key, buf, sizeof(buf)) <= 0)
+		return (0);
+	if (!sh_value_is_identifying(buf))
+		return (0);
+	(void)strncpy(out, buf, outsz - 1);
+	out[outsz - 1] = '\0';
+	(void)sh_sanitize_slug(out);
+	return (out[0] != '\0');
+}
+
+static void
+sh_derive_slug(char *out, size_t outsz)
+{
+	/*
+	 * Prefer the model name in smbios.system.version, but skip it when
+	 * it is a non-identifying revision (e.g. VirtualBox's "1.2") and
+	 * fall through to smbios.system.product ("VirtualBox"). "freebsd"
+	 * is the last resort.
+	 */
+	if (sh_try_kenv_slug("smbios.system.version", out, outsz))
+		return;
+	if (sh_try_kenv_slug("smbios.system.product", out, outsz))
+		return;
 	(void)strncpy(out, "freebsd", outsz - 1);
 	out[outsz - 1] = '\0';
 }
