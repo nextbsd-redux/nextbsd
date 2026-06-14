@@ -5,7 +5,7 @@ uses open source components from Darwin: **`launchd` runs as PID 1**, services
 are described by `.plist` files, hardware events flow through an in-kernel
 IOKit registry over a Mach-IPC bus, and the network stack is configured by
 the `IPConfiguration` daemon talking to `configd`. It is built on
-the FreeBSD 15 kernel and ELF userland — rebranded as NextBSD (`uname -s` is
+the FreeBSD kernel — rebranded as NextBSD (`uname -s` is
 `NextBSD`) — with ports of Darwin command-line tools making up the majority of
 the userland.
 
