@@ -13,6 +13,14 @@ If you just want to try it, jump to [Try it in 5 minutes](#try-it-in-5-minutes).
 If you want the long technical answer to *what got ported and how*,
 see [PORTING.md](PORTING.md).
 
+## Heritage
+
+This project is a re-implementation of the original
+[NextBSD](https://github.com/NextBSD/NextBSD), not a fork of it. It is built
+entirely differently than those original solutions. It reuses some of the
+original's solutions, such as `libxpc`, and those carry enhancements from
+[RavynOS](https://ravynos.com).
+
 ## What's different from other BSDs?
 
 | Other BSDs | NextBSD |
@@ -203,13 +211,6 @@ each with a matching `.sha256`. The latest is always at that tag.
   rationale.
 - **[Issues](https://github.com/nextbsd-redux/nextbsd/issues)**
   — open work items, scoping questions, planned ports.
-
-## Heritage
-
-This project is a re-implementation of the original
-[NextBSD](https://github.com/NextBSD/NextBSD), not a fork of it — but it
-doesn't reinvent everything. It reuses some of the original's solutions, such
-as `libxpc`, and those carry enhancements from [RavynOS](https://ravynos.com).
 
 ## License
 
