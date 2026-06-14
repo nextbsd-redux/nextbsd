@@ -91,10 +91,10 @@ jobs:
       matrix:
         # `freebsd` is what vmactions/freebsd-vm expects as its release
         # tag (a bare "15.0" — it doesn't accept "-RELEASE" / "-STABLE"
-        # suffixes). `variant` is what build.sh + the driverpkgs-*.txt
-        # filename use to distinguish release trains (15.0-RELEASE vs.
-        # 15-STABLE vs. 16.0-CURRENT). The matrix entries below pair
-        # them; add a new include block when vmactions gains support
+        # suffixes). `variant` distinguishes release trains (15.0-RELEASE
+        # vs. 15-STABLE vs. 16.0-CURRENT); build.sh reports it and the
+        # distfiles cache key below is keyed on it. The matrix entries below
+        # pair them; add a new include block when vmactions gains support
         # for snapshot builds or when CI gains a non-vmactions runner.
         include:
           - freebsd: '15.0'
@@ -118,7 +118,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: distfiles
-          key: distfiles-${{ matrix.variant }}-${{ matrix.arch }}-${{ hashFiles('pkglist.txt', format('driverpkgs-{0}.txt', matrix.variant)) }}
+          key: distfiles-${{ matrix.variant }}-${{ matrix.arch }}-${{ hashFiles('pkglist.txt') }}
 
       # Compute the datestamp once on the host and pass it into the VM, so
       # the built file (NextBSD-<arch>-<date>.img.zip), the workflow

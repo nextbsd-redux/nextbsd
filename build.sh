@@ -227,38 +227,53 @@ echo "    /bin/sh -> $(readlink "$WORK/rootfs/bin/sh" 2>/dev/null || echo real) 
 #    work; only the install/purge plumbing lives here — no inline build
 #    recipe (the previous gershwin/GNUstep build was removed).
 #
-# Driver kmod list is variant-keyed so different FreeBSD release trains
-# can pin the right kmod versions (drm-66-kmod for 15.0-RELEASE vs.
-# drm-latest-kmod for 15-STABLE / 16.0-CURRENT — the kernel DRM-KPI
-# only crosses the drm-latest threshold at __FreeBSD_version 1500509+).
-# Default to "${FREEBSD_VERSION}-RELEASE" so a bare FREEBSD_VERSION=15.0
-# (the matrix shape vmactions expects) resolves to driverpkgs-15.0-
-# RELEASE.txt without the caller having to set FREEBSD_VARIANT.
+# FREEBSD_VARIANT names the release train (15.0-RELEASE, 15-STABLE,
+# 16.0-CURRENT); the CI workflow keys its caches/artifacts on it. Default to
+# "${FREEBSD_VERSION}-RELEASE" so a bare FREEBSD_VERSION=15.0 (the matrix shape
+# vmactions expects) resolves without the caller having to set FREEBSD_VARIANT.
 : "${FREEBSD_VARIANT:=${FREEBSD_VERSION}-RELEASE}"
 
-# DRIVER_PKGS — driver kmod install path (drm-66-kmod, nvidia-drm-kmod,
-# gpu-firmware-kmod, realtek-re-kmod, utouch-kmod, wifi-firmware-kmod).
-# Temporarily disabled to trim CI build time — the firmware+kmod set
-# adds several minutes per run to the chroot pkg install, and CI's
-# QEMU/SLIRP target doesn't exercise any of them. The in-kernel
-# matcher (#211) auto-loads any module that lives in /boot/modules; the
-# missing packages just mean those modules aren't present in the
-# rootfs at all on CI builds. Real-hardware images can re-enable by
-# uncommenting the validation + grep block below.
-#DRIVER_PKGS_FILE="$ROOT/driverpkgs-${FREEBSD_VARIANT}.txt"
-#if [ ! -f "$DRIVER_PKGS_FILE" ]; then
-#    echo "ERROR: driver pkglist for FREEBSD_VARIANT=$FREEBSD_VARIANT not found" >&2
-#    echo "       expected: $DRIVER_PKGS_FILE" >&2
-#    echo "       create one or set FREEBSD_VARIANT to an existing variant" >&2
-#    ls -1 "$ROOT"/driverpkgs-*.txt 2>/dev/null | sed 's|.*/||; s|^|       available: |' >&2
-#    exit 1
-#fi
+# Driver kmod packages (the old driverpkgs-*.txt) were removed: drivers now
+# ship as kexts auto-loaded by the in-kernel matcher (#211), not as ports
+# kmod packages installed here. Nothing driver-related is pkg-installed.
+
+# Apply the overlay BEFORE installing packages, so package post-install
+# scripts find the config files we ship. e.g. git's post-install hook
+# appends to /etc/shells (overlays/private/etc/shells); when the overlay was
+# applied AFTER pkg install (historically), that hook failed with
+# "/etc/shells: No such file or directory". Applying it here also means any
+# pkg that appends to a shipped /etc file (git -> /etc/shells) keeps its
+# addition, because the overlay is no longer re-copied later. Safe to apply
+# early: the overlay ships only /System, /private, /boot and a few /usr files
+# (none under /usr/local where ports install, and nothing any later pkg or
+# from-source build step writes), so it is not clobbered by what follows.
+if [ -d "$ROOT/overlays" ]; then
+    echo "==> applying overlays (before pkg install)"
+    # The overlay tree mirrors the image's PHYSICAL layout, so /etc files live
+    # under overlays/private/etc (not overlays/etc). With the Apple /private
+    # layout (nextbsd#296) rootfs/etc is a symlink into private/etc; shipping the
+    # overlay under private/etc means this stays a plain dir-onto-dir merge
+    # (overlays/private -> rootfs/private, both real dirs) and never tries to
+    # `cp -aR` a directory onto the /etc symlink, which BSD cp rejects with
+    # "Not a directory". New /etc overlay files MUST go under overlays/private/etc.
+    cp -aR "$ROOT/overlays/." "$WORK/rootfs/"
+fi
+
+# Finalize the overlay's /etc BEFORE pkg install so package post-install hooks
+# see a complete, correct /etc. pwd.db is already built above (line ~143) from
+# the same master.passwd, so here we add the two that weren't yet done before
+# pkg: force root:wheel (cp -aR preserved the build user's uid) and regenerate
+# login.conf.db. Host tools (chroot tools may not be fully in place this early,
+# same reason the master.passwd pwd_mkdb above is host-side). -H follows the
+# /etc -> private/etc symlink. Idempotent with the end-of-build finalization,
+# which still re-runs after pkg + the from-source builds.
+chown -RH 0:0 "$WORK/rootfs/etc"
+[ -f "$WORK/rootfs/etc/login.conf" ] && cap_mkdb "$WORK/rootfs/etc/login.conf"
 
 RUNTIME_PKGS=$(grep -v '^[[:space:]]*#' "$ROOT/pkglist.txt"        2>/dev/null | grep -v '^[[:space:]]*$' || true)
-DRIVER_PKGS=""  # re-enable: grep -v '^[[:space:]]*#' "$DRIVER_PKGS_FILE" 2>/dev/null | grep -v '^[[:space:]]*$' || true
 BUILD_PKGS=$(  grep -v '^[[:space:]]*#' "$ROOT/buildpkgs.txt"      2>/dev/null | grep -v '^[[:space:]]*$' || true)
 
-if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
+if [ -n "$RUNTIME_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
     cp /etc/resolv.conf "$WORK/rootfs/etc/resolv.conf"
     mount -t devfs devfs "$WORK/rootfs/dev"
     cleanup_chroot() {
@@ -286,24 +301,16 @@ if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
     chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes IGNORE_OSVERSION=yes \
         ABI="${PKG_ABI}" pkg bootstrap -f
 
-    # Single combined install for runtime + drivers so the dep solver
-    # runs once. Drivers are logged as their own category for clarity,
-    # but go through the same pkg install. Both stay in the rootfs
-    # (only buildpkgs are purged later).
-    if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ]; then
+    # Install the runtime packages (pkglist.txt). They stay in the rootfs;
+    # only buildpkgs are purged later.
+    if [ -n "$RUNTIME_PKGS" ]; then
         echo "==> installing runtime packages:"
-        if [ -n "$RUNTIME_PKGS" ]; then
-            echo "$RUNTIME_PKGS" | sed 's/^/    runtime  /'
-        fi
-        if [ -n "$DRIVER_PKGS" ]; then
-            echo "$DRIVER_PKGS" | sed 's/^/    driver   /'
-        fi
+        echo "$RUNTIME_PKGS" | sed 's/^/    runtime  /'
         # shellcheck disable=SC2086
         chroot "$WORK/rootfs" env \
             ASSUME_ALWAYS_YES=yes \
             IGNORE_OSVERSION=yes \
-            LICENSES_ACCEPTED=NVIDIA \
-            pkg install -y $RUNTIME_PKGS $DRIVER_PKGS
+            pkg install -y $RUNTIME_PKGS
 
         # Pin FreeBSD-pam* against pkg autoremove (PAM port iter 3,
         # issue #97). We dropped them from pkglist-base.txt but pkg
@@ -2877,17 +2884,12 @@ mkdir -p "$WORK/rootfs/var/empty" 2>/dev/null || true
 #    unwanted shows up, drop the pkg from pkglist-base.txt rather
 #    than deleting files post-install.
 #
-if [ -d "$ROOT/overlays" ]; then
-    echo "==> applying overlays"
-    # The overlay tree mirrors the image's PHYSICAL layout, so /etc files live
-    # under overlays/private/etc (not overlays/etc). With the Apple /private
-    # layout (nextbsd#296) rootfs/etc is a symlink into private/etc; shipping the
-    # overlay under private/etc means this stays a plain dir-onto-dir merge
-    # (overlays/private -> rootfs/private, both real dirs) and never tries to
-    # `cp -aR` a directory onto the /etc symlink, which BSD cp rejects with
-    # "Not a directory". New /etc overlay files MUST go under overlays/private/etc.
-    cp -aR "$ROOT/overlays/." "$WORK/rootfs/"
-fi
+# NOTE: the overlay is now applied EARLIER — before the chroot pkg install —
+# so package post-install hooks find shipped /etc files (e.g. git ->
+# /etc/shells). See the "applying overlays (before pkg install)" block above.
+# It is intentionally NOT re-copied here, so pkg appends (git_shell ->
+# /etc/shells) survive. The /etc ownership + pwd_mkdb/cap_mkdb finalization
+# below still runs at this point, after the overlay and the builds.
 
 # Force root:wheel on the overlayed /etc. cp -aR preserves the build user's
 # uid (the freebsd-vm overlay files inherit it — same mechanism as the / chown
