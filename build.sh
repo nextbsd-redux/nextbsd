@@ -227,32 +227,15 @@ echo "    /bin/sh -> $(readlink "$WORK/rootfs/bin/sh" 2>/dev/null || echo real) 
 #    work; only the install/purge plumbing lives here — no inline build
 #    recipe (the previous gershwin/GNUstep build was removed).
 #
-# Driver kmod list is variant-keyed so different FreeBSD release trains
-# can pin the right kmod versions (drm-66-kmod for 15.0-RELEASE vs.
-# drm-latest-kmod for 15-STABLE / 16.0-CURRENT — the kernel DRM-KPI
-# only crosses the drm-latest threshold at __FreeBSD_version 1500509+).
-# Default to "${FREEBSD_VERSION}-RELEASE" so a bare FREEBSD_VERSION=15.0
-# (the matrix shape vmactions expects) resolves to driverpkgs-15.0-
-# RELEASE.txt without the caller having to set FREEBSD_VARIANT.
+# FREEBSD_VARIANT names the release train (15.0-RELEASE, 15-STABLE,
+# 16.0-CURRENT); the CI workflow keys its caches/artifacts on it. Default to
+# "${FREEBSD_VERSION}-RELEASE" so a bare FREEBSD_VERSION=15.0 (the matrix shape
+# vmactions expects) resolves without the caller having to set FREEBSD_VARIANT.
 : "${FREEBSD_VARIANT:=${FREEBSD_VERSION}-RELEASE}"
 
-# DRIVER_PKGS — driver kmod install path (drm-66-kmod, nvidia-drm-kmod,
-# gpu-firmware-kmod, realtek-re-kmod, utouch-kmod, wifi-firmware-kmod).
-# Temporarily disabled to trim CI build time — the firmware+kmod set
-# adds several minutes per run to the chroot pkg install, and CI's
-# QEMU/SLIRP target doesn't exercise any of them. The in-kernel
-# matcher (#211) auto-loads any module that lives in /boot/modules; the
-# missing packages just mean those modules aren't present in the
-# rootfs at all on CI builds. Real-hardware images can re-enable by
-# uncommenting the validation + grep block below.
-#DRIVER_PKGS_FILE="$ROOT/driverpkgs-${FREEBSD_VARIANT}.txt"
-#if [ ! -f "$DRIVER_PKGS_FILE" ]; then
-#    echo "ERROR: driver pkglist for FREEBSD_VARIANT=$FREEBSD_VARIANT not found" >&2
-#    echo "       expected: $DRIVER_PKGS_FILE" >&2
-#    echo "       create one or set FREEBSD_VARIANT to an existing variant" >&2
-#    ls -1 "$ROOT"/driverpkgs-*.txt 2>/dev/null | sed 's|.*/||; s|^|       available: |' >&2
-#    exit 1
-#fi
+# Driver kmod packages (the old driverpkgs-*.txt) were removed: drivers now
+# ship as kexts auto-loaded by the in-kernel matcher (#211), not as ports
+# kmod packages installed here. Nothing driver-related is pkg-installed.
 
 # Apply the overlay BEFORE installing packages, so package post-install
 # scripts find the config files we ship. e.g. git's post-install hook
@@ -288,10 +271,9 @@ chown -RH 0:0 "$WORK/rootfs/etc"
 [ -f "$WORK/rootfs/etc/login.conf" ] && cap_mkdb "$WORK/rootfs/etc/login.conf"
 
 RUNTIME_PKGS=$(grep -v '^[[:space:]]*#' "$ROOT/pkglist.txt"        2>/dev/null | grep -v '^[[:space:]]*$' || true)
-DRIVER_PKGS=""  # re-enable: grep -v '^[[:space:]]*#' "$DRIVER_PKGS_FILE" 2>/dev/null | grep -v '^[[:space:]]*$' || true
 BUILD_PKGS=$(  grep -v '^[[:space:]]*#' "$ROOT/buildpkgs.txt"      2>/dev/null | grep -v '^[[:space:]]*$' || true)
 
-if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
+if [ -n "$RUNTIME_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
     cp /etc/resolv.conf "$WORK/rootfs/etc/resolv.conf"
     mount -t devfs devfs "$WORK/rootfs/dev"
     cleanup_chroot() {
@@ -319,24 +301,16 @@ if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
     chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes IGNORE_OSVERSION=yes \
         ABI="${PKG_ABI}" pkg bootstrap -f
 
-    # Single combined install for runtime + drivers so the dep solver
-    # runs once. Drivers are logged as their own category for clarity,
-    # but go through the same pkg install. Both stay in the rootfs
-    # (only buildpkgs are purged later).
-    if [ -n "$RUNTIME_PKGS" ] || [ -n "$DRIVER_PKGS" ]; then
+    # Install the runtime packages (pkglist.txt). They stay in the rootfs;
+    # only buildpkgs are purged later.
+    if [ -n "$RUNTIME_PKGS" ]; then
         echo "==> installing runtime packages:"
-        if [ -n "$RUNTIME_PKGS" ]; then
-            echo "$RUNTIME_PKGS" | sed 's/^/    runtime  /'
-        fi
-        if [ -n "$DRIVER_PKGS" ]; then
-            echo "$DRIVER_PKGS" | sed 's/^/    driver   /'
-        fi
+        echo "$RUNTIME_PKGS" | sed 's/^/    runtime  /'
         # shellcheck disable=SC2086
         chroot "$WORK/rootfs" env \
             ASSUME_ALWAYS_YES=yes \
             IGNORE_OSVERSION=yes \
-            LICENSES_ACCEPTED=NVIDIA \
-            pkg install -y $RUNTIME_PKGS $DRIVER_PKGS
+            pkg install -y $RUNTIME_PKGS
 
         # Pin FreeBSD-pam* against pkg autoremove (PAM port iter 3,
         # issue #97). We dropped them from pkglist-base.txt but pkg
