@@ -2624,7 +2624,28 @@ cc -fblocks \
    -ldns_sd -lsystem_kernel -lpthread
 test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hostnamedmdnsset" \
     || { echo "FAIL: hostnamedmdnsset not built"; exit 1; }
-echo "==> hostnamed + hostnametest + hostnameprefset + hostnamedhcpset + hostnamedmdnsset built"
+
+# hostnamedbonjourset — iter 5 (#156) CI fixture. Registers an
+# authoritative, UNIQUE A record for <fixture>.local (192.0.2.1, an
+# RFC 5737 TEST-NET address that won't match a real interface, so the
+# records conflict rather than coalesce), holds it open, and lets the
+# daemon's later probe for the same name collide -> mDNSCore renames the
+# daemon host label to <fixture>-2. Same -fblocks + CF/SC + -ldns_sd
+# linkage as the iter 3b fixture.
+echo "==> building hostnamedbonjourset"
+cc -fblocks \
+   -I"$WORK/rootfs/usr/include" \
+   -I"$ROOT/src/launchd/liblaunch" \
+   -I"$ROOT/src/launchd/freebsd-shims" \
+   -L"$WORK/rootfs/usr/lib/system" \
+   -Wl,-rpath,/usr/lib/system -Wl,--allow-shlib-undefined \
+   -o "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hostnamedbonjourset" \
+   "$ROOT/src/hostnamed/hostnamedbonjourset.c" \
+   -lSystemConfiguration -lCoreFoundation -ldispatch -lBlocksRuntime \
+   -ldns_sd -lsystem_kernel -lpthread
+test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/hostnamedbonjourset" \
+    || { echo "FAIL: hostnamedbonjourset not built"; exit 1; }
+echo "==> hostnamed + hostnametest + hostnameprefset + hostnamedhcpset + hostnamedmdnsset + hostnamedbonjourset built"
 
 #
 # 3y2. PAM port iter 1 — vendor Apple OpenPAM (issue #93). Builds

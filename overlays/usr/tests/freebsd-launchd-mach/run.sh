@@ -1639,6 +1639,71 @@ else
     echo "HOSTNAMED-MDNS-FAIL: hostnamedmdnsset binary not installed"
 fi
 
+# ROUND 5: Bonjour conflict-rename feedback (#156). Background
+# hostnamedbonjourset to claim <fixture>.local (authoritative UNIQUE A
+# record). Then set SCPrefs ComputerName=<fixture>: prefs_monitor
+# republishes Setup:/Network/HostNames, mDNSConfigStore (iter-5 watch on
+# the Setup: key) re-adopts <fixture> and re-probes <fixture>.local, which
+# the fixture already owns -> mDNSCore renames the daemon host label to
+# <fixture>-2 and PosixDaemon.c publishes it to State:/Network/HostNames.
+# hostnamed's observer persists <fixture>-2 to SCPrefs ComputerName, which
+# flows back through prefs_monitor + set-hostname.c to the kernel hostname.
+echo "==> hostnamed ROUND 5 (Bonjour conflict-rename)"
+HOSTNAMED_BONJOUR_FIXTURE="hostnamed-iter5-fixture"
+HOSTNAMED_BONJOUR_RESOLVED="${HOSTNAMED_BONJOUR_FIXTURE}-2"
+if [ -x /usr/tests/freebsd-launchd-mach/hostnamedhcpset ]; then
+    /usr/tests/freebsd-launchd-mach/hostnamedhcpset --clear || true
+fi
+if [ -x /usr/tests/freebsd-launchd-mach/hostnamedbonjourset ] && \
+   [ -x /usr/tests/freebsd-launchd-mach/hostnameprefset ]; then
+    /usr/tests/freebsd-launchd-mach/hostnamedbonjourset \
+        "$HOSTNAMED_BONJOUR_FIXTURE" > /var/log/hostnamedbonjourset.stdout \
+        2> /var/log/hostnamedbonjourset.stderr &
+    HOSTNAMED_BONJOURSET_PID=$!
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        if grep -q "BONJOURSET-READY" \
+            /var/log/hostnamedbonjourset.stdout 2>/dev/null; then
+            break
+        fi
+        sleep 1
+    done
+    echo "--- /var/log/hostnamedbonjourset.stdout ---"
+    cat /var/log/hostnamedbonjourset.stdout 2>/dev/null
+    echo "--- /var/log/hostnamedbonjourset.stderr ---"
+    cat /var/log/hostnamedbonjourset.stderr 2>/dev/null
+    echo "--- end hostnamedbonjourset logs ---"
+    if grep -q "BONJOURSET-READY" \
+        /var/log/hostnamedbonjourset.stdout 2>/dev/null; then
+        # The fixture owns <fixture>.local. Now make the daemon want that
+        # same name; its probe will collide and mDNSCore will rename it.
+        /usr/tests/freebsd-launchd-mach/hostnameprefset \
+            "$HOSTNAMED_BONJOUR_FIXTURE"
+        # Poll up to 15s for the full round-trip (probe + conflict-rename +
+        # State: publish + observer persist + prefs republish + sethostname)
+        # to converge on the -2 suffix, rather than a fixed sleep.
+        for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+            if [ "$(hostname 2>/dev/null)" = \
+                "$HOSTNAMED_BONJOUR_RESOLVED" ]; then
+                break
+            fi
+            sleep 1
+        done
+        hostnamed_dump_log "ROUND 5"
+        echo "    kernel hostname = '$(hostname 2>/dev/null)' " \
+            "(expected '$HOSTNAMED_BONJOUR_RESOLVED')"
+        /usr/tests/freebsd-launchd-mach/hostnametest \
+            "$HOSTNAMED_BONJOUR_RESOLVED" BONJOUR-RENAME
+    else
+        echo "HOSTNAMED-BONJOUR-RENAME-FAIL: hostnamedbonjourset never" \
+            "reached READY (could not claim <fixture>.local)"
+    fi
+    kill "$HOSTNAMED_BONJOURSET_PID" 2>/dev/null || true
+    wait "$HOSTNAMED_BONJOURSET_PID" 2>/dev/null || true
+else
+    echo "HOSTNAMED-BONJOUR-RENAME-FAIL: hostnamedbonjourset or" \
+        "hostnameprefset binary not installed"
+fi
+
 echo "==> hostnamed: persistent daemon liveness POST-rounds check"
 echo "    pgrep -x hostnamed -> $(pgrep -x hostnamed 2>/dev/null || echo MISSING)"
 echo "--- /var/log/hostnamed.stderr (last 40 lines, post-rounds) ---"

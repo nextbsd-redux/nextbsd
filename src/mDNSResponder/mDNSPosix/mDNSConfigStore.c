@@ -19,10 +19,13 @@
  *     re-walk its interface list, open / close mDNS sockets for the
  *     newly-bound / newly-gone interfaces.
  *
- *   - key State:/Network/HostNames — fires when prefs_monitor (in
- *     hostnamed) republishes Setup:/Network/HostNames after SCPrefs
- *     ComputerName changes; mDNSResponder should re-announce its
- *     Bonjour records under the new LocalHostName.
+ *   - key Setup:/Network/HostNames — fires when prefs_monitor (in
+ *     hostnamed) republishes it after an SCPrefs ComputerName change;
+ *     mDNSResponder re-adopts the new LocalHostName and re-announces its
+ *     Bonjour records under it. (Through iter 4 this watched
+ *     State:/Network/HostNames, which nothing ever writes, so the
+ *     recompute was dormant; iter 5 / #156 repoints it at the Setup:
+ *     key that prefs_monitor actually writes.)
  *
  *   - key State:/Network/Global/IPv4 — fires when ipconfigd selects a
  *     new primary service / interface. mDNSResponder should re-pick
@@ -46,6 +49,20 @@
  * (InterfaceChangeCallback in mDNSPosix.c) already drives. Both
  * triggers firing in parallel stays fine — the interface walk is
  * idempotent.
+ *
+ * iter 5 (#156): Bonjour conflict-rename feedback. Two changes. (1) The
+ * HostNames watch moves from State: to Setup:/Network/HostNames (the key
+ * prefs_monitor actually writes), so a ComputerName/LocalHostName change
+ * re-probes the new dot-local name. (2) When mDNSCore's conflict-rename
+ * (mDNS_HostNameCallback -> IncrementLabelSuffix) bumps m->hostlabel to
+ * "<name>-2", PosixDaemon.c's mDNS_StatusCallback calls
+ * mDNSConfigStorePublishResolvedHostName(), which writes the resolved
+ * label to State:/Network/HostNames. hostnamed's observer watches that
+ * State: key and persists the resolved name to SCPreferences. Setup: =
+ * desired, State: = actual-after-conflict — Apple's split. Because mDNS
+ * no longer watches State:, the write-back cannot re-trigger our own
+ * recompute, and a g_desired_host guard keeps a later recompute from
+ * clobbering the conflict suffix back to the un-suffixed desired name.
  *
  * THREADING. The mDNS core runs single-threaded on the daemon's MAIN
  * thread (PosixDaemon.c's mDNSPosixRunEventLoopOnce select loop). The
@@ -137,6 +154,18 @@ static int	g_wake_wr = -1;
  * interface path (pipe wake -> RefreshInterfaceList) when classifying a
  * changed key in the SCDS callback. Empty if it couldn't be cached. */
 static char	g_hostnames_key[256];
+
+/* Conflict-rename write-back state (#156). g_desired_host is the last
+ * LocalHostName we adopted from Setup: (the user/prefs "desired" name);
+ * mDNSConfigStoreRecompute compares against THIS, not m->hostlabel, so a
+ * conflict-incremented hostlabel ("foo-2") is not clobbered back to "foo"
+ * on the next unrelated recompute. Seeded in mDNSConfigStoreInit from the
+ * boot hostlabel mDNS_Init adopted via gethostname(3). g_published_host is
+ * the last resolved label we wrote to State:/Network/HostNames, making the
+ * StatusCallback publisher idempotent (it fires on every successful
+ * registration, not just hostname ones). */
+static domainlabel	g_desired_host;
+static domainlabel	g_published_host;
 
 static const char *
 key_kind(CFStringRef key)
@@ -273,7 +302,14 @@ mDNSConfigStoreRecompute(void *info)
 		return;	/* read succeeded but empty label — skip */
 
 	mDNS_Lock(m);
-	if (!SameDomainLabelCS(m->hostlabel.c, new_host.c)) {
+	/* Compare the new desired name against g_desired_host (the last
+	 * desired name we applied), NOT against m->hostlabel. After a
+	 * conflict-rename m->hostlabel is "foo-2" while the desired name is
+	 * still "foo"; comparing against m->hostlabel would reset it to "foo"
+	 * and re-trigger the same conflict forever. We only re-adopt + re-probe
+	 * when the DESIRED name actually changes (#156). */
+	if (!SameDomainLabelCS(g_desired_host.c, new_host.c)) {
+		g_desired_host = new_host;
 		m->hostlabel = new_host;
 		changed = TRUE;
 	}
@@ -289,6 +325,88 @@ mDNSConfigStoreRecompute(void *info)
 		mDNS_SetFQDN(m);
 	}
 	mDNS_Unlock(m);
+}
+
+/* Convert a domainlabel (length-prefixed, label->c[0] = length) to a
+ * NUL-terminated C string. */
+static void
+label_to_cstr(const domainlabel *label, char *out, size_t outsz)
+{
+	size_t n = label->c[0];
+
+	if (outsz == 0)
+		return;
+	if (n > outsz - 1)
+		n = outsz - 1;
+	(void)memcpy(out, &label->c[1], n);
+	out[n] = '\0';
+}
+
+/* Write the conflict-resolved LocalHostName to State:/Network/HostNames.
+ * Apple's Setup:/State: split: Setup: carries the user/prefs DESIRED name
+ * (owned by prefs_monitor); State: carries the ACTUAL name now in use after
+ * mDNSResponder's conflict-rename. hostnamed's observer watches the State:
+ * key and persists the resolved name back to SCPreferences (#156). */
+static void
+write_state_local_hostname(SCDynamicStoreRef store, const char *label)
+{
+	CFStringRef key, val;
+	CFMutableDictionaryRef dict;
+
+	if (store == NULL)
+		return;
+	key = SCDynamicStoreKeyCreateNetworkGlobalEntity(NULL,
+	    kSCDynamicStoreDomainState, CFSTR("HostNames"));
+	if (key == NULL)
+		return;
+	val = CFStringCreateWithCString(NULL, label, kCFStringEncodingUTF8);
+	dict = CFDictionaryCreateMutable(NULL, 0,
+	    &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+	if (val != NULL && dict != NULL) {
+		CFDictionarySetValue(dict, kSCPropNetLocalHostName, val);
+		if (!SCDynamicStoreSetValue(store, key, dict))
+			(void)fprintf(stderr, "mDNSResponder mDNSConfigStore: "
+			    "SetValue(State:/Network/HostNames) failed\n");
+	}
+	if (dict != NULL) CFRelease(dict);
+	if (val != NULL) CFRelease(val);
+	CFRelease(key);
+}
+
+/* Publish mDNSResponder's conflict-resolved dot-local host name to the
+ * SCDynamicStore so hostnamed can persist it (#156). Called from
+ * PosixDaemon.c's mDNS_StatusCallback on every successful registration
+ * (mStatus_NoError); the guards below make it a no-op unless a real
+ * conflict-rename produced a hostlabel that differs from the desired name
+ * AND we have not already published that exact label.
+ *
+ * Runs on the mDNS-core MAIN thread (the StatusCallback caller). The only
+ * shared object it touches is g_store via SCDynamicStoreSetValue — a
+ * synchronous configd IPC independent of g_store's notification dispatch
+ * queue, so it is safe from this thread. */
+mDNSexport void
+mDNSConfigStorePublishResolvedHostName(void)
+{
+	mDNS *const m = &mDNSStorage;
+	char cur[MAX_DOMAIN_LABEL + 1];
+
+	if (g_store == NULL || m->hostlabel.c[0] == 0)
+		return;
+	/* No conflict-rename: hostlabel still equals the desired name we
+	 * adopted from Setup: (seeded from the boot hostlabel). Nothing to do. */
+	if (SameDomainLabelCS(m->hostlabel.c, g_desired_host.c))
+		return;
+	/* Already published this exact resolved label — idempotent across the
+	 * many NoError callbacks a single rename produces. */
+	if (SameDomainLabelCS(m->hostlabel.c, g_published_host.c))
+		return;
+	g_published_host = m->hostlabel;
+	label_to_cstr(&m->hostlabel, cur, sizeof(cur));
+	write_state_local_hostname(g_store, cur);
+	(void)fprintf(stderr, "mDNSResponder MDNS-RENAME-PUBLISHED: "
+	    "conflict-resolved LocalHostName='%s' -> State:/Network/HostNames "
+	    "(desired differed; hostnamed will persist)\n", cur);
+	(void)fflush(stderr);
 }
 
 /* Schedule (or re-schedule) the debounce-fire timer. Any SCDS
@@ -417,11 +535,13 @@ mDNSConfigStoreSubscribe(SCDynamicStoreRef store)
 		return (FALSE);
 	}
 
-	/* State:/Network/HostNames — Bonjour LocalHostName surface. Cache
-	 * its string form so the callback can tell the hostname path from
-	 * the interface path (see g_hostnames_key). */
-	key = SCDynamicStoreKeyCreateNetworkGlobalEntity(NULL,
-	    kSCDynamicStoreDomainState, CFSTR("HostNames"));
+	/* Setup:/Network/HostNames — the DESIRED Bonjour LocalHostName,
+	 * written by prefs_monitor and read by read_local_hostname. Watching
+	 * this (not the State: key, which nothing writes) is what makes a
+	 * ComputerName/LocalHostName change re-probe the new dot-local name
+	 * (#156). Cache its string form so the callback can tell the hostname
+	 * path from the interface path (see g_hostnames_key). */
+	key = SCDynamicStoreKeyCreateHostNames(NULL);
 	if (key != NULL) {
 		(void)CFStringGetCString(key, g_hostnames_key,
 		    sizeof(g_hostnames_key), kCFStringEncodingUTF8);
@@ -517,6 +637,14 @@ int
 mDNSConfigStoreInit(void)
 {
 	SCDynamicStoreContext	ctx = {0, NULL, NULL, NULL, NULL};
+
+	/* Seed the desired-name guard with the boot hostlabel mDNS_Init just
+	 * adopted from gethostname(3) (PosixDaemon.c calls us right after
+	 * mDNS_Init, before the event loop concludes the first probe). The
+	 * conflict-rename publisher compares m->hostlabel against this, so it
+	 * fires only when a real rename changes the name — never for the
+	 * un-conflicted boot name. */
+	g_desired_host = mDNSStorage.hostlabel;
 
 	g_queue = dispatch_queue_create("com.apple.mDNSResponder.scds",
 	    NULL);

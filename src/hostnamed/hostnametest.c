@@ -176,8 +176,14 @@ main(int argc, char **argv)
 	 *     empty in these rounds by construction. Only assert kernel
 	 *     hostname equals expected. */
 	if (expected != NULL) {
+		/* BONJOUR-RENAME (iter 5 / #156): after mDNSResponder's
+		 * conflict-rename the observer persists the resolved name to
+		 * SCPrefs ComputerName, so prefs_monitor mirrors it into both
+		 * Setup: keys exactly like the PREFS path — assert all four
+		 * surfaces, not just the kernel. */
 		const Boolean uses_setup_mirror = (argc < 3 ||
-		    strcmp(argv[2], "PREFS") == 0);
+		    strcmp(argv[2], "PREFS") == 0 ||
+		    strcmp(argv[2], "BONJOUR-RENAME") == 0);
 
 		if (uses_setup_mirror) {
 			if (cn == NULL || hn == NULL || lhn == NULL) {
