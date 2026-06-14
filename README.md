@@ -1,10 +1,10 @@
 # NextBSD
 
-A FreeBSD-derived operating system whose low-level system plumbing is the
-**macOS-style** equivalents: **Darwin's `launchd` runs as PID 1**, services
+A BSD operating system derived from FreeBSD whose low-level system plumbing
+uses open source components from Darwin: **`launchd` runs as PID 1**, services
 are described by `.plist` files, hardware events flow through an in-kernel
 IOKit registry over a Mach-IPC bus, and the network stack is configured by
-Darwin's `IPConfiguration` daemon talking to Darwin's `configd`. It is built on
+the `IPConfiguration` daemon talking to `configd`. It is built on
 the FreeBSD 15 kernel and ELF userland — rebranded as NextBSD (`uname -s` is
 `NextBSD`) — with the modern parts of macOS's service model lifted over and,
 increasingly, Darwin-source command-line tools in the base.
@@ -13,20 +13,20 @@ If you just want to try it, jump to [Try it in 5 minutes](#try-it-in-5-minutes).
 If you want the long technical answer to *what got ported and how*,
 see [PORTING.md](PORTING.md).
 
-## What's different from stock FreeBSD
+## What's different from other BSDs?
 
-| Stock FreeBSD | NextBSD |
+| Other BSDs | NextBSD |
 |---|---|
 | `init(8)` is PID 1 | **`launchd(8)`** is PID 1 |
-| Services configured in `/etc/rc.conf` + `rc.d/*` scripts | Services configured in **`.plist` files** under `/System/Library/LaunchDaemons/` |
-| `syslogd(8)` is the FreeBSD-base one | **Darwin's `syslogd`** (Apple System Logger / ASL) plus `notifyd` for the cross-process event bus |
-| Hardware events surfaced via `devd(8)` (when present) | **In-kernel IORegistry** (`/dev/ioregistry`) with an IOKit-shaped notification channel, browsed via Darwin's `libIOKit` / `ioreg` |
-| Kernel **modules** loaded with `kldload(8)` / `kldstat(8)` (`.ko` files) | Kernel **extensions** loaded with **`kextload` / `kextstat`** (Darwin `kext_tools` driving `OSKext`); the `kld*` CLIs are retired (the `kld` syscalls remain) |
-| `dhclient(8)` brings up network interfaces | **`ipconfigd`** (Darwin's IPConfiguration) handles DHCPv4 + ARP probing + lease renewal + publishes to `SCDynamicStore` |
+| Services configured via `rc(8)` — `rc.conf` + `rc.d/*` scripts | Services configured in **`.plist` files** under `/System/Library/LaunchDaemons/` |
+| The base `syslogd(8)` | **Darwin's `syslogd`** (Apple System Logger / ASL) plus `notifyd` for the cross-process event bus |
+| Device events via `devd`/`devmatch` (FreeBSD), `devpubd`/`drvctl` (NetBSD), `hotplugd` (OpenBSD) | **In-kernel IORegistry** (`/dev/ioregistry`) with an IOKit-shaped notification channel, browsed via Darwin's `libIOKit` / `ioreg` |
+| Kernel modules via `kldload` (FreeBSD, `.ko`) or `modload`/`modctl` (NetBSD); OpenBSD dropped loadable modules | Kernel **extensions** loaded with **`kextload` / `kextstat`** (Darwin `kext_tools` driving `OSKext`); the `kld*` CLIs are retired (the `kld` syscalls remain) |
+| A base DHCP client — `dhclient` (FreeBSD), `dhcpcd` (NetBSD), `dhcpleased` (OpenBSD) | **`ipconfigd`** (Darwin's IPConfiguration) handles DHCPv4 + ARP probing + lease renewal + publishes to `SCDynamicStore` |
 | `mdnsd` (if installed) for Bonjour | **Darwin's `mDNSResponder`** with its full client API |
 | Nothing equivalent | **`configd`** + `SCDynamicStore` — the system-wide key/value store every Darwin-source daemon expects |
 | Nothing equivalent | **Mach IPC** in-kernel via `mach.ko`, plus `libsystem_kernel` / `libdispatch` / `libxpc` / `liblaunch` / `libCoreFoundation` in userland |
-| `uname -s` is `FreeBSD`; `freebsd-version` | `uname -s` is **`NextBSD`**; **`nextbsd-version`** (see [Versioning](#versioning)) |
+| `uname -s` names the upstream BSD; its own `*-version` tool | `uname -s` is **`NextBSD`**; **`nextbsd-version`** (see [Versioning](#versioning)) |
 
 ## Try it in 5 minutes
 
@@ -203,6 +203,13 @@ each with a matching `.sha256`. The latest is always at that tag.
   rationale.
 - **[Issues](https://github.com/nextbsd-redux/nextbsd/issues)**
   — open work items, scoping questions, planned ports.
+
+## Heritage
+
+This project is a re-implementation of the original
+[NextBSD](https://github.com/NextBSD/NextBSD), not a fork of it — but it
+doesn't reinvent everything. It reuses some of the original's solutions, such
+as `libxpc`, and those carry enhancements from [RavynOS](https://ravynos.com).
 
 ## License
 
