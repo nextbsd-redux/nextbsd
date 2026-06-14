@@ -1193,6 +1193,33 @@ expect {
     }
 }
 
+# HOSTNAMED-BONJOUR-RENAME — iter 5 / #156 gate. ROUND 5 in run.sh:
+# hostnamedbonjourset claims <fixture>.local (authoritative UNIQUE A
+# record); the test then sets SCPrefs ComputerName=<fixture>, so the
+# daemon re-probes <fixture>.local, collides, and mDNSCore renames its
+# host label to <fixture>-2. mDNSResponder publishes the resolved name to
+# State:/Network/HostNames; hostnamed's observer persists it to SCPrefs,
+# which flows back to the kernel hostname. hostnametest verifies all four
+# surfaces (kernel + Setup:/System + Setup:/Network/HostNames) carry
+# <fixture>-2.
+#
+# Non-gating WARN for now: the conflict round-trip (mDNS probe timing +
+# the multi-hop State->SCPrefs->Setup->sethostname convergence) is
+# timing-sensitive under CI, and it builds on the mDNS tier that is itself
+# non-gating above. Promote to a hard gate (FAIL -> exit 1) once it has
+# proven stable across CI runs.
+expect {
+    timeout {
+        puts "\nWARN: HOSTNAMED-BONJOUR-RENAME marker not seen (conflict round-trip did not converge in the CI window)"
+    }
+    "HOSTNAMED-BONJOUR-RENAME-FAIL" {
+        puts "\nWARN: hostnamed Bonjour conflict-rename feedback did not persist the -2 suffix in the CI window (#156)"
+    }
+    "HOSTNAMED-BONJOUR-RENAME-OK" {
+        puts "\nOK: hostnamed persisted mDNSResponder's Bonjour conflict-rename (<fixture>.local collision -> <fixture>-2 in SCPrefs + kernel)"
+    }
+}
+
 # PAM-FRAMEWORK — issue #93 iter 1 gate. pamframeworktest exercises
 # /usr/lib/libpam.so.6 (our vendored Apple OpenPAM-35) by pam_start
 # against /etc/pam.d/test_iter1 (which references pam_deny.so) and

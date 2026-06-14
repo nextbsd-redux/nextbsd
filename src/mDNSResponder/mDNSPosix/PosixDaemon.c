@@ -61,6 +61,12 @@ static domainname DynDNSHostname;
 static CacheEntity gRRCache[RR_CACHE_SIZE];
 static mDNS_PlatformSupport PlatformStorage;
 
+// freebsd-launchd-mach #156: publish the conflict-resolved dot-local host
+// name to State:/Network/HostNames so hostnamed can persist it. No-op
+// unless mDNSCore's conflict-rename actually changed m->hostlabel. Declared
+// here (above mDNS_StatusCallback) since the callback calls it.
+extern void mDNSConfigStorePublishResolvedHostName(void);
+
 mDNSlocal void mDNS_StatusCallback(mDNS *const m, mStatus result)
 {
     (void)m; // Unused
@@ -71,6 +77,13 @@ mDNSlocal void mDNS_StatusCallback(mDNS *const m, mStatus result)
         // name in persistent storage for next time. It should also inform the user of the name change.
         // On Mac OS X we store the current dot-local mDNS host name in the SCPreferences store,
         // and notify the user with a CFUserNotification.
+        //
+        // freebsd-launchd-mach #156: mDNSCore's conflict-rename (mDNS_HostNameCallback ->
+        // IncrementLabelSuffix) may have bumped m->hostlabel to "<name>-2". Publish the resolved
+        // dot-local name to State:/Network/HostNames; hostnamed's observer persists it to
+        // SCPreferences. The publisher self-guards (no-op unless a rename actually changed the
+        // name and it has not already been published), so calling it on every NoError is cheap.
+        mDNSConfigStorePublishResolvedHostName();
     }
     else if (result == mStatus_ConfigChanged)
     {

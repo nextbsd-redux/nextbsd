@@ -55,6 +55,11 @@ extern void	load_hostname(dispatch_queue_t S_queue);
 /* prefs_monitor entry — extern from src/hostnamed/prefs_monitor.c. */
 extern int	prefs_monitor_start(dispatch_queue_t queue);
 
+/* hostname_observer entry — extern from src/hostnamed/hostname_observer.c.
+ * Watches State:/Network/HostNames for mDNSResponder's Bonjour
+ * conflict-rename feedback and persists the resolved name to SCPrefs (#156). */
+extern int	hostname_observer_start(dispatch_queue_t queue);
+
 /* Shared logger used by every component in the daemon. Format-string
  * variadic via vfprintf; stderr → /var/log/hostnamed.stderr via the
  * launchd plist's StandardErrorPath. UTC timestamp per line. */
@@ -147,6 +152,14 @@ main(int argc, char **argv)
 	xlog("post-load_hostname");
 	xlog("HOSTNAMED-OK: load_hostname scheduled (Apple-shape engine "
 	    "subscribed to SCDS + notify_register_dispatch)");
+
+	/* Bonjour conflict-rename feedback (#156): watch State:/Network/HostNames
+	 * for the resolved name mDNSResponder publishes after a .local collision
+	 * and persist it to SCPrefs ComputerName. Non-fatal on failure — the
+	 * rest of the daemon still drives the kernel hostname. */
+	if (hostname_observer_start(queue) != 0)
+		xlog("hostname_observer_start failed (Bonjour rename feedback "
+		    "disabled); continuing");
 
 	/* Block + dispatch-source SIGTERM/INT for clean shutdown. Pattern
 	 * from src/Libnotify/notifyd/notifyd.c:1480-1503. */

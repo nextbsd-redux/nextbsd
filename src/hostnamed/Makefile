@@ -4,6 +4,10 @@
 # Sources:
 #   hostnamed.c            — main(), event loop, signal handling, xlog.
 #   prefs_monitor.c        — SCPrefs → SCDS Setup: keys bridge.
+#   hostname_observer.c    — watches State:/Network/HostNames for
+#                            mDNSResponder's Bonjour conflict-rename
+#                            feedback; persists the resolved name to
+#                            SCPrefs ComputerName (#156).
 #   freebsd-shim/shim.c    — ip_plugin.h externs, SCPrivate SPI subset,
 #                            freebsd_synthesize_hostname, synthesis
 #                            machinery.
@@ -22,7 +26,7 @@ PROG=		hostnamed
 # NO_MAN=yes alone is insufficient. Same suppression hwregd / configd /
 # ipconfigd use.
 MAN=
-SRCS=		hostnamed.c prefs_monitor.c shim.c set-hostname.c
+SRCS=		hostnamed.c prefs_monitor.c hostname_observer.c shim.c set-hostname.c
 
 # WARNS=0: hostnamed.c pulls the CoreFoundation + SystemConfiguration
 # public header tree. At WARNS>0 FreeBSD adds -Wsystem-headers -Werror
