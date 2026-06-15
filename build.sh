@@ -70,10 +70,9 @@ fi
 #
 # Replaces the wholesale `tar -xJf base.txz + kernel.txz` with a
 # host-driven `pkg -R config -r rootfs install -y ...` against
-# pkg.freebsd.org/${PKG_ABI}/base_latest. The package list is hand
-# curated (pkglist-base.txt for runtime; buildpkgs-base.txt for build-
-# only FreeBSD-* like clang/lld/-dev, purged before mkuzip alongside
-# buildpkgs.txt so build tooling never ships in the ISO).
+# pkg.freebsd.org/${PKG_ABI}/base_latest. (Historical: base packages were
+# once curated via pkglist-base.txt / buildpkgs-base.txt &mdash; both removed;
+# the overlay-first from-source base below replaced that pkgbase path.)
 #
 # ABI/OSVERSION/IGNORE_OSVERSION env let us install a ${PKG_ABI} target
 # from a host pkg of any version. Same trick gershwin-on-freebsd uses.
@@ -86,8 +85,8 @@ fi
 # rootfs FIRST (libc + all libs + pkg + loader + headers + certs + pkg keys),
 # bootstrap a minimal /etc + TLS by hand, then pkg-bootstrap ON our base and
 # install ONLY ports build tools. NO pkgbase base package is EVER installed —
-# the shipped pkg DB contains zero base packages. (pkglist-base.txt and
-# buildpkgs-base.txt are now both effectively empty / historical.)
+# the shipped pkg DB contains zero base packages. (The historical
+# pkglist-base.txt / buildpkgs-base.txt lists have been removed.)
 NEXTBSD_BASE_ARTIFACT="${NEXTBSD_BASE_ARTIFACT:-$ROOT/base-artifact/nextbsd-base-amd64.tar.gz}"
 if [ ! -f "$NEXTBSD_BASE_ARTIFACT" ]; then
     echo "ERROR: from-source base artifact missing: $NEXTBSD_BASE_ARTIFACT" >&2
@@ -221,11 +220,10 @@ echo "    /bin/sh -> $(readlink "$WORK/rootfs/bin/sh" 2>/dev/null || echo real) 
 
 #
 # 3. chroot: install runtime pkgs (pkglist.txt) + build pkgs (buildpkgs.txt)
-#    inside the chroot, then purge buildpkgs.txt + buildpkgs-base.txt
-#    before the slim/mkuzip pass so build tooling doesn't ship in the ISO.
-#    Build pkgs are installed and kept available for any chroot-side build
-#    work; only the install/purge plumbing lives here — no inline build
-#    recipe (the previous gershwin/GNUstep build was removed).
+#    inside the chroot. Build pkgs are now KEPT in the shipped image (the
+#    end-of-build purge was removed) so it can build Gershwin in place; only
+#    the install plumbing lives here — no inline build recipe (the previous
+#    gershwin/GNUstep build was removed).
 #
 # FREEBSD_VARIANT names the release train (15.0-RELEASE, 15-STABLE,
 # 16.0-CURRENT); the CI workflow keys its caches/artifacts on it. Default to
@@ -389,11 +387,9 @@ fi
 #      the in-chroot pkg bootstrapped ports ON it. Nothing to overlay here.
 #
 echo "==> from-source base is the rootfs (overlay-first); zero pkgbase base pkgs"
-# Overlay-first installs NO pkgbase base packages, so these lists are empty.
-# Keep them DEFINED (set -u) — the end-of-build purge still references
-# BASE_BUILD_PKGS. (pklist-base.txt/buildpkgs-base.txt are now historical.)
-BASE_PKGS=""
-BASE_BUILD_PKGS=""
+# Overlay-first installs NO pkgbase base packages. The historical
+# pkglist-base.txt / buildpkgs-base.txt lists (and the BASE_PKGS /
+# BASE_BUILD_PKGS vars they fed) have been removed; nothing references them.
 
 #
 # 3a. extract src.txz to $WORK/freebsd-src for FreeBSD's release scripts
@@ -2733,54 +2729,16 @@ test -x "$WORK/rootfs/usr/tests/freebsd-launchd-mach/pammodulestest" \
     || { echo "FAIL: pammodulestest not built"; exit 1; }
 
 #
-# 3z. purge build packages + clean pkg cache + tear down chroot.
-#     Runs LAST in the build phase, after every chroot-side build
-#     (libdispatch) has used cmake/ninja/clang. Build pkgs (cmake/ninja
-#     from buildpkgs.txt; clang/lld/-dev from buildpkgs-base.txt) get
-#     removed before mkuzip so they don't ship in the ISO. Pkg
-#     download cache also cleared.
+# 3z. Build packages are KEPT in the image (the purge was removed).
+#     Previously the build-only pkgs (cmake/ninja/pkgconf/llvm19 + deps from
+#     buildpkgs.txt) were `pkg delete`d here before mkuzip so they didn't ship.
+#     We now keep them so the shipped image can build Gershwin (and other
+#     software) in place. The pkg download cache is still cleared below; only
+#     the uninstall of the installed build packages is gone.
 #
-if [ -n "$BUILD_PKGS" ] || [ -n "$BASE_BUILD_PKGS" ]; then
-    echo "==> purging build packages (ports + pkgbase build-only)"
-    # `|| true`: build-pkg POST-DEINSTALL scripts (service restarts, etc.) can
-    # fail in our minimal transient /etc and make pkg exit non-zero — but the
-    # packages ARE removed (the purge goal). The build tools are being deleted
-    # anyway, so their script outcomes don't matter.
-    if [ -n "$BUILD_PKGS" ]; then
-        # shellcheck disable=SC2086
-        chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
-            pkg delete -y $BUILD_PKGS || true
-    fi
-    if [ -n "$BASE_BUILD_PKGS" ]; then
-        # shellcheck disable=SC2086
-        chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
-            pkg delete -y $BASE_BUILD_PKGS || true
-    fi
-    # pkg autoremove DISABLED 2026-05-27 — when no installed pkg
-    # requires FreeBSD-runtime (consumers libarchive/libexecinfo/mtree/
-    # ufs/geom/xz commented out, replaced by fbsdglue /usr/src builds),
-    # autoremove cleans up runtime AND its file manifest entries —
-    # which includes paths we overlay-overwrote with fbsdglue content
-    # (/lib/libutil.so.10, libmd, libnv, libelf, …). Those files get
-    # deleted, /sbin/launchd can no longer link, kernel panics with
-    # "Going nowhere without my init!"
-    #
-    # Skipping autoremove keeps the overlay-overwrite pattern intact:
-    # pkg DB still knows about FreeBSD-runtime + FreeBSD-pam-lib (they
-    # come in transitively via FreeBSD-pkg-bootstrap's libmd shlib dep),
-    # but our overlays survive because nothing tries to delete them.
-    #
-    # The "drop runtime + pam-lib from the pkg DB" goal is deferred
-    # — needs a robust solution that doesn't wipe our overlays. Tracked
-    # as a follow-up ticket. For now the practical state is unchanged
-    # from before this PR (runtime + pam-lib in pkg DB but content-
-    # overlay'd everywhere we care about); the WIN of this PR is moving
-    # libarchive/libexecinfo/mtree/ufs/geom/xz to fbsdglue so they no
-    # longer get installed as pkgs (one fewer manifest entry per).
-    #
-    # chroot "$WORK/rootfs" env ASSUME_ALWAYS_YES=yes \
-    #     pkg autoremove -y || true
-fi
+#     (pkg autoremove also stays off: it would cull FreeBSD-runtime / pam-lib
+#     and delete files our overlay overwrote — kernel panic "Going nowhere
+#     without my init!". Unchanged by this edit.)
 
 if [ -n "$RUNTIME_PKGS" ] || [ -n "$BUILD_PKGS" ]; then
     echo "==> cleaning pkg download cache"
