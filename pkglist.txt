@@ -59,3 +59,5 @@ xlibre-xf86-video-vesa
 # Ports wpa_supplicant supersedes the base version (needed for any
 # encrypted WiFi network).
 #wpa_supplicant
+
+sudo
