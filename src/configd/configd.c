@@ -712,14 +712,35 @@ configd_serve(mach_port_t port_set)
 		memset(&rep, 0, sizeof(rep));
 		if (!config_server(&req.hdr, &rep.hdr)) {
 			clog("unhandled message id=%d", req.hdr.msgh_id);
+			/*
+			 * Demux didn't claim the message: its reply send-once
+			 * right (and any moved-in rights) are still ours to
+			 * dispose, otherwise they leak one Mach port per
+			 * undemuxable RPC. See #342.
+			 */
+			mach_msg_destroy(&req.hdr);
 			continue;
 		}
 		if (rep.hdr.msgh_remote_port != MACH_PORT_NULL) {
 			mr = mach_msg(&rep.hdr, MACH_SEND_MSG | MACH_SEND_TIMEOUT,
 			    rep.hdr.msgh_size, 0, MACH_PORT_NULL, 1000,
 			    MACH_PORT_NULL);
-			if (mr != MACH_MSG_SUCCESS)
+			if (mr != MACH_MSG_SUCCESS) {
 				clog("reply send failed: 0x%x", (unsigned)mr);
+				/*
+				 * A failed/timed-out send does not consume the
+				 * reply send-once right or any reply-carried
+				 * ports — drop them rather than leak.
+				 */
+				mach_msg_destroy(&rep.hdr);
+			}
+		} else {
+			/*
+			 * MIG produced no reply (simpleroutine, or a routine
+			 * that errored before building one): the request's
+			 * reply send-once right is still ours to dispose.
+			 */
+			mach_msg_destroy(&req.hdr);
 		}
 	}
 }
