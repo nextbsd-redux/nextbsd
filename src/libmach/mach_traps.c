@@ -564,32 +564,86 @@ pid_for_task(mach_port_name_t task, int *pid)
  * paths fail closed.
  */
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
+#include <pthread.h>
 #include <sys/mman.h>
 #include <bsm/audit.h>
 #include <mach/mig_errors.h>
 
+/*
+ * Per-thread MIG reply-port cache.
+ *
+ * The MIG-generated client stubs call mig_get_reply_port() for the
+ * receive right the RPC reply lands on and, on the success path, leave
+ * it registered for reuse — only the error paths call
+ * mig_dealloc_reply_port(). Allocating a fresh receive right per call
+ * (and never freeing it on success) therefore leaks one Mach port per
+ * RPC: every SCDynamicStore / notify / configd RPC strands a port,
+ * which on this platform is fd-backed, so the process's fd table grows
+ * without bound until select()-based daemons (mDNSResponder) abort on
+ * FD_SETSIZE. Cache the port in thread-specific data and reuse it,
+ * mirroring the per-thread reply-port libdispatch already maintains.
+ *
+ * A reply port is a receive right, so it must be reclaimed with
+ * mach_port_mod_refs(..., RIGHT_RECEIVE, -1), not mach_port_deallocate
+ * (which only drops send/send-once urefs) — the previous error-path
+ * code used the wrong call.
+ */
+static pthread_key_t	mig_reply_port_key;
+static pthread_once_t	mig_reply_port_once = PTHREAD_ONCE_INIT;
+
+static void
+mig_reply_port_dtor(void *p)
+{
+	mach_port_t port = (mach_port_t)(uintptr_t)p;
+	if (port != MACH_PORT_NULL)
+		(void)mach_port_mod_refs(mach_task_self(), port,
+		    MACH_PORT_RIGHT_RECEIVE, -1);
+}
+
+static void
+mig_reply_port_key_init(void)
+{
+	(void)pthread_key_create(&mig_reply_port_key, mig_reply_port_dtor);
+}
+
 mach_port_t
 mig_get_reply_port(void)
 {
-	/* Apple maintains a per-thread reply-port cache; we don't yet.
-	 * Allocate a fresh port for each call — slower but correct. */
-	return (mach_port_t)mach_reply_port();
+	mach_port_t port;
+
+	(void)pthread_once(&mig_reply_port_once, mig_reply_port_key_init);
+	port = (mach_port_t)(uintptr_t)pthread_getspecific(mig_reply_port_key);
+	if (port == MACH_PORT_NULL) {
+		port = (mach_port_t)mach_reply_port();
+		if (port != MACH_PORT_NULL)
+			(void)pthread_setspecific(mig_reply_port_key,
+			    (void *)(uintptr_t)port);
+	}
+	return port;
 }
 
 void
 mig_put_reply_port(mach_port_t port)
 {
-	/* No reply-port cache to put it back into; drop the right. */
-	if (port != MACH_PORT_NULL)
-		(void)mach_port_deallocate(mach_task_self(), port);
+	/* Reply port stays cached in TSD for the next RPC on this thread. */
+	(void)port;
 }
 
 void
 mig_dealloc_reply_port(mach_port_t port)
 {
+	/*
+	 * Error path: the cached reply port may be in a bad state, so
+	 * destroy the receive right and clear the cache; the next
+	 * mig_get_reply_port() allocates a fresh one.
+	 */
+	(void)pthread_once(&mig_reply_port_once, mig_reply_port_key_init);
 	if (port != MACH_PORT_NULL)
-		(void)mach_port_deallocate(mach_task_self(), port);
+		(void)mach_port_mod_refs(mach_task_self(), port,
+		    MACH_PORT_RIGHT_RECEIVE, -1);
+	(void)pthread_setspecific(mig_reply_port_key, (void *)MACH_PORT_NULL);
 }
 
 kern_return_t
