@@ -116,12 +116,6 @@ jobs:
           docker-images: false
           swap-storage: false
 
-      - name: cache FreeBSD distfiles
-        uses: actions/cache@v4
-        with:
-          path: distfiles
-          key: distfiles-${{ matrix.variant }}-${{ matrix.arch }}-${{ hashFiles('pkglist.txt') }}
-
       # Compute the datestamp once on the host and pass it into the VM, so
       # the built file (NextBSD-<arch>-<date>.img.zip), the workflow
       # artifact name, and the published continuous asset all agree.
