@@ -93,10 +93,10 @@ static int num_pkts_rejected = 0;
 
 // ***************************************************************************
 // Locals
-mDNSlocal void requestReadEvents(PosixEventSource *eventSource,
+mDNSlocal mStatus requestReadEvents(PosixEventSource *eventSource,
                                     const char *taskName, mDNSPosixEventCallback callback, void *context);
 mDNSlocal mStatus stopReadOrWriteEvents(int fd, mDNSBool freeSource, mDNSBool removeSource, int flags);
-mDNSlocal void requestWriteEvents(PosixEventSource *eventSource,
+mDNSlocal mStatus requestWriteEvents(PosixEventSource *eventSource,
                                      const char *taskName, mDNSPosixEventCallback callback, void *context);
 mDNSlocal void UDPReadCallback(int fd, void *context);
 mDNSlocal int SetupIPv4Socket(int fd);
@@ -2452,20 +2452,23 @@ mDNSexport void mDNSPosixProcessFDSet(mDNS *const m, fd_set *readfds, fd_set *wr
 
 mDNSu32 mDNSPlatformEventContextSize = sizeof (PosixEventSource);
 
-mDNSlocal void requestIOEvents(PosixEventSource *newSource, const char *taskName,
+mDNSlocal mStatus requestIOEvents(PosixEventSource *newSource, const char *taskName,
                                   mDNSPosixEventCallback callback, void *context, int flag)
 {
     PosixEventSource **epp = &gEventSources;
 
     if (newSource->fd >= (int) FD_SETSIZE || newSource->fd < 0)
     {
-        LogMsg("requestIOEvents called with fd %d > FD_SETSIZE %d.", newSource->fd, FD_SETSIZE);
-        assert(0);
+        // The select()-based event loop can't represent an fd >= FD_SETSIZE.
+        // Refuse the source and let the caller clean up rather than aborting
+        // the whole daemon (which an fd leak elsewhere could otherwise trigger).
+        LogMsg("requestIOEvents called with fd %d >= FD_SETSIZE %d -- refusing source.", newSource->fd, FD_SETSIZE);
+        return mStatus_NoMemoryErr;
     }
     if (callback == NULL)
     {
-        LogMsg("requestIOEvents called no callback.", newSource->fd, FD_SETSIZE);
-        assert(0);
+        LogMsg("requestIOEvents called with no callback (fd %d).", newSource->fd);
+        return mStatus_BadParamErr;
     }
 
     // See if this event context is already on the list; if it is, no need to scan the list.
@@ -2503,18 +2506,19 @@ mDNSlocal void requestIOEvents(PosixEventSource *newSource, const char *taskName
         newSource->flags |= PosixEventFlag_Write;
         newSource->writeTaskName = taskName;
     }
+    return mStatus_NoError;
 }
 
-mDNSlocal void requestReadEvents(PosixEventSource *eventSource,
+mDNSlocal mStatus requestReadEvents(PosixEventSource *eventSource,
                                     const char *taskName, mDNSPosixEventCallback callback, void *context)
 {
-    requestIOEvents(eventSource, taskName, callback, context, PosixEventFlag_Read);
+    return requestIOEvents(eventSource, taskName, callback, context, PosixEventFlag_Read);
 }
 
-mDNSlocal void requestWriteEvents(PosixEventSource *eventSource,
+mDNSlocal mStatus requestWriteEvents(PosixEventSource *eventSource,
                                      const char *taskName, mDNSPosixEventCallback callback, void *context)
 {
-    requestIOEvents(eventSource, taskName, callback, context, PosixEventFlag_Write);
+    return requestIOEvents(eventSource, taskName, callback, context, PosixEventFlag_Write);
 }
 
 // Remove a file descriptor from the set that mDNSPosixRunEventLoopOnce() listens to.
@@ -2557,6 +2561,7 @@ mDNSlocal mStatus stopReadOrWriteEvents(int fd, mDNSBool freeContext, mDNSBool r
 mStatus mDNSPosixAddFDToEventLoop(int fd, mDNSPosixEventCallback callback, void *context)
 {
     PosixEventSource *newSource;
+    mStatus err;
 
     newSource = (PosixEventSource*) mdns_malloc(sizeof *newSource);
     if (NULL == newSource)
@@ -2564,8 +2569,11 @@ mStatus mDNSPosixAddFDToEventLoop(int fd, mDNSPosixEventCallback callback, void 
     memset(newSource, 0, sizeof *newSource);
     newSource->fd = fd;
 
-    requestReadEvents(newSource, "mDNSPosixAddFDToEventLoop", callback, context);
-    return mStatus_NoError;
+    // If the source can't be registered (e.g. fd >= FD_SETSIZE), don't leak it.
+    err = requestReadEvents(newSource, "mDNSPosixAddFDToEventLoop", callback, context);
+    if (err != mStatus_NoError)
+        mdns_free(newSource);
+    return err;
 }
 
 mStatus mDNSPosixRemoveFDFromEventLoop(int fd)
