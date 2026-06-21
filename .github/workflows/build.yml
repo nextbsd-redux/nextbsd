@@ -95,7 +95,7 @@ jobs:
         # VM's /bin /sbin /usr/bin copied no-clobber in build.sh, e.g.
         # init/uname) come from -- so it must track the base releng train,
         # not lag it. `variant` distinguishes release trains; build.sh
-        # reports it and the distfiles cache key below is keyed on it.
+        # reports it.
         # The matrix entries below pair them; add a new include block when
         # vmactions gains snapshot support or CI gains a non-vmactions runner.
         include:
