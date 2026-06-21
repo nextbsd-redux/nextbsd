@@ -1,70 +1,15 @@
 # One pkg per line; lines starting with # are ignored.
 # Build packages — installed in the chroot to compile our vendored sources
-# (libdispatch via cmake, etc.). As of the "ship build deps" change these are
-# KEPT in the shipped image (the end-of-build purge was removed) so the image
-# can build Gershwin and other software in place. The pkg download cache is
-# still cleared; only the uninstall of these packages is gone.
+# (libdispatch via cmake). Kept in the shipped image (the end-of-build purge
+# was removed); the pkg download cache is still cleared.
 cmake
 ninja
 # CMake's find_package module-mode probes use pkg-config under the
 # hood — keep pkgconf so libdispatch's cmake discovery works.
 pkgconf
 
-# clang/clang++/lld + binutils from ports (devel/llvm19) — replaces the
-# pkgbase FreeBSD-clang/lld/toolchain build compiler. build.sh symlinks the
-# unprefixed tool names (cc/ld/ar/...) from /usr/local/llvm19/bin into
-# /usr/local/bin so make/cmake/kmod builds pick it up.
+# clang/clang++/lld + binutils from ports (devel/llvm19) — the in-chroot
+# build compiler. build.sh symlinks the unprefixed tool names
+# (cc/ld/ar/...) from /usr/local/llvm19/bin into /usr/local/bin so
+# make/cmake/kmod builds pick it up.
 llvm19
-
-# ---- Gershwin / desktop + app build-and-run dependencies ----
-# Kept in the image (not purged) so Gershwin and friends can be built in place.
-# clang/lld come from llvm19 above; cmake/ninja/pkgconf already listed.
-#
-# image / graphics codecs
-jpeg-turbo
-png
-tiff
-giflib
-ImageMagick7
-# core libraries (XML, crypto, i18n, util)
-libxml2
-libxslt
-gnutls
-openssl
-libffi
-icu
-# audio / TTS
-portaudio
-libao
-flite
-# 2D / GL
-cairo
-freeglut
-# X11 client libraries + fonts
-libXft
-libXt
-libXrandr
-xrandr
-libXcomposite
-libxcb
-xcb-util
-xcb-util-cursor
-xcb-util-wm
-xorg-fonts-truetype
-# desktop services
-dbus
-cups
-# remote desktop
-libvncserver
-freerdp
-# squashfs
-squashfs-tools-ng
-fusefs-squashfuse
-# autotools
-gmake
-cmake-core
-autoconf
-automake
-libtool
-# network
-wget
