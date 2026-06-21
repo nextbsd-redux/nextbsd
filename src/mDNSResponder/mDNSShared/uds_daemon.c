@@ -5049,7 +5049,14 @@ mDNSlocal void connect_callback(int fd, void *info)
         request->last_full_log_time_secs = 0;
         set_peer_pid(request);
         LogRedact(MDNS_LOG_CATEGORY_DEFAULT, MDNS_LOG_DEBUG, "%3d: connect_callback: Adding FD for uid %u", request->sd, request->uid);
-        udsSupportAddFDToEventLoop(sd, request_callback, request, &request->platform_data);
+        if (udsSupportAddFDToEventLoop(sd, request_callback, request, &request->platform_data) != mStatus_NoError)
+        {
+            // Couldn't register the client fd (e.g. fd >= FD_SETSIZE). Drop the
+            // connection instead of leaking it; AbortUnlinkAndFree closes sd
+            // (via udsSupportRemoveFDFromEventLoop) and frees the request_state.
+            LogRedact(MDNS_LOG_CATEGORY_DEFAULT, MDNS_LOG_DEFAULT, "%3d: connect_callback: failed to add client FD to event loop -- dropping connection", sd);
+            AbortUnlinkAndFree(request);
+        }
     }
 }
 
