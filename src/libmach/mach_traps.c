@@ -472,16 +472,44 @@ mach_port_move_member(mach_port_name_t task, mach_port_name_t member,
 	return ((kern_return_t)syscall(num, task, member, after));
 }
 
+/*
+ * mach_port_request_notification — arm a Mach notification (dead-name,
+ * no-senders, send-possible) on a port.
+ *
+ * The nextbsd kernel does not (yet) register a mach_port_request_notification
+ * trap, so there is nothing to issue: when the syscall is absent we no-op and
+ * return KERN_SUCCESS. Returning an error is NOT viable — launchd wraps this
+ * call in os_assumes_zero inside jobmgr_init (launchd_mport_notify_req,
+ * core.c), so any non-success return makes PID 1 abort and the kernel panics
+ * ("Going nowhere without my init!"). The cost of the no-op is that
+ * libdispatch's Mach backend never receives dead-name notifications, so an
+ * EVFILT_MACHPORT registration whose remote dies is never EV_DELETE'd and its
+ * wrap port set leaks; eliminating that leak requires the kernel trap. This
+ * resolves the syscall once and auto-upgrades to the real trap if a future
+ * kernel provides it, otherwise stays a boot-safe no-op.
+ */
 kern_return_t
 mach_port_request_notification(mach_port_name_t task,
     mach_port_name_t name, mach_msg_id_t msgid,
     mach_port_mscount_t sync, mach_port_t notify,
     mach_msg_type_name_t notifyPoly, mach_port_t *previous)
 {
+	static int num = NO_SYSCALL;
+	static int resolved = 0;
+
+	if (!resolved) {
+		num = resolve_syscall("mach_port_request_notification");
+		resolved = 1;
+	}
+	if (num != NO_SYSCALL)
+		return ((kern_return_t)syscall(num, task, name, msgid, sync,
+		    notify, notifyPoly, previous));
+
+	/* No kernel trap: boot-safe no-op (launchd requires KERN_SUCCESS). */
 	(void)task; (void)name; (void)msgid; (void)sync;
 	(void)notify; (void)notifyPoly;
 	if (previous != NULL)
-		*previous = 0;
+		*previous = MACH_PORT_NULL;
 	return KERN_SUCCESS;
 }
 
@@ -507,15 +535,110 @@ mach_port_set_mscount(mach_port_name_t task, mach_port_name_t name,
 }
 
 /*
- * mach_msg_destroy() — clean up port rights / OOL memory in a
- * message that won't be sent. Stub does nothing; the leaks are
- * harmless on the no-IPC CLI path.
+ * mach_msg_destroy() — release the port rights carried by a message
+ * that won't be processed/sent further (e.g. an RPC the server can't
+ * demux, or a reply it failed to send). The previous stub did nothing,
+ * so every such message stranded its rights: the reply send-once right
+ * in msgh_remote_port, any moved-in header port, and any port
+ * descriptors in a complex body. Those are fd-backed here, so they
+ * accumulate as the type-`?` Mach-port fd leak (see #342).
+ *
+ * Header ports are disposed per their msgh_bits disposition; complex
+ * body port / OOL-ports descriptors have their rights deallocated.
+ *
+ * OOL *memory* is intentionally NOT freed here, matching the deliberate
+ * policy already documented on mig_deallocate()/vm_deallocate() below:
+ * on this platform a received OOL pointer can be an interior offset
+ * into the kernel-mmap'd message body with a non-base address / wrong
+ * size, so free()/munmap() crash. That is a separate, bounded RSS leak
+ * — not the Mach-port/fd leak this addresses — and is deferred to the
+ * mmap-based mig_allocate rework noted there.
  */
 #include <mach/message.h>
+
+static void
+mach_msg_destroy_port(mach_port_t port, mach_msg_type_name_t type)
+{
+	if (!MACH_PORT_VALID(port))
+		return;
+	switch (type) {
+	case MACH_MSG_TYPE_MOVE_SEND:
+	case MACH_MSG_TYPE_MOVE_SEND_ONCE:
+		/* A send/send-once right moved to us: drop the uref. */
+		(void)mach_port_deallocate(mach_task_self(), port);
+		break;
+	case MACH_MSG_TYPE_MOVE_RECEIVE:
+		/* A receive right moved to us: destroy it. */
+		(void)mach_port_mod_refs(mach_task_self(), port,
+		    MACH_PORT_RIGHT_RECEIVE, -1);
+		break;
+	default:
+		/* COPY_SEND / MAKE_SEND* transferred no right to free. */
+		break;
+	}
+}
+
 void
 mach_msg_destroy(mach_msg_header_t *msg)
 {
-	(void)msg;
+	mach_msg_bits_t bits;
+	mach_msg_body_t *body;
+	mach_msg_size_t count, i;
+	unsigned char *p;
+
+	if (msg == NULL)
+		return;
+
+	bits = msg->msgh_bits;
+	mach_msg_destroy_port(msg->msgh_remote_port, MACH_MSGH_BITS_REMOTE(bits));
+	mach_msg_destroy_port(msg->msgh_local_port, MACH_MSGH_BITS_LOCAL(bits));
+
+	if (!(bits & MACH_MSGH_BITS_COMPLEX))
+		return;
+
+	body = (mach_msg_body_t *)(msg + 1);
+	count = body->msgh_descriptor_count;
+	p = (unsigned char *)(body + 1);
+	for (i = 0; i < count; i++) {
+		/*
+		 * Cast through void * to assert the alignment is sound:
+		 * descriptors are 4-byte aligned (pragma pack(4), the body
+		 * starts aligned, and every variant is a multiple of 4 bytes),
+		 * but the byte cursor's char alignment would otherwise trip
+		 * -Wcast-align.
+		 */
+		mach_msg_descriptor_t *d = (mach_msg_descriptor_t *)(void *)p;
+
+		/* `type` sits at a common offset in every descriptor variant. */
+		switch (d->port.type) {
+		case MACH_MSG_PORT_DESCRIPTOR:
+			if (MACH_PORT_VALID(d->port.name))
+				(void)mach_port_deallocate(mach_task_self(),
+				    d->port.name);
+			p += sizeof(mach_msg_port_descriptor_t);
+			break;
+		case MACH_MSG_OOL_DESCRIPTOR:
+		case MACH_MSG_OOL_VOLATILE_DESCRIPTOR:
+			/* OOL memory left in place (see policy note above). */
+			p += sizeof(mach_msg_ool_descriptor_t);
+			break;
+		case MACH_MSG_OOL_PORTS_DESCRIPTOR: {
+			mach_port_t *ports = (mach_port_t *)d->ool_ports.address;
+			mach_msg_size_t j;
+
+			if (ports != NULL)
+				for (j = 0; j < d->ool_ports.count; j++)
+					if (MACH_PORT_VALID(ports[j]))
+						(void)mach_port_deallocate(
+						    mach_task_self(), ports[j]);
+			p += sizeof(mach_msg_ool_ports_descriptor_t);
+			break;
+		}
+		default:
+			/* Unknown descriptor type: can't size it, stop. */
+			return;
+		}
+	}
 }
 
 /*
