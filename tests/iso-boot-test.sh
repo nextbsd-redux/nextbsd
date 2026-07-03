@@ -88,7 +88,11 @@ send "set console=comconsole\r"; expect "set console=comconsole"; expect "OK "
 send "set boot_serial=YES\r";    expect "set boot_serial=YES";    expect "OK "
 send "set comconsole_speed=115200\r"; expect "set comconsole_speed=115200"; expect "OK "
 send "set boot_multicons=YES\r"; expect "set boot_multicons=YES"; expect "OK "
-send "boot\r"
+# boot VERBOSE: the shipped image sets boot_mutemsgs="YES" (nextbsd#363) which
+# mutes kernel console output — including the "vfs.pivot: / is now unionfs"
+# marker this harness sequences on. RB_VERBOSE (boot -v) bypasses the mute in
+# the kernel, so CI sees all markers while shipped images stay quiet.
+send "boot -v\r"
 
 # Stage 1: the live-root assembly markers from /rescue/init + vfs.pivot.
 set saw_init 0
