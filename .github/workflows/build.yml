@@ -95,7 +95,7 @@ jobs:
         # aarch64 image needs no qemu-user to BUILD.
         #
         # arm64 is TEMPORARILY DISABLED: the aarch64 ISO builds+publishes fine
-        # but does not boot, and CI never caught it because the disk `test` and
+        # but does not boot, and CI never caught it because the disk `img-test` and
         # live `iso-test` jobs are amd64-only (they run qemu-system-x86; booting
         # aarch64 needs qemu-system-aarch64 + AAVMF firmware). Re-added in a
         # follow-up together with an aarch64 boot test, and only once it boots
@@ -180,19 +180,26 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
-  test:
-    name: test (${{ matrix.arch }})
+  img-test:
+    name: img-test (${{ matrix.arch }})
     needs: [changes, build]
+    # LIGHT boot smoke test of the installed disk image (.img): boot it in qemu
+    # and confirm launchd PID 1 reaches a getty login prompt on a UFS root. The
+    # deep userland functional gates (LEAF command suites, launchd/CF/launchctl,
+    # syslog, network daemons) are NOT run here — they live in nextbsd-userland's
+    # ci-image-boot, closest to the source, and re-running them on this shared
+    # pkg-built rootfs was both redundant and race-prone (syslog/network round-
+    # trips flake under qemu). This job + iso-test together prove the two boot
+    # PATHS (direct-UFS image, live-ISO pivot) reach a shell.
+    #
     # Run after a real build, OR when the build was skipped for a tests-only
-    # change (then we boot the latest published continuous ISO). Do NOT run if
+    # change (then we boot the latest published continuous image). Do NOT run if
     # the build actually failed.
     #
-    # #83: SKIP the boot test on push-to-main. A push to main is the merge of a
-    # PR that already passed this exact boot test on its merge ref — re-running
-    # it only re-exposes the flaky qemu-serial loader handshake (it has bitten
-    # several merges while the identical code passed in-PR). We still boot-test
-    # on pull_request (the gate) and on repository_dispatch (the base-updated
-    # cascade has no PR, so it must be tested).
+    # #83: SKIP on push-to-main. A push to main is the merge of a PR that already
+    # passed this exact boot test on its merge ref — re-running it only re-exposes
+    # the flaky qemu-serial loader handshake. We still boot-test on pull_request
+    # (the gate) and on repository_dispatch (the base-updated cascade has no PR).
     if: "!cancelled() && needs.changes.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') && github.event_name != 'push'"
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -241,17 +248,17 @@ jobs:
 
       - name: boot test
         run: |
-          chmod +x tests/boot-test.sh
+          chmod +x tests/img-boot-test.sh
           IMG=$(ls out/NextBSD-${{ matrix.arch }}-*.img.zip)
-          ./tests/boot-test.sh "$IMG"
+          ./tests/img-boot-test.sh "$IMG"
 
-      - name: dump [T39/T41] trace from boot log
+      - name: dump img boot serial log
         if: always()
         run: |
-          if [ -f tests/boot.log ]; then
-            echo "=== [T39] / [T41] launchd diagnostic trace ==="
-            grep -E '\[T39-|\[T41' tests/boot.log | head -300 || true
-            echo "=== end trace ==="
+          if [ -f tests/img-boot.log ]; then
+            echo "=== img boot serial log (tail) ==="
+            tail -200 tests/img-boot.log || true
+            echo "=== end log ==="
           fi
 
   iso-test:
@@ -262,7 +269,7 @@ jobs:
     # real build (no skipped-build path — the ISO must be the one just built).
     # NON-GATING: not in release's `needs`, so a flaky live boot never blocks
     # publishing; it exists as the iteration feedback loop + a regression signal.
-    # Skipped on push-to-main (same flaky-serial rationale as the disk `test`).
+    # Skipped on push-to-main (same flaky-serial rationale as the disk `img-test`).
     if: "!cancelled() && needs.build.result == 'success' && needs.changes.outputs.build_needed == 'true' && github.event_name != 'push'"
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -303,7 +310,7 @@ jobs:
 
   release:
     name: release (${{ matrix.arch }})
-    needs: [build, test]
+    needs: [build, img-test]
     # Publish on main from a push to this repo or an upstream cascade
     # (repository_dispatch: base-updated). PRs and other branches never publish.
     #
@@ -314,7 +321,7 @@ jobs:
     # need doesn't auto-skip release. A failed build still blocks publish; a
     # tests-only push (build skipped) yields build.result!='success' -> no
     # republish, which is correct.
-    if: ${{ always() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'repository_dispatch') && needs.build.result == 'success' && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
+    if: ${{ always() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'repository_dispatch') && needs.build.result == 'success' && (needs['img-test'].result == 'success' || needs['img-test'].result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
