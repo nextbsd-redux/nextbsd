@@ -1,8 +1,0 @@
-
-Welcome to FreeBSD livecd.
-
-This is a writable live system: the root filesystem is an in-kernel
-unionfs(5) overlay of a compressed read-only UFS (uzip-backed) plus a
-tmpfs writable upper layer. All changes you make are kept in RAM and
-discarded on reboot.
-

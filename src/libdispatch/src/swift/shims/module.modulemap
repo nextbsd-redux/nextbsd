@@ -1,3 +1,0 @@
-module _DispatchOverlayShims {
-  header "DispatchOverlayShims.h"
-}

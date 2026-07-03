@@ -1,6 +1,0 @@
-env "FOO_COMMAND"
-application "foo"
-	default
-	cwdpath "bin/foo"
-application "newfoo"
-	cwdpath "bin/newfoo"

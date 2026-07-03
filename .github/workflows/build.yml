@@ -89,19 +89,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # `freebsd` is what vmactions/freebsd-vm expects as its release
-        # tag (a bare "15.1" — it doesn't accept "-RELEASE" / "-STABLE"
-        # suffixes) AND the FreeBSD release the rootfs gap-fillers (the
-        # VM's /bin /sbin /usr/bin copied no-clobber in build.sh, e.g.
-        # init/uname) come from -- so it must track the base releng train,
-        # not lag it. `variant` distinguishes release trains; build.sh
-        # reports it.
-        # The matrix entries below pair them; add a new include block when
-        # vmactions gains snapshot support or CI gains a non-vmactions runner.
+        # `freebsd` is the vmactions/freebsd-vm release (bare "15.1"). Both
+        # arches build in the SAME x86 FreeBSD 15.1 VM: the image is assembled
+        # host-driven (pkg -r install, host pwd_mkdb/cap_mkdb, arch-agnostic
+        # makefs/mkuzip/mkimg), so aarch64 needs no qemu-user. The two entries
+        # run as independent parallel matrix legs.
         include:
           - freebsd: '15.1'
-            variant: '15.1-RELEASE'
             arch: 'amd64'
+          - freebsd: '15.1'
+            arch: 'arm64'
     steps:
       - uses: actions/checkout@v4
 
@@ -122,79 +119,6 @@ jobs:
       - name: compute build date
         id: meta
         run: echo "date=$(date -u +%Y%m%d-%H%M%S)" >> "$GITHUB_OUTPUT"
-
-      # Pull the from-source base artifact from nextbsd-freebsd-compat into the
-      # workspace ($ROOT/base-artifact/), which vmactions rsyncs into the VM.
-      # build.sh lays this down as the ENTIRE rootfs (overlay-first: zero
-      # pkgbase; pkg bootstraps on our own base). Needs DISPATCH_TOKEN
-      # (cross-repo artifact read). amd64 only for now.
-      - name: download nextbsd base from compat continuous release
-        if: matrix.arch == 'amd64'
-        env:
-          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
-        run: |
-          mkdir -p base-artifact
-          # Ingest the CI-gated base from nextbsd-freebsd-compat's rolling
-          # `continuous` release (always present; only a green main build
-          # refreshes it). Same tarball + path build.sh already expects, so the
-          # overlay-first rootfs lay-down is unchanged.
-          gh release download continuous \
-            -R nextbsd-redux/nextbsd-freebsd-compat \
-            --pattern "nextbsd-base-${{ matrix.arch }}.tar.gz" \
-            --dir base-artifact --clobber
-          ls -lh base-artifact/
-
-      # Pull the NEXTBSD kernel (ident NEXTBSD, = GENERIC) from nextbsd-kernel,
-      # replacing the pkgbase FreeBSD-kernel-generic. The nextbsd-kernel-<arch>
-      # artifact is the obj subtree down to sys/NEXTBSD/ — it contains both the
-      # built `kernel` and the opt_*.h build dir that mach.ko must compile
-      # against (KBI match). build.sh installs it to /boot/kernel/kernel and
-      # points the mach.ko build at it. amd64 only for now.
-      - name: download NEXTBSD kernel from kernel continuous release
-        if: matrix.arch == 'amd64'
-        env:
-          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
-        run: |
-          mkdir -p kernel-artifact
-          gh release download continuous \
-            -R nextbsd-redux/nextbsd-kernel \
-            --pattern "nextbsd-kernel-${{ matrix.arch }}.tar.gz" \
-            --output /tmp/nextbsd-kernel.tar.gz --clobber
-          # The asset is the sys/NEXTBSD obj subtree (kernel + opt_*.h), tarred
-          # in-container so the kernel's exec bit survives. Extract it to
-          # reproduce the tree build.sh locates via `find ... -name kernel`.
-          tar -C kernel-artifact -xzf /tmp/nextbsd-kernel.tar.gz
-          echo "kernel artifact tree (sys/NEXTBSD):"
-          find kernel-artifact -name kernel -path '*sys/NEXTBSD*' -o -name 'opt_global.h' 2>/dev/null | head
-
-      # Pull driver kexts (IntelWiFi.kext, ... with bundled firmware) from the
-      # nextbsd-kernel-modules continuous release; build.sh installs them into
-      # /System/Library/Extensions. The legacy GENERIC .ko module tree is no
-      # longer shipped — /boot/kernel holds only the kernel, and drivers come as
-      # kexts (the kernel boots on its built-in drivers regardless).
-      - name: download NEXTBSD driver kexts from modules continuous release
-        if: matrix.arch == 'amd64'
-        env:
-          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
-        run: |
-          # Driver-kext tarballs, extracted + installed inside the VM by build.sh
-          # (the build.sh loop installs every kext-dl/*.tar.gz it finds). Each is
-          # non-fatal if absent (ISO just ships without that driver kext).
-          # Iterate over full asset stems: most are <driver>-kext, but the
-          # drm-kmod graphics stack ships as one graphics-kexts (plural — it is
-          # IOGraphics/DMABuf/TTM drm core + IntelGraphics/AMDGraphics/
-          # RadeonGraphics, each with its bundled vendor firmware).
-          mkdir -p kext-dl
-          for asset in intelwifi-kext intelethernet-kext graphics-kexts; do
-            if gh release download continuous \
-                 -R nextbsd-redux/nextbsd-kernel-modules \
-                 --pattern "${asset}.tar.gz" \
-                 --output "kext-dl/${asset}.tar.gz" --clobber; then
-              echo "kext tarball: $(ls -lh kext-dl/${asset}.tar.gz | awk '{print $5}')"
-            else
-              echo "WARN: no ${asset}.tar.gz asset; ISO ships without it"
-            fi
-          done
 
       - name: build ISO inside FreeBSD VM
         uses: vmactions/freebsd-vm@v1
@@ -221,10 +145,8 @@ jobs:
           run: |
             set -eu
             export FREEBSD_VERSION=${{ matrix.freebsd }}
-            export FREEBSD_VARIANT=${{ matrix.variant }}
             export ARCH=${{ matrix.arch }}
             export IMG_DATE=${{ steps.meta.outputs.date }}
-            export NEXTBSD_BASE_FROM_SOURCE=1   # STAGE 2: overlay from-source base
             sh build.sh
 
       - name: checksum + summary
@@ -289,6 +211,9 @@ jobs:
         if: needs.changes.outputs.build_needed == 'true'
         uses: actions/download-artifact@v4
         with:
+          # Only THIS arch's artifact — the matrix builds both, and a bare glob
+          # would otherwise match both arches' images.
+          pattern: NextBSD-${{ matrix.arch }}-*
           path: out/
           merge-multiple: true
 
@@ -300,7 +225,7 @@ jobs:
           mkdir -p out
           gh release download continuous \
             --repo "$GITHUB_REPOSITORY" \
-            --pattern 'NextBSD-*.img.zip' \
+            --pattern 'NextBSD-${{ matrix.arch }}-*.img.zip' \
             --dir out/ --clobber
           ls -lh out/
 
@@ -312,7 +237,7 @@ jobs:
       - name: boot test
         run: |
           chmod +x tests/boot-test.sh
-          IMG=$(ls out/NextBSD-*.img.zip)
+          IMG=$(ls out/NextBSD-${{ matrix.arch }}-*.img.zip)
           ./tests/boot-test.sh "$IMG"
 
       - name: dump [T39/T41] trace from boot log
@@ -347,6 +272,7 @@ jobs:
       - name: download built ISO (artifact)
         uses: actions/download-artifact@v4
         with:
+          pattern: NextBSD-${{ matrix.arch }}-*
           path: out/
           merge-multiple: true
 
@@ -358,7 +284,7 @@ jobs:
       - name: iso boot test
         run: |
           chmod +x tests/iso-boot-test.sh
-          ISO=$(ls out/NextBSD-*.iso.zip)
+          ISO=$(ls out/NextBSD-${{ matrix.arch }}-*.iso.zip)
           ./tests/iso-boot-test.sh "$ISO"
 
       - name: dump live ISO serial log
