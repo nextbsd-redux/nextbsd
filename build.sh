@@ -66,15 +66,16 @@ tar -xJf "$DIST/src.txz" -C "$WORK/freebsd-src"
 # ---------------------------------------------------------------------------
 mkdir -p "$RF"
 
-# BOOTSTRAP pkg TLS: rehash the build VM's CA store so pkg can fetch over https
-# (GitHub release assets for the NextBSD repo, and pkg.FreeBSD.org). certctl
-# ships in the base FreeBSD VM. This is the key "make pkg work in the build"
-# step — without a hashed trust store, `pkg update` fails the https handshake.
+# BOOTSTRAP pkg TLS: rehash the build VM's CA store so pkg can fetch the NextBSD
+# flat repo over https (GitHub release assets). certctl ships in the base VM.
 certctl rehash 2>/dev/null || true
 
-# Point pkg at the nextbsd-pkg flat repo (unsigned rolling snapshot).
-mkdir -p /usr/local/etc/pkg/repos
-cat > /usr/local/etc/pkg/repos/NextBSD.conf <<CONF
+# ISOLATE to ONLY the NextBSD repo. The vmactions VM ships enabled FreeBSD
+# pkgbase/ports repos that are SIGNED with keys we don't have (they error
+# "Error loading trusted certificates" and jam the SAT solver). Point pkg at a
+# private REPOS_DIR that contains just the unsigned NextBSD flat repo.
+NBREPO="$WORK/nbrepo"; mkdir -p "$NBREPO"
+cat > "$NBREPO/NextBSD.conf" <<CONF
 NextBSD: {
   url: "${PKG_REPO_URL}",
   enabled: yes,
@@ -82,13 +83,22 @@ NextBSD: {
 }
 CONF
 
-# Install into $RF. `-r` sets the install root (host-driven, not chroot). The VM
-# is real FreeBSD 15.1 so the FreeBSD:15 ABI resolves natively; ABI is set
-# explicitly and IGNORE_OSVERSION covers the rolling snapshot's osversion stamp.
-PKG="env ASSUME_ALWAYS_YES=yes IGNORE_OSVERSION=yes ABI=$PKG_ABI pkg -r $RF"
-echo "==> pkg update + install NextBSD-everything into $RF"
+# Install into $RF. `-r` sets the install root (host-driven, not chroot).
+#   ABI=FreeBSD:15:<arch>  — for arm64 we cross-install aarch64 packages in the
+#                            x86 VM; amd64 matches the VM natively.
+#   OSVERSION=$(uname -K)  — pkg requires OSVERSION when ABI is set; the VM
+#                            kernel (15.1) is the right value for both arches.
+#   IGNORE_OSVERSION       — the rolling snapshot's stamp shouldn't gate install.
+export ASSUME_ALWAYS_YES=yes IGNORE_OSVERSION=yes
+export ABI="$PKG_ABI" OSVERSION="$(uname -K)"
+PKG="pkg -r $RF -o REPOS_DIR=$NBREPO"
+echo "==> pkg update + install NextBSD-everything into $RF (ABI=$ABI OSVERSION=$OSVERSION)"
 $PKG update -f
 $PKG install -y NextBSD-everything
+# Fail loudly if the install laid down nothing (empty rootfs -> later steps die
+# with confusing errors). The package ships /private/etc (the /etc symlink is
+# made below by the Apple layout), so check there.
+[ -s "$RF/private/etc/master.passwd" ] || { echo "ERROR: NextBSD-everything install produced no /private/etc/master.passwd" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 # 3. Apple /private layout + runtime skeleton.
