@@ -3,8 +3,10 @@
 #
 # The entire OS now comes from the nextbsd-pkg flat repo: one `pkg install
 # NextBSD-everything` lays down the freebsd-compat base + kernel + Darwin
-# userland (incl. the LaunchDaemons/`/private/etc` overlay, bundled into the
-# NextBSD-userland package) + kexts. There is NO in-chroot compile — src/ is
+# userland (incl. the LaunchDaemons, bundled into the NextBSD-userland package)
+# + kexts. The user-editable /etc config (accounts, sshd_config, pam.d, fstab,
+# ...) is NOT package-owned — it is seeded from the nextbsd-overlays repo below
+# so `pkg upgrade` can never clobber it. There is NO in-chroot compile — src/ is
 # gone — and no tar-extract/hand-drop of base/kernel/kexts.
 #
 # Runs inside a FreeBSD 15.1 VM (vmactions) — a REAL FreeBSD host, so pkg(8) is
@@ -96,9 +98,9 @@ echo "==> pkg update + install NextBSD-everything into $RF (ABI=$ABI OSVERSION=$
 $PKG update -f
 $PKG install -y NextBSD-everything
 # Fail loudly if the install laid down nothing (empty rootfs -> later steps die
-# with confusing errors). The package ships /private/etc (the /etc symlink is
-# made below by the Apple layout), so check there.
-[ -s "$RF/private/etc/master.passwd" ] || { echo "ERROR: NextBSD-everything install produced no /private/etc/master.passwd" >&2; exit 1; }
+# with confusing errors). The user /etc config is seeded from nextbsd-overlays
+# below (deliberately NOT package-owned), so guard on a package-core binary.
+[ -x "$RF/sbin/launchd" ] || { echo "ERROR: NextBSD-everything install produced no /sbin/launchd" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 # 3. Apple /private layout + runtime skeleton.
@@ -114,6 +116,19 @@ for _pd in etc var tmp; do
     fi
     ln -s "private/$_pd" "$RF/$_pd"
 done
+
+# 3b. Seed the pkg-free, admin-owned /etc + loader fragment from nextbsd-overlays.
+#     These are laid down by the assembler, NOT any package, so `pkg upgrade`
+#     never clobbers a user's accounts / SSH / PAM config. Cloned fresh each build
+#     so a new image always carries the current defaults. (They were split out of
+#     the NextBSD-userland package's overlay/ for exactly this reason.)
+OVL="$WORK/nextbsd-overlays"
+rm -rf "$OVL"
+git clone --depth 1 https://github.com/nextbsd-redux/nextbsd-overlays "$OVL"
+cp -R "$OVL/rootfs/." "$RF/"
+chmod 0600 "$RF/private/etc/master.passwd"
+[ -s "$RF/private/etc/master.passwd" ] || { echo "ERROR: nextbsd-overlays seed produced no master.passwd" >&2; exit 1; }
+
 # launchd -w job-overrides DB dir so launchd loads cleanly at boot.
 mkdir -p "$RF/private/var/db/launchd.db/com.apple.launchd"
 # /var skeleton + utmpx (PAM pam_open_session needs utx.* or login aborts).
@@ -228,8 +243,8 @@ chown -R 0:0 "$RF" 2>/dev/null || true
 
 #
 # 6. assemble the bootable GPT disk image (BIOS + UEFI, rw UFS root).
-#    No /etc/fstab heredoc — overlays/private/etc/fstab carries the real root
-#    entry, and overlays/boot/loader.conf.d/ carries the loader
+#    No /etc/fstab heredoc — the nextbsd-overlays seed (rootfs/private/etc/fstab) carries the real root
+#    entry, and nextbsd-overlays rootfs/boot/loader.conf.d/ carries the loader
 #    settings. The kernel mounts the freebsd-ufs partition read-only;
 #    launchd PID 1 remounts it read-write before starting any daemon.
 #    No cd9660, no uzip, no unionfs, no ramdisk pivot.
@@ -267,7 +282,7 @@ echo "==> [libscan] end"
 
 # 6a. root UFS — content plus ~1.5 GB read-write headroom. UFS label
 #     "ROOTFS" matches loader.conf.d's vfs.root.mountfrom and the
-#     overlays/private/etc/fstab entry. softupdates for crash resilience.
+#     the nextbsd-overlays seed (rootfs/private/etc/fstab) entry. softupdates for crash resilience.
 # Force the ENTIRE staged tree to root:wheel (uid/gid 0) before makefs records
 # it. makefs bakes in the staging tree's on-disk ownership, but the tree is
 # assembled by the unprivileged build user: mkdir'd top-level dirs (/, /usr,
