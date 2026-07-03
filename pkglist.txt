@@ -1,0 +1,10 @@
+# Extra packages baked into the published NextBSD img + ISO from the FreeBSD
+# ports repo (pkg.FreeBSD.org). Both images are assembled from the same rootfs,
+# so everything listed here ships in BOTH the .img and the .iso.
+#
+# pkg resolves each package's full dependency closure automatically, so unlike
+# the curated base srclist there is no manual runtime-lib audit — the whole
+# .so closure is installed as packages.
+#
+# One package per line. Blank lines and #-comments are ignored.
+pkg

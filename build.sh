@@ -141,9 +141,15 @@ pwd_mkdb -p -d "$RF/etc" "$RF/etc/master.passwd"
 env DESTDIR="$RF" certctl rehash 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# 5. FreeBSD ports repo in the SHIPPED image (arch-dynamic) so a user on the
-#    installed system can `pkg install <port>` out of the box. NextBSD rebrands
-#    the ABI, so pin FreeBSD:15:<arch> + ignore the osversion gate (#357).
+# 5. pkg repos in the SHIPPED image (arch-dynamic) so a user on the installed
+#    system can `pkg install` out of the box. Exactly TWO repos, deliberately:
+#      - FreeBSD: pkg.FreeBSD.org/latest  (FreeBSD *packages* — ports)
+#      - NextBSD: the nextbsd-pkg continuous flat repo (the NextBSD base/world)
+#    NOT the FreeBSD pkgbase base/kmods repos — NextBSD supplies its own base,
+#    and we never want FreeBSD-base/FreeBSD-kernel packages on the image. Those
+#    are only ever on the build VM (in its own /etc/pkg) and are never written
+#    into $RF. NextBSD rebrands the ABI, so pin FreeBSD:15:<arch> + ignore the
+#    osversion gate (#357). The NextBSD flat repo is unsigned (GitHub assets).
 # ---------------------------------------------------------------------------
 mkdir -p "$RF/usr/local/etc/pkg/repos"
 cat > "$RF/usr/local/etc/pkg/repos/FreeBSD.conf" <<CONF
@@ -153,10 +159,38 @@ FreeBSD: {
   enabled: yes
 }
 CONF
+cat > "$RF/usr/local/etc/pkg/repos/NextBSD.conf" <<CONF
+NextBSD: {
+  url: "${PKG_REPO_URL}",
+  enabled: yes,
+  signature_type: none,
+}
+CONF
 cat > "$RF/usr/local/etc/pkg.conf" <<CONF
 ABI = "FreeBSD:15:${ABIARCH}";
 IGNORE_OSVERSION = yes;
 CONF
+
+# ---------------------------------------------------------------------------
+# 5b. Bake pkglist.txt packages into the shipped rootfs from the FreeBSD ports
+#     repo, so BOTH the published .img and .iso (same rootfs) ship them out of
+#     the box (pkg + git). Uses the FreeBSD.conf written just above via a
+#     REPOS_DIR override so pkg ignores the build VM's own signed repos (which
+#     jam the SAT solver). pkg resolves each package's full dependency closure
+#     automatically — no manual runtime-lib audit (unlike the base srclist); the
+#     libscan step below then re-verifies the closure over the whole rootfs.
+#     ABI / OSVERSION / IGNORE_OSVERSION / ASSUME_ALWAYS_YES are still exported
+#     from the NextBSD-everything install above.
+# ---------------------------------------------------------------------------
+if [ -f "$ROOT/pkglist.txt" ]; then
+    EXTRA_PKGS=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$ROOT/pkglist.txt" | tr '\n' ' ')
+    if [ -n "$EXTRA_PKGS" ]; then
+        echo "==> installing pkglist.txt packages from FreeBSD repo: $EXTRA_PKGS"
+        FBSD_REPOS="$RF/usr/local/etc/pkg/repos"
+        pkg -r "$RF" -o REPOS_DIR="$FBSD_REPOS" update -f
+        pkg -r "$RF" -o REPOS_DIR="$FBSD_REPOS" install -y $EXTRA_PKGS
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # 6. Version identity (single source of truth = $IMG_DATE).
