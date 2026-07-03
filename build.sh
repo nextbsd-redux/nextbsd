@@ -493,7 +493,12 @@ ISOROOT="$WORK/isoroot"
 rm -rf "$ISOROOT"
 mkdir -p "$ISOROOT/boot/loader.conf.d" "$ISOROOT/etc"
 cp -R "$WORK/rootfs/boot/." "$ISOROOT/boot/"
-for f in cdboot loader.efi; do
+# cdboot is the BIOS El Torito boot block — amd64 only; arm64 ISOs are UEFI-only
+# (booted from loader.efi via the ESP El Torito image). Require cdboot only when
+# it exists; loader.efi is required on both.
+_isoreq="loader.efi"
+[ -f "$ISOROOT/boot/cdboot" ] && _isoreq="cdboot loader.efi"
+for f in $_isoreq; do
     [ -f "$ISOROOT/boot/$f" ] || { echo "ERROR: live ISO needs rootfs/boot/$f" >&2; exit 1; }
 done
 cp "$WORK/mfsroot.img" "$ISOROOT/boot/mfsroot.img"
