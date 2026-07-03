@@ -141,9 +141,15 @@ pwd_mkdb -p -d "$RF/etc" "$RF/etc/master.passwd"
 env DESTDIR="$RF" certctl rehash 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# 5. FreeBSD ports repo in the SHIPPED image (arch-dynamic) so a user on the
-#    installed system can `pkg install <port>` out of the box. NextBSD rebrands
-#    the ABI, so pin FreeBSD:15:<arch> + ignore the osversion gate (#357).
+# 5. pkg repos in the SHIPPED image (arch-dynamic) so a user on the installed
+#    system can `pkg install` out of the box. Exactly TWO repos, deliberately:
+#      - FreeBSD: pkg.FreeBSD.org/latest  (FreeBSD *packages* — ports)
+#      - NextBSD: the nextbsd-pkg continuous flat repo (the NextBSD base/world)
+#    NOT the FreeBSD pkgbase base/kmods repos — NextBSD supplies its own base,
+#    and we never want FreeBSD-base/FreeBSD-kernel packages on the image. Those
+#    are only ever on the build VM (in its own /etc/pkg) and are never written
+#    into $RF. NextBSD rebrands the ABI, so pin FreeBSD:15:<arch> + ignore the
+#    osversion gate (#357). The NextBSD flat repo is unsigned (GitHub assets).
 # ---------------------------------------------------------------------------
 mkdir -p "$RF/usr/local/etc/pkg/repos"
 cat > "$RF/usr/local/etc/pkg/repos/FreeBSD.conf" <<CONF
@@ -151,6 +157,13 @@ FreeBSD: {
   url: "pkg+https://pkg.FreeBSD.org/FreeBSD:15:${ABIARCH}/latest",
   mirror_type: "srv",
   enabled: yes
+}
+CONF
+cat > "$RF/usr/local/etc/pkg/repos/NextBSD.conf" <<CONF
+NextBSD: {
+  url: "${PKG_REPO_URL}",
+  enabled: yes,
+  signature_type: none,
 }
 CONF
 cat > "$RF/usr/local/etc/pkg.conf" <<CONF
