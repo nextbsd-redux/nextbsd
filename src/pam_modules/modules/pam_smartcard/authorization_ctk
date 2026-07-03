@@ -1,3 +1,0 @@
-# ctk: auth 
-auth       required       pam_smartcard.so 		use_first_pass pkinit
-account    required       pam_opendirectory.so  non_password_auth
