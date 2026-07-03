@@ -211,6 +211,9 @@ jobs:
         if: needs.changes.outputs.build_needed == 'true'
         uses: actions/download-artifact@v4
         with:
+          # Only THIS arch's artifact — the matrix builds both, and a bare glob
+          # would otherwise match both arches' images.
+          pattern: NextBSD-${{ matrix.arch }}-*
           path: out/
           merge-multiple: true
 
@@ -222,7 +225,7 @@ jobs:
           mkdir -p out
           gh release download continuous \
             --repo "$GITHUB_REPOSITORY" \
-            --pattern 'NextBSD-*.img.zip' \
+            --pattern 'NextBSD-${{ matrix.arch }}-*.img.zip' \
             --dir out/ --clobber
           ls -lh out/
 
@@ -234,7 +237,7 @@ jobs:
       - name: boot test
         run: |
           chmod +x tests/boot-test.sh
-          IMG=$(ls out/NextBSD-*.img.zip)
+          IMG=$(ls out/NextBSD-${{ matrix.arch }}-*.img.zip)
           ./tests/boot-test.sh "$IMG"
 
       - name: dump [T39/T41] trace from boot log
@@ -269,6 +272,7 @@ jobs:
       - name: download built ISO (artifact)
         uses: actions/download-artifact@v4
         with:
+          pattern: NextBSD-${{ matrix.arch }}-*
           path: out/
           merge-multiple: true
 
@@ -280,7 +284,7 @@ jobs:
       - name: iso boot test
         run: |
           chmod +x tests/iso-boot-test.sh
-          ISO=$(ls out/NextBSD-*.iso.zip)
+          ISO=$(ls out/NextBSD-${{ matrix.arch }}-*.iso.zip)
           ./tests/iso-boot-test.sh "$ISO"
 
       - name: dump live ISO serial log
