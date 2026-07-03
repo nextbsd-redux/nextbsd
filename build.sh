@@ -120,6 +120,10 @@ mkdir -p "$RF/private/var/db/launchd.db/com.apple.launchd"
 mkdir -p "$RF/var/run" "$RF/var/log" "$RF/var/db" "$RF/var/empty" \
          "$RF/var/tmp" "$RF/tmp" "$RF/dev"
 chmod 1777 "$RF/tmp" "$RF/var/tmp"
+# /usr/share/locale must exist or locale(1) err()s on opendir before it can
+# even list the built-in C/POSIX locales (init_locales_list() aborts). The
+# curated base ships no locale data; create the dir so the C locale works.
+mkdir -p "$RF/usr/share/locale"
 : > "$RF/var/run/utx.active"; : > "$RF/var/log/utx.lastlogin"; : > "$RF/var/log/utx.log"
 chmod 644 "$RF/var/run/utx.active" "$RF/var/log/utx.lastlogin" "$RF/var/log/utx.log"
 mkdir -p "$RF/root"; chmod 0700 "$RF/root"
