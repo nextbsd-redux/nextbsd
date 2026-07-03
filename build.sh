@@ -175,6 +175,15 @@ NBV
     chmod 0555 "$RF/bin/nextbsd-version"
 fi
 
+# Retire the kld* user CLIs (#193, Apple-shape): macOS ships kextload/kextstat,
+# not kldload — only the CLI front-ends go; the kld*(2) syscalls stay, and
+# kext_tools (userland) provides the kext* replacements. The curated base ships
+# only kldxref (rm the whole set anyway; harmless if a name is absent). The
+# kernel has NO_MODULES, so no linker.hints to generate.
+rm -f "$RF/sbin/kldload" "$RF/sbin/kldunload" "$RF/sbin/kldstat" \
+      "$RF/sbin/kldconfig" "$RF/usr/sbin/kldxref" \
+      "$RF/usr/lib/debug/usr/sbin/kldxref.debug"
+
 # Bake root:wheel ownership across the tree before the media tail (which also
 # re-chowns before makefs, but do it here so the pkg-installed perms are sane).
 chown -R 0:0 "$RF" 2>/dev/null || true
