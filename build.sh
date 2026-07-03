@@ -180,6 +180,18 @@ if [ -f "$ROOT/pkglist.txt" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 5c. Clone gershwin-developer into /Developer so the shipped img + ISO carry
+#     the developer toolkit out of the box (the four-domain layout's /Developer
+#     root). Uses the build VM's git (installed in the workflow prepare step),
+#     not the freshly-installed image git. The repo is small; keep a full clone
+#     (incl. .git) so it can be updated with `git pull` on the booted system.
+# ---------------------------------------------------------------------------
+GERSHWIN_DEV_URL="https://github.com/gershwin-desktop/gershwin-developer.git"
+echo "==> cloning gershwin-developer into $RF/Developer"
+rm -rf "$RF/Developer"
+git clone "$GERSHWIN_DEV_URL" "$RF/Developer"
+
+# ---------------------------------------------------------------------------
 # 6. Version identity (single source of truth = $IMG_DATE).
 # ---------------------------------------------------------------------------
 cat > "$RF/etc/os-release" <<OSREL
