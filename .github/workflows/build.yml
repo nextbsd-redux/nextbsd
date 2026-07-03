@@ -89,16 +89,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # `freebsd` is the vmactions/freebsd-vm release (bare "15.1"). Both
-        # arches build in the SAME x86 FreeBSD 15.1 VM: the image is assembled
-        # host-driven (pkg -r install, host pwd_mkdb/cap_mkdb, arch-agnostic
-        # makefs/mkuzip/mkimg), so aarch64 needs no qemu-user. The two entries
-        # run as independent parallel matrix legs.
+        # `freebsd` is the vmactions/freebsd-vm release (bare "15.1"). The image
+        # is assembled host-driven (pkg -r install, host pwd_mkdb/cap_mkdb,
+        # arch-agnostic makefs/mkuzip/mkimg) in the x86 FreeBSD 15.1 VM, so an
+        # aarch64 image needs no qemu-user to BUILD.
+        #
+        # arm64 is TEMPORARILY DISABLED: the aarch64 ISO builds+publishes fine
+        # but does not boot, and CI never caught it because the disk `test` and
+        # live `iso-test` jobs are amd64-only (they run qemu-system-x86; booting
+        # aarch64 needs qemu-system-aarch64 + AAVMF firmware). Re-added in a
+        # follow-up together with an aarch64 boot test, and only once it boots
+        # green. build.sh keeps its arch-aware paths (ABIARCH, BOOTAA64.EFI,
+        # UEFI-only mkimg) so re-enabling is just restoring the matrix leg.
         include:
           - freebsd: '15.1'
             arch: 'amd64'
-          - freebsd: '15.1'
-            arch: 'arm64'
     steps:
       - uses: actions/checkout@v4
 
