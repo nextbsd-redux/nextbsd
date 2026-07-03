@@ -193,36 +193,6 @@ if [ -f "$ROOT/pkglist.txt" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 5c. Clone gershwin-developer into /Developer so the shipped img + ISO carry
-#     the developer toolkit out of the box (the four-domain layout's /Developer
-#     root). Uses the build VM's git (installed in the workflow prepare step),
-#     not the freshly-installed image git. The repo is small; keep a full clone
-#     (incl. .git) so it can be updated with `git pull` on the booted system.
-# ---------------------------------------------------------------------------
-GERSHWIN_DEV_URL="https://github.com/gershwin-desktop/gershwin-developer.git"
-echo "==> cloning gershwin-developer into $RF/Developer"
-rm -rf "$RF/Developer"
-git clone "$GERSHWIN_DEV_URL" "$RF/Developer"
-
-# ---------------------------------------------------------------------------
-# 5d. Bake gershwin's build dependencies into the image — the effect of
-#     gershwin-developer's Bootstrap.sh nextbsd path (which just `pkg install`s
-#     Library/OSSupport/nextbsd.txt), done HOST-DRIVEN so it uses the build
-#     host's network/certs (no chroot / devfs / resolv.conf) and cross-installs
-#     for aarch64 later. Reading the toolkit's own list keeps it in sync. With
-#     these + the xlibre packages above, the img + ISO carry everything needed
-#     to build and run gershwin (the user then runs Install-System-Domain.sh).
-# ---------------------------------------------------------------------------
-GERSHWIN_REQ="$RF/Developer/Library/OSSupport/nextbsd.txt"
-if [ -f "$GERSHWIN_REQ" ]; then
-    GERSHWIN_DEPS=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$GERSHWIN_REQ" | tr '\n' ' ')
-    if [ -n "$GERSHWIN_DEPS" ]; then
-        echo "==> installing gershwin build deps (nextbsd.txt) into $RF: $GERSHWIN_DEPS"
-        pkg -r "$RF" -o REPOS_DIR="$RF/usr/local/etc/pkg/repos" install -y $GERSHWIN_DEPS
-    fi
-fi
-
-# ---------------------------------------------------------------------------
 # 6. Version identity (single source of truth = $IMG_DATE).
 # ---------------------------------------------------------------------------
 cat > "$RF/etc/os-release" <<OSREL
