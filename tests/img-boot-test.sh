@@ -96,7 +96,10 @@ send "set console=comconsole\r"; expect "set console=comconsole"; expect "OK "
 send "set boot_serial=YES\r";    expect "set boot_serial=YES";    expect "OK "
 send "set comconsole_speed=115200\r"; expect "set comconsole_speed=115200"; expect "OK "
 send "set boot_multicons=YES\r"; expect "set boot_multicons=YES"; expect "OK "
-send "boot\r"
+# boot VERBOSE: the shipped image sets boot_mutemsgs="YES" (nextbsd#363), which
+# mutes kernel console output. RB_VERBOSE (boot -v) bypasses the mute so CI sees
+# full boot output; shipped images (booted normally) stay quiet.
+send "boot -v\r"
 
 # Stage 1: launchd PID 1 comes up and getty reaches a login prompt.
 expect {
