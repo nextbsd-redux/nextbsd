@@ -9,3 +9,16 @@
 # One package per line. Blank lines and #-comments are ignored.
 pkg
 git
+
+# X11 (Xlibre) — a minimal X server + input/video drivers so the desktop can
+# run on the ISO and installed system. gershwin's own build deps come from
+# gershwin-developer's Library/OSSupport/nextbsd.txt (installed separately).
+xlibre-minimal
+xlibre-xf86-input-evdev
+xlibre-xf86-input-joystick
+xlibre-xf86-input-keyboard
+xlibre-xf86-input-mouse
+xlibre-xf86-input-synaptics
+xlibre-xf86-input-vmmouse
+xlibre-xf86-video-scfb
+xlibre-xf86-video-vesa
