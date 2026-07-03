@@ -159,6 +159,27 @@ IGNORE_OSVERSION = yes;
 CONF
 
 # ---------------------------------------------------------------------------
+# 5b. Bake pkglist.txt packages into the shipped rootfs from the FreeBSD ports
+#     repo, so BOTH the published .img and .iso (same rootfs) ship them out of
+#     the box (pkg + git). Uses the FreeBSD.conf written just above via a
+#     REPOS_DIR override so pkg ignores the build VM's own signed repos (which
+#     jam the SAT solver). pkg resolves each package's full dependency closure
+#     automatically — no manual runtime-lib audit (unlike the base srclist); the
+#     libscan step below then re-verifies the closure over the whole rootfs.
+#     ABI / OSVERSION / IGNORE_OSVERSION / ASSUME_ALWAYS_YES are still exported
+#     from the NextBSD-everything install above.
+# ---------------------------------------------------------------------------
+if [ -f "$ROOT/pkglist.txt" ]; then
+    EXTRA_PKGS=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$ROOT/pkglist.txt" | tr '\n' ' ')
+    if [ -n "$EXTRA_PKGS" ]; then
+        echo "==> installing pkglist.txt packages from FreeBSD repo: $EXTRA_PKGS"
+        FBSD_REPOS="$RF/usr/local/etc/pkg/repos"
+        pkg -r "$RF" -o REPOS_DIR="$FBSD_REPOS" update -f
+        pkg -r "$RF" -o REPOS_DIR="$FBSD_REPOS" install -y $EXTRA_PKGS
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # 6. Version identity (single source of truth = $IMG_DATE).
 # ---------------------------------------------------------------------------
 cat > "$RF/etc/os-release" <<OSREL
