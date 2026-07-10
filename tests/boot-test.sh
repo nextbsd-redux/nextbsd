@@ -71,7 +71,14 @@ if [ -z "$OVMF" ]; then
 fi
 echo "==> using UEFI firmware: $OVMF"
 
-export ACCEL_FLAGS OVMF
+# BOOT_TRACE=1 turns on the mach.debug_enable + launchd_trace kenvs at the
+# loader. OFF by default (nextbsd#369): with the console un-muted those trace
+# points push ~thousands of kernel printfs through the emulated UART, which
+# buries the on-image test markers and perturbs timing-sensitive Mach
+# handshakes. Set BOOT_TRACE=1 to get the paper trail back for root-cause runs.
+BOOT_TRACE="${BOOT_TRACE:-0}"
+
+export ACCEL_FLAGS OVMF BOOT_TRACE
 
 cat > "$EXP" <<'EOF'
 set timeout 480
@@ -137,18 +144,34 @@ expect "OK "
 send "set boot_multicons=YES\r"
 expect "set boot_multicons=YES"
 expect "OK "
-# Verbose diagnostic trace toggles. CI-only — the shipped ISO is
-# silent by default. The kernel reads mach.debug_enable as a tunable
-# (CTLFLAG_RWTUN) at boot; launchd PID 1 and libxpc both read kenv
-# "launchd_trace=1" once at startup. Together these gate the [T41-*]
-# / [T39-*] trace points; keeping them on for CI gives a paper trail
-# for the next regression.
-send "set mach.debug_enable=1\r"
-expect "set mach.debug_enable=1"
+# Undo the shipped console mute for CI only (nextbsd#363, nextbsd#369).
+# nextbsd-overlays' /boot/loader.conf.d sets boot_mutemsgs="YES" so a normal
+# boot has a macOS-clean login console. That mutes the kernel console for the
+# whole boot, and the on-image test markers this script matches ride the same
+# console — so with the mute in place the expect blocks below time out on
+# markers that were in fact emitted. Clear it here, where we already opt CI into
+# the serial console. `NO` (not `unset`) is deliberate: the loader's howto
+# builder does `val != NULL && strcasecmp(val, "no") != 0` (sys/kern/subr_boot.c
+# boot_env_to_howto), so `=NO` clears RB_MUTEMSGS while keeping the var set.
+send "set boot_mutemsgs=NO\r"
+expect "set boot_mutemsgs=NO"
 expect "OK "
-send "set launchd_trace=1\r"
-expect "set launchd_trace=1"
-expect "OK "
+# Verbose diagnostic trace toggles. CI-only, and OFF by default (nextbsd#369):
+# the kernel reads mach.debug_enable as a tunable (CTLFLAG_RWTUN) at boot;
+# launchd PID 1 and libxpc both read kenv "launchd_trace=1" once at startup.
+# Together they gate the [T41-*]/[T39-*] trace points. With the console un-muted
+# (above) that is thousands of blocking kernel printfs over a 115200 emulated
+# UART — enough to bury the markers and perturb the notifyd/syslogd Mach
+# handshake. BOOT_TRACE=1 brings them back for root-cause runs.
+if {$env(BOOT_TRACE) eq "1"} {
+    puts "\n==> BOOT_TRACE=1: enabling mach.debug_enable + launchd_trace"
+    send "set mach.debug_enable=1\r"
+    expect "set mach.debug_enable=1"
+    expect "OK "
+    send "set launchd_trace=1\r"
+    expect "set launchd_trace=1"
+    expect "OK "
+}
 send "boot\r"
 
 # Stage 1a: capture getty's boot banner. PAM port iter 4 (issue #99)
@@ -1422,8 +1445,11 @@ expect {
     eof       { puts "\nOK: VM exited" }
 }
 
-close
-wait
+# A clean halt hits eof, which auto-closes the spawn — an explicit `close` then
+# throws "spawn id ... not open" and (uncaught) fails an otherwise-passing boot.
+# Guard both so teardown never turns a green boot red. (nextbsd#369)
+catch { close }
+catch { wait }
 exit 0
 EOF
 
