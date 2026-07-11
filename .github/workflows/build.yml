@@ -311,8 +311,10 @@ jobs:
   release:
     name: release (${{ matrix.arch }})
     needs: [build, img-test]
-    # Publish on main from a push to this repo or an upstream cascade
-    # (repository_dispatch: base-updated). PRs and other branches never publish.
+    # Publish on main from a push to this repo, an upstream cascade
+    # (repository_dispatch: base-updated), or a manual run (workflow_dispatch:
+    # a hand-triggered "Run workflow" republishes `continuous`). PRs and other
+    # branches never publish.
     #
     # #83: the boot `test` is SKIPPED on push-to-main (it already passed in-PR),
     # so this gate can't require test=success on a push — it would never run.
@@ -321,7 +323,7 @@ jobs:
     # need doesn't auto-skip release. A failed build still blocks publish; a
     # tests-only push (build skipped) yields build.result!='success' -> no
     # republish, which is correct.
-    if: ${{ always() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'repository_dispatch') && needs.build.result == 'success' && (needs['img-test'].result == 'success' || needs['img-test'].result == 'skipped') }}
+    if: ${{ always() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch') && needs.build.result == 'success' && (needs['img-test'].result == 'success' || needs['img-test'].result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
