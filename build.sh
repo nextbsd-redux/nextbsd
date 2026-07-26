@@ -208,6 +208,42 @@ if [ -f "$ROOT/pkglist.txt" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 5b. Drop pkg's build residue before makefs bakes the tree in. Two separate
+#     things accumulate in the rootfs, and neither is needed at runtime:
+#
+#       - the downloaded package tarballs, in PKG_CACHEDIR (/var/cache/pkg).
+#         Every install above (NextBSD-everything, then pkglist.txt) leaves its
+#         .pkg files there. `pkg clean -a` is scoped to exactly this.
+#       - the fetched repository catalogues, in PKG_DBDIR
+#         (/var/db/pkg/repos/<repo>/db), written by the `pkg update` calls.
+#         `pkg clean` does NOT touch these and there is no pkg subcommand that
+#         does, so they have to go by hand.
+#
+#     Both of those are the pkg-visible paths; on disk they live under
+#     private/var, since step 3 made /var a relative symlink -> private/var.
+#     `pkg -r` walks that symlink (only a *trailing* symlink wouldn't be
+#     followed), so the clean below resolves to private/var/cache/pkg; the rm
+#     names private/ explicitly, as the rest of this script does.
+#
+#     Both regenerate on the installed system: pkg redownloads a tarball when
+#     asked to install, and refetches a catalogue on any install/fetch/search
+#     (REPO_AUTOUPDATE defaults to YES) or an explicit `pkg update`.
+#     The catalogues are not small — on gershwin-on-freebsd the upstream
+#     `latest` catalogue grew 71 MiB -> 1.66 GiB, shipped twice, which added
+#     3.3 GiB to the staged tree and ~446 MiB to the compressed image, and the
+#     bloated /var then OOM'd that project's boot test.
+#     Runs before ALL THREE consumers: the rw disk image (step 6), the compact
+#     rootfs.uzip (step 7), and the mfsroot.
+#     KEEP: /usr/local/etc/pkg/repos — the repo *config* written in step 5, which
+#     the shipped system needs so `pkg install` works out of the box — and
+#     private/var/db/pkg/local.sqlite, the installed-package registry.
+#     Host-driven via `pkg -r`, matching the rest of this script (no chroot).
+# ---------------------------------------------------------------------------
+echo "==> pkg clean: drop cached tarballs + fetched repository catalogues"
+pkg -r "$RF" clean -a -y || true
+rm -rf "$RF/private/var/db/pkg/repos"
+
+# ---------------------------------------------------------------------------
 # 6. Version identity (single source of truth = $IMG_DATE).
 # ---------------------------------------------------------------------------
 cat > "$RF/etc/os-release" <<OSREL
