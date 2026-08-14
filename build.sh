@@ -31,8 +31,14 @@ ARCH=${ARCH:-amd64}
 # IMG_DATE so the artifact name, image, nextbsd-version and os-release all match.
 : "${IMG_DATE:=$(date -u +%Y%m%d-%H%M%S)}"
 
-# pkg uses `aarch64` for 64-bit ARM; release tags / artifact names use `arm64`.
-case "$ARCH" in arm64|aarch64) ABIARCH=aarch64 ;; *) ABIARCH="$ARCH" ;; esac
+# Two names for 64-bit ARM, and they are NOT interchangeable:
+#   ARCH=arm64      FreeBSD MACHINE. The download mirror path, the src tree's
+#                   release/<arch>/ scripts, the nextbsd-pkg release tag
+#                   (continuous-<arch>) and our artifact names all use this.
+#   ABIARCH=aarch64 MACHINE_ARCH — what pkg(8) puts in the ABI string.
+# Normalize an `aarch64` ARCH to `arm64` so a hand-run `ARCH=aarch64 sh build.sh`
+# still finds the mirror, the pkg repo tag and mkisoimages.sh.
+case "$ARCH" in arm64|aarch64) ARCH=arm64; ABIARCH=aarch64 ;; *) ABIARCH="$ARCH" ;; esac
 PKG_ABI="FreeBSD:15:${ABIARCH}"
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
@@ -463,6 +469,19 @@ done
 # Transitive .so closure: BFS over readelf NEEDED, pulling each soname from the
 # rootfs lib dirs into the flat mfsroot /lib.
 needed() { readelf -d "$1" 2>/dev/null | sed -n 's/.*(NEEDED).*\[\(.*\)\].*/\1/p'; }
+# Fallback search path for a soname the shipped rootfs doesn't provide. The build
+# VM's own base is only a legitimate donor on the NATIVE lane: on the cross
+# (aarch64-in-an-amd64-VM) lane those are x86-64 objects, and dropping one into
+# the aarch64 mfsroot yields a tool that dies in ld-elf.so.1 with "unsupported
+# file layout" at live-boot time — a much worse failure to read than the plain
+# "shared object not found" the missing lib gives. So the cross lane searches
+# only the target rootfs and WARNs if a soname is genuinely absent.
+if [ "$ABIARCH" = "$(uname -p)" ]; then
+    HOST_LIBDIRS="/lib /usr/lib"
+else
+    HOST_LIBDIRS=""
+    echo "    (cross lane: NOT cribbing libs from the amd64 build VM)"
+fi
 seen=" "
 work=$(for t in $MFS_TOOLS; do [ -f "$MFS/$t" ] && needed "$MFS/$t"; done | sort -u)
 while [ -n "$work" ]; do
@@ -471,9 +490,10 @@ while [ -n "$work" ]; do
         case "$seen" in *" $so "*) continue ;; esac
         seen="$seen$so "
         # Prefer the shipped rootfs libs; fall back to the build VM's base libs
-        # for anything the curated from-source base omits (e.g. libkiconv.so.4,
-        # which mount_cd9660 hard-NEEDs but the base srclist doesn't build).
-        src=$(find "$RF/lib" "$RF/usr/lib" /lib /usr/lib -name "$so" 2>/dev/null | head -1)
+        # (native lane only — see HOST_LIBDIRS above) for anything the curated
+        # base omits (e.g. libkiconv.so.4, which mount_cd9660 hard-NEEDs but the
+        # base srclist historically didn't build).
+        src=$(find "$RF/lib" "$RF/usr/lib" $HOST_LIBDIRS -name "$so" 2>/dev/null | head -1)
         if [ -n "$src" ]; then
             cp -p "$src" "$MFS/lib/$so"
             nextwork="$nextwork $(needed "$src")"
@@ -620,10 +640,20 @@ cp "$WORK/rootfs.uzip" "$ISOROOT/rootfs.uzip"
 # 7e. Build the bootable cd9660 (BIOS cdboot + UEFI ESP) via the release script
 #     (extracted from src.txz at step 3a; lands under usr/src/ — locate by glob).
 ISO_NAME="NextBSD-${ARCH}-${IMG_DATE}.iso"
-echo "==> mkisoimages.sh: bootable cd9660 (BIOS + UEFI)"
+# amd64 gets BIOS (El Torito cdboot) + UEFI; arm64 is UEFI-only, same split as
+# the GPT disk image above.
+echo "==> mkisoimages.sh: bootable cd9660 ($([ -f "$ISOROOT/boot/cdboot" ] && echo 'BIOS + UEFI' || echo 'UEFI-only'))"
 MKISO=$(find "$WORK/freebsd-src" -path "*/release/${ARCH}/mkisoimages.sh" 2>/dev/null | head -1)
 [ -n "$MKISO" ] || { echo "ERROR: mkisoimages.sh not found under $WORK/freebsd-src" >&2; exit 1; }
-sh "$MKISO" -b NEXTBSD "$WORK/$ISO_NAME" "$ISOROOT"
+# TARGET=$ARCH is REQUIRED for the cross (arm64) lane. release/arm64/mkisoimages.sh
+# builds the El Torito ESP with make_esp_file() and lets it derive the UEFI
+# fallback loader name from tools/boot/install-boot.sh's get_uefi_bootname(),
+# which resolves the target as ${TARGET:-$(uname -m)}. Unset, that is this amd64
+# VM -> the aarch64 ISO ships /EFI/BOOT/bootx64.efi, arm64 firmware finds no
+# BOOTAA64.EFI, and the ISO does not boot — the exact failure that got the arm64
+# lane disabled in #360. (release/amd64/mkisoimages.sh passes `bootx64`
+# explicitly, so this is a no-op on the native lane.)
+env TARGET="$ARCH" sh "$MKISO" -b NEXTBSD "$WORK/$ISO_NAME" "$ISOROOT"
 ls -lh "$WORK/$ISO_NAME"
 echo "==> zip live ISO"
 (cd "$WORK" && zip -9 "$OUT/${ISO_NAME}.zip" "$ISO_NAME")

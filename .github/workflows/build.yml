@@ -89,21 +89,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # `freebsd` is the vmactions/freebsd-vm release (bare "15.1"). The image
-        # is assembled host-driven (pkg -r install, host pwd_mkdb/cap_mkdb,
-        # arch-agnostic makefs/mkuzip/mkimg) in the x86 FreeBSD 15.1 VM, so an
-        # aarch64 image needs no qemu-user to BUILD.
+        # `freebsd` is the vmactions/freebsd-vm release (bare "15.1"). Both
+        # arches build in the SAME x86 FreeBSD 15.1 VM: the image is assembled
+        # host-driven (pkg -r install, host pwd_mkdb/cap_mkdb, arch-agnostic
+        # makefs/mkuzip/mkimg), so aarch64 needs no qemu-user to BUILD. The two
+        # entries run as independent parallel matrix legs.
         #
-        # arm64 is TEMPORARILY DISABLED: the aarch64 ISO builds+publishes fine
-        # but does not boot, and CI never caught it because the disk `img-test` and
-        # live `iso-test` jobs are amd64-only (they run qemu-system-x86; booting
-        # aarch64 needs qemu-system-aarch64 + AAVMF firmware). Re-added in a
-        # follow-up together with an aarch64 boot test, and only once it boots
-        # green. build.sh keeps its arch-aware paths (ABIARCH, BOOTAA64.EFI,
-        # UEFI-only mkimg) so re-enabling is just restoring the matrix leg.
+        # arm64 was disabled in #360 because the aarch64 ISO built and published
+        # but did not boot, and CI could not see it (both boot jobs were
+        # amd64-only). Both halves are fixed here: build.sh now exports
+        # TARGET=arm64 to mkisoimages.sh — without it the ISO's El Torito ESP got
+        # this amd64 VM's BOOTX64.EFI instead of BOOTAA64.EFI, so no arm64
+        # firmware would boot it — and the img-test/iso-test jobs below have an
+        # arm64 leg on a native-ARM runner.
         include:
           - freebsd: '15.1'
             arch: 'amd64'
+          - freebsd: '15.1'
+            arch: 'arm64'
     steps:
       - uses: actions/checkout@v4
 
@@ -201,7 +204,15 @@ jobs:
     # the flaky qemu-serial loader handshake. We still boot-test on pull_request
     # (the gate) and on repository_dispatch (the base-updated cascade has no PR).
     if: "!cancelled() && needs.changes.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') && github.event_name != 'push'"
-    runs-on: ubuntu-latest
+    # Each leg boots on a runner of its OWN arch: amd64 on the x86 runner, arm64
+    # on GitHub's ubuntu-24.04-arm (free for public repos), the same shape
+    # nextbsd-userland's ci-image-boot has used since #355. That keeps the guest
+    # off cross-arch emulation, which is where qemu gets genuinely slow. The x86
+    # runner also has /dev/kvm; the arm64 one does NOT, so its guest runs on
+    # same-arch TCG — measured at ~1m50s per boot job, comparable to the
+    # KVM-accelerated amd64 leg. tests/qemu-arch.sh picks KVM whenever /dev/kvm
+    # shows up, so these legs get faster for free if that changes.
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -210,6 +221,11 @@ jobs:
           - freebsd: '15.1'
             variant: '15.1-RELEASE'
             arch: 'amd64'
+            runner: 'ubuntu-24.04'
+          - freebsd: '15.1'
+            variant: '15.1-RELEASE'
+            arch: 'arm64'
+            runner: 'ubuntu-24.04-arm'
     steps:
       - uses: actions/checkout@v4
 
@@ -241,12 +257,20 @@ jobs:
             --dir out/ --clobber
           ls -lh out/
 
+      # qemu-system-arm carries qemu-system-aarch64; qemu-efi-aarch64 supplies
+      # /usr/share/qemu-efi-aarch64/QEMU_EFI.fd (the arm64 counterpart of ovmf).
       - name: install qemu + expect
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 expect ovmf
+          if [ "${{ matrix.arch }}" = arm64 ]; then
+            sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-efi-aarch64 expect
+          else
+            sudo apt-get install -y --no-install-recommends qemu-system-x86 ovmf expect
+          fi
 
       - name: boot test
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
           chmod +x tests/img-boot-test.sh
           IMG=$(ls out/NextBSD-${{ matrix.arch }}-*.img.zip)
@@ -271,13 +295,17 @@ jobs:
     # publishing; it exists as the iteration feedback loop + a regression signal.
     # Skipped on push-to-main (same flaky-serial rationale as the disk `img-test`).
     if: "!cancelled() && needs.build.result == 'success' && needs.changes.outputs.build_needed == 'true' && github.event_name != 'push'"
-    runs-on: ubuntu-latest
+    # Native-arch runners, same rationale as img-test.
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: 'amd64'
+            runner: 'ubuntu-24.04'
+          - arch: 'arm64'
+            runner: 'ubuntu-24.04-arm'
     steps:
       - uses: actions/checkout@v4
 
@@ -291,9 +319,15 @@ jobs:
       - name: install qemu + expect
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 expect ovmf
+          if [ "${{ matrix.arch }}" = arm64 ]; then
+            sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-efi-aarch64 expect
+          else
+            sudo apt-get install -y --no-install-recommends qemu-system-x86 ovmf expect
+          fi
 
       - name: iso boot test
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
           chmod +x tests/iso-boot-test.sh
           ISO=$(ls out/NextBSD-${{ matrix.arch }}-*.iso.zip)
@@ -309,7 +343,7 @@ jobs:
           fi
 
   release:
-    name: release (${{ matrix.arch }})
+    name: release
     needs: [build, img-test]
     # Publish on main from a push to this repo, an upstream cascade
     # (repository_dispatch: base-updated), or a manual run (workflow_dispatch:
@@ -324,22 +358,22 @@ jobs:
     # tests-only push (build skipped) yields build.result!='success' -> no
     # republish, which is correct.
     if: ${{ always() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch') && needs.build.result == 'success' && (needs['img-test'].result == 'success' || needs['img-test'].result == 'skipped') }}
+    #
+    # Deliberately NOT a matrix: one job publishes EVERY arch's artifacts in a
+    # single `continuous` release. A per-arch matrix would run the delete-then-
+    # publish sequence once per cell, and the second cell's delete would drop the
+    # first cell's freshly-uploaded assets (the race the old comment here
+    # predicted for exactly this moment — the arm64 leg landing).
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - freebsd: '15.1'
-            variant: '15.1-RELEASE'
-            arch: 'amd64'
     steps:
       - uses: actions/checkout@v4
 
-      # Pull the dated diskimg artifact as-built — its NextBSD-<arch>-<date>.img.zip
-      # is already the final published name, so there is nothing to rename
-      # or recompute here; publish it straight to `continuous`.
+      # Pull EVERY arch's dated artifact (no `pattern`) — each
+      # NextBSD-<arch>-<date>.img.zip is already the final published name, so
+      # there is nothing to rename or recompute here; publish them straight to
+      # `continuous`.
       - uses: actions/download-artifact@v4
         with:
           path: out/
@@ -351,12 +385,8 @@ jobs:
       # `gh release create` wedges silently on big ISO uploads (single PUT,
       # no chunking, no retry). softprops/action-gh-release uses Octokit's
       # chunked upload with retries -- canonical path for big release assets.
-      # Delete previous continuous release first so old assets don't pile up.
-      #
-      # NOTE: when matrix grows to multiple cells (e.g. adding aarch64 or a
-      # zlib variant), this delete will race across cells. At that point
-      # refactor to a single non-matrix release job that downloads all
-      # artifacts and publishes them together.
+      # Delete previous continuous release first so old assets don't pile up
+      # (safe here: this job is a single cell, so nothing else is uploading).
       - name: delete previous continuous release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
