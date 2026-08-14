@@ -13,6 +13,7 @@
 #   NIC      e1000 (ROM ships with qemu)    virtio-net-pci, romfile= (see below)
 #   TCG cpu  qemu64                         max
 #   CD       -cdrom (SATA/ATAPI on q35)     virtio-scsi + scsi-cd (virt has no IDE)
+#   video    default VGA (q35 has one)      virtio-gpu-pci (virt has NONE)
 #
 # The same split is already proven in nextbsd-userland's tests/boot-test.sh,
 # which has been booting the aarch64 CI image under KVM on GitHub's
@@ -20,7 +21,7 @@
 #
 # Usage:  . tests/qemu-arch.sh ; qemu_arch_setup <media-path> [<name-hint>]
 # Exports (consumed by the generated expect scripts via env):
-#   ARCH QEMU MACHINE FW ACCEL_FLAGS NET_ARGS DISK_ARGS CD_ARGS
+#   ARCH QEMU MACHINE FW ACCEL_FLAGS NET_ARGS DISK_ARGS CD_ARGS VIDEO_ARGS
 
 # qemu_arch_setup <media> [<name-hint>] — resolve the arch and export the qemu
 # flags for it. ARCH may be set in the environment (CI passes the matrix arch);
@@ -49,6 +50,10 @@ qemu_arch_setup() {
         _fw_candidates="/usr/share/OVMF/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd /usr/share/qemu/OVMF.fd"
         # q35 has an AHCI controller, so plain -cdrom gets a real ATAPI cd0.
         CD_ARGS="-cdrom $_media -boot d"
+        # q35 always instantiates a VGA adapter (-display none only suppresses
+        # the HOST window, not the emulated device), so the guest already gets a
+        # framebuffer, efifb, vt(4) and /dev/ttyv0. Nothing to add.
+        VIDEO_ARGS=""
         ;;
     arm64|aarch64)
         ARCH=arm64
@@ -67,6 +72,16 @@ qemu_arch_setup() {
         # /dev/cd0 the live init looks for. bootindex pins it as boot device 0
         # (there is no -boot d equivalent for a UEFI machine).
         CD_ARGS="-drive file=$_media,format=raw,if=none,id=cd0,media=cdrom -device virtio-scsi-pci -device scsi-cd,drive=cd0,bootindex=0"
+        # `virt` instantiates NO display adapter at all, unlike q35. Without one
+        # the firmware exposes no GOP, the loader hands the kernel no
+        # framebuffer, vt(4) never attaches, and /dev/ttyv0 does not exist — so
+        # every console-on-screen path goes untested on this arch, which is
+        # exactly how nextbsd-userland#55 (no login on the arm64 framebuffer)
+        # reached a release. Give the guest a GPU so the tested machine has the
+        # same shape as the machines users actually run (UTM/qemu desktop VMs
+        # ship virtio-gpu-pci). Costs nothing under -display none: the device is
+        # emulated, only the host-side window is suppressed.
+        VIDEO_ARGS="-device virtio-gpu-pci"
         ;;
     *)
         echo "ERROR: unsupported ARCH=$ARCH (expected amd64 or arm64)" >&2
@@ -100,5 +115,5 @@ qemu_arch_setup() {
     fi
 
     echo "==> $ARCH: $QEMU -machine $MACHINE | firmware $FW"
-    export ARCH QEMU MACHINE FW ACCEL_FLAGS NET_ARGS DISK_ARGS CD_ARGS
+    export ARCH QEMU MACHINE FW ACCEL_FLAGS NET_ARGS DISK_ARGS CD_ARGS VIDEO_ARGS
 }

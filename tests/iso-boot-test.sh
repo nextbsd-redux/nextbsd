@@ -50,6 +50,7 @@ log_user 1
 
 set accel_flags [split $env(ACCEL_FLAGS) " "]
 set net_args    [split $env(NET_ARGS) " "]
+set video_args  [split $env(VIDEO_ARGS) " "]
 set cd_args     [split $env(CD_ARGS) " "]
 
 eval spawn $env(QEMU) \
@@ -59,6 +60,7 @@ eval spawn $env(QEMU) \
     $accel_flags \
     $cd_args \
     $net_args \
+    $video_args \
     -display none -serial stdio \
     -no-reboot
 
