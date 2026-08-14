@@ -46,7 +46,11 @@ qemu_arch_setup() {
         MACHINE=q35
         NET_ARGS="-nic user,model=e1000"
         _tcg_cpu=qemu64
-        _fw_candidates="/usr/share/OVMF/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd /usr/share/qemu/OVMF.fd"
+        # Linux distro paths first (that is where CI runs), then the macOS
+        # package managers, so the harness also runs on a developer's Mac.
+        _fw_candidates="/usr/share/OVMF/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd /usr/share/qemu/OVMF.fd
+                        /opt/homebrew/share/qemu/edk2-x86_64-code.fd /usr/local/share/qemu/edk2-x86_64-code.fd
+                        /opt/local/share/qemu/edk2-x86_64-code.fd"
         # q35 has an AHCI controller, so plain -cdrom gets a real ATAPI cd0.
         CD_ARGS="-cdrom $_media -boot d"
         ;;
@@ -60,7 +64,9 @@ qemu_arch_setup() {
         # can't express that, hence the -netdev/-device pair.
         NET_ARGS="-netdev user,id=net0 -device virtio-net-pci,netdev=net0,romfile="
         _tcg_cpu=max
-        _fw_candidates="/usr/share/qemu-efi-aarch64/QEMU_EFI.fd /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/edk2/aarch64/QEMU_EFI.fd"
+        _fw_candidates="/usr/share/qemu-efi-aarch64/QEMU_EFI.fd /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/edk2/aarch64/QEMU_EFI.fd
+                        /opt/homebrew/share/qemu/edk2-aarch64-code.fd /usr/local/share/qemu/edk2-aarch64-code.fd
+                        /opt/local/share/qemu/edk2-aarch64-code.fd"
         # `virt` has no IDE/AHCI, so -cdrom would land the ISO on a read-only
         # virtio-blk (a vtbd, not a cd). Attach a real SCSI CD instead: EDK2's
         # VirtioScsiDxe boots the El Torito ESP off it, and the guest gets the
@@ -77,17 +83,32 @@ qemu_arch_setup() {
     # virtio-blk is available on both machines and needs no option ROM.
     DISK_ARGS="-drive file=$_media,format=raw,if=virtio"
 
-    # KVM when the runner is the same arch as the guest (ubuntu-24.04 for amd64,
-    # ubuntu-24.04-arm for arm64); single-threaded TCG otherwise.
+    # Acceleration, best first: KVM (Linux), HVF (macOS), then TCG. A hypervisor
+    # can only ever run a guest of the HOST's own arch, so HVF is gated on that
+    # match — an amd64 image on an Apple Silicon Mac is emulation no matter what.
+    case "$(uname -m)" in
+    x86_64|amd64)  _host_arch=amd64 ;;
+    arm64|aarch64) _host_arch=arm64 ;;
+    *)             _host_arch=unknown ;;
+    esac
+
     if [ -e /dev/kvm ]; then
         sudo chmod 666 /dev/kvm 2>/dev/null || true
     fi
     if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
         ACCEL_FLAGS="-accel kvm -cpu host"
         echo "==> using KVM acceleration"
+    elif [ "$(uname -s)" = Darwin ] && [ "$_host_arch" = "$ARCH" ]; then
+        # Hypervisor.framework. Needs no privileges (qemu ships signed with the
+        # hypervisor entitlement); `-cpu host` is required, since HVF cannot
+        # emulate a CPU model the host doesn't have.
+        ACCEL_FLAGS="-accel hvf -cpu host"
+        echo "==> using HVF acceleration (macOS)"
     else
         ACCEL_FLAGS="-accel tcg,thread=single -cpu $_tcg_cpu"
         echo "==> using TCG (single-thread, cpu=$_tcg_cpu)"
+        [ "$_host_arch" = "$ARCH" ] || \
+            echo "    NOTE: emulating $ARCH on an $_host_arch host — expect a slow boot"
     fi
 
     FW=""
