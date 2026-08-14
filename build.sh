@@ -640,7 +640,9 @@ cp "$WORK/rootfs.uzip" "$ISOROOT/rootfs.uzip"
 # 7e. Build the bootable cd9660 (BIOS cdboot + UEFI ESP) via the release script
 #     (extracted from src.txz at step 3a; lands under usr/src/ — locate by glob).
 ISO_NAME="NextBSD-${ARCH}-${IMG_DATE}.iso"
-echo "==> mkisoimages.sh: bootable cd9660 (BIOS + UEFI)"
+# amd64 gets BIOS (El Torito cdboot) + UEFI; arm64 is UEFI-only, same split as
+# the GPT disk image above.
+echo "==> mkisoimages.sh: bootable cd9660 ($([ -f "$ISOROOT/boot/cdboot" ] && echo 'BIOS + UEFI' || echo 'UEFI-only'))"
 MKISO=$(find "$WORK/freebsd-src" -path "*/release/${ARCH}/mkisoimages.sh" 2>/dev/null | head -1)
 [ -n "$MKISO" ] || { echo "ERROR: mkisoimages.sh not found under $WORK/freebsd-src" >&2; exit 1; }
 # TARGET=$ARCH is REQUIRED for the cross (arm64) lane. release/arm64/mkisoimages.sh

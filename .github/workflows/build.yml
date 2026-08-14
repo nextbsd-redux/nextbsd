@@ -204,10 +204,14 @@ jobs:
     # the flaky qemu-serial loader handshake. We still boot-test on pull_request
     # (the gate) and on repository_dispatch (the base-updated cascade has no PR).
     if: "!cancelled() && needs.changes.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') && github.event_name != 'push'"
-    # Each leg boots its own arch natively so qemu can use KVM: amd64 on the x86
-    # runner, arm64 on GitHub's ubuntu-24.04-arm (free for public repos). Under
-    # TCG the aarch64 boot takes tens of minutes; with KVM it is ~1 min, the same
-    # shape nextbsd-userland's ci-image-boot has run since #355.
+    # Each leg boots on a runner of its OWN arch: amd64 on the x86 runner, arm64
+    # on GitHub's ubuntu-24.04-arm (free for public repos), the same shape
+    # nextbsd-userland's ci-image-boot has used since #355. That keeps the guest
+    # off cross-arch emulation, which is where qemu gets genuinely slow. The x86
+    # runner also has /dev/kvm; the arm64 one does NOT, so its guest runs on
+    # same-arch TCG — measured at ~1m50s per boot job, comparable to the
+    # KVM-accelerated amd64 leg. tests/qemu-arch.sh picks KVM whenever /dev/kvm
+    # shows up, so these legs get faster for free if that changes.
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     strategy:
