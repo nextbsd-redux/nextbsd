@@ -14,11 +14,19 @@
 # direct-UFS disk image and the live ISO (iso-boot-test.sh).
 #
 # Success = "login:" prompt reached (launchd PID 1 got getty up).
+#
+# Arch-agnostic: the qemu shape (binary, machine, UEFI firmware, NIC, accel)
+# comes from tests/qemu-arch.sh, which takes ARCH from the environment or infers
+# it from the NextBSD-<arch>-<date> image name. amd64 boots on q35+OVMF, arm64 on
+# virt+AAVMF.
 
 set -eu
 
-IMG=${1:?usage: img-boot-test.sh path/to/NextBSD-*.img[.zip]}
+IMG=${1:?usage: [ARCH=amd64|arm64] img-boot-test.sh path/to/NextBSD-*.img[.zip]}
 [ -f "$IMG" ] || { echo "ERROR: $IMG not found"; exit 1; }
+# The as-published name (NextBSD-<arch>-<date>.img.zip) is what carries the arch;
+# $IMG is rewritten to the extracted scratch copy below.
+ARTIFACT=$IMG
 
 mkdir -p tests
 LOG=tests/img-boot.log
@@ -36,70 +44,45 @@ case "$IMG" in
     ;;
 esac
 
-echo "==> img boot test: $IMG"
+. "$(dirname "$0")/qemu-arch.sh"
+qemu_arch_setup "$IMG" "$ARTIFACT"
+
+echo "==> img boot test: $IMG (arch=$ARCH)"
 ls -lh "$IMG"
-
-if [ -e /dev/kvm ]; then
-    sudo chmod 666 /dev/kvm 2>/dev/null || true
-fi
-if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
-    ACCEL_FLAGS="-accel kvm -cpu host"
-    echo "==> using KVM acceleration"
-else
-    ACCEL_FLAGS="-accel tcg,thread=single -cpu qemu64"
-    echo "==> using TCG (single-thread)"
-fi
-
-OVMF=""
-for f in /usr/share/OVMF/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd /usr/share/qemu/OVMF.fd; do
-    [ -f "$f" ] && { OVMF="$f"; break; }
-done
-[ -n "$OVMF" ] || { echo "ERROR: no OVMF firmware found"; exit 1; }
-echo "==> using UEFI firmware: $OVMF"
-
-export ACCEL_FLAGS OVMF
 
 cat > "$EXP" <<'EOF'
 set timeout 600
 log_file -a tests/img-boot.log
 log_user 1
 
-set img [lindex $argv 0]
 set accel_flags [split $env(ACCEL_FLAGS) " "]
+set net_args    [split $env(NET_ARGS) " "]
+set disk_args   [split $env(DISK_ARGS) " "]
 
-eval spawn qemu-system-x86_64 \
+eval spawn $env(QEMU) \
     -m 4G \
-    -machine q35 \
-    -bios $env(OVMF) \
+    -machine $env(MACHINE) \
+    -bios $env(FW) \
     $accel_flags \
-    -drive file=$img,format=raw,if=virtio \
-    -nic user,model=e1000 \
+    $disk_args \
+    $net_args \
     -display none -serial stdio \
     -no-reboot
 
+source tests/loader.exp.inc
+
 # Stage 0: drop into the loader OK prompt and enable the serial console for
 # the kernel (/boot/loader.conf leaves console unset for a clean console on
-# real hardware). Kept minimal — every extra `set` round-trip risks the loader
-# eating serial chars. Match the echoed command before "OK " to avoid racing a
-# stale OK from the prior `set`.
-expect {
-    timeout { puts "\nFAIL: didn't see loader autoboot prompt within 60s"; exit 1 }
-    -re "Hit \\\[Enter\\\]" { send " " }
-    "Booting"                { send " " }
-    "FreeBSD/amd64 EFI"      { send " " }
-}
-expect {
-    timeout { puts "\nFAIL: didn't reach loader OK prompt within 30s"; exit 1 }
-    "OK " { puts "\n==> at loader prompt; setting serial console vars" }
-}
-send "set console=comconsole\r"; expect "set console=comconsole"; expect "OK "
-send "set boot_serial=YES\r";    expect "set boot_serial=YES";    expect "OK "
-send "set comconsole_speed=115200\r"; expect "set comconsole_speed=115200"; expect "OK "
-send "set boot_multicons=YES\r"; expect "set boot_multicons=YES"; expect "OK "
+# real hardware).
+loader_prompt 60
+loader_set "set console=comconsole"
+loader_set "set boot_serial=YES"
+loader_set "set comconsole_speed=115200"
+loader_set "set boot_multicons=YES"
 # boot VERBOSE: the shipped image sets boot_mutemsgs="YES" (nextbsd#363), which
 # mutes kernel console output. RB_VERBOSE (boot -v) bypasses the mute so CI sees
 # full boot output; shipped images (booted normally) stay quiet.
-send "boot -v\r"
+loader_boot "boot -v"
 
 # Stage 1: launchd PID 1 comes up and getty reaches a login prompt.
 expect {
@@ -129,7 +112,7 @@ puts "\nIMG-BOOT-DONE"
 EOF
 
 set +e
-expect -f "$EXP" "$IMG"
+expect -f "$EXP"
 rc=$?
 set -e
 
@@ -138,8 +121,8 @@ echo "==> verdict"
 # Assert against the getty login prompt in the transcript (launchd PID 1 reached
 # getty on the installed image).
 if grep -q "login:" "$LOG"; then
-    echo "PASS: disk image booted — launchd reached the login prompt on a UFS root"
+    echo "PASS: $ARCH disk image booted — launchd reached the login prompt on a UFS root"
     exit 0
 fi
-echo "FAIL: disk image did not reach the login prompt (rc=$rc)"
+echo "FAIL: $ARCH disk image did not reach the login prompt (rc=$rc)"
 exit 1

@@ -8,11 +8,18 @@
 # Success = we see the pivot marker ("vfs.pivot: / is now unionfs") AND the
 # login prompt. The full serial log is always dumped for diagnosis — this is
 # the feedback loop for iterating the live-root pipeline.
+#
+# Arch-agnostic: the qemu shape (binary, machine, UEFI firmware, NIC, CD
+# attachment, accel) comes from tests/qemu-arch.sh, which takes ARCH from the
+# environment or infers it from the NextBSD-<arch>-<date> ISO name.
 
 set -eu
 
-ISO=${1:?usage: iso-boot-test.sh path/to/NextBSD-*.iso[.zip]}
+ISO=${1:?usage: [ARCH=amd64|arm64] iso-boot-test.sh path/to/NextBSD-*.iso[.zip]}
 [ -f "$ISO" ] || { echo "ERROR: $ISO not found"; exit 1; }
+# The as-published name (NextBSD-<arch>-<date>.iso.zip) is what carries the arch;
+# $ISO is rewritten to the extracted scratch copy below.
+ARTIFACT=$ISO
 
 mkdir -p tests
 LOG=tests/iso-boot.log
@@ -30,69 +37,44 @@ case "$ISO" in
     ;;
 esac
 
-echo "==> iso boot test: $ISO"
+. "$(dirname "$0")/qemu-arch.sh"
+qemu_arch_setup "$ISO" "$ARTIFACT"
+
+echo "==> iso boot test: $ISO (arch=$ARCH)"
 ls -lh "$ISO"
-
-if [ -e /dev/kvm ]; then
-    sudo chmod 666 /dev/kvm 2>/dev/null || true
-fi
-if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
-    ACCEL_FLAGS="-accel kvm -cpu host"
-    echo "==> using KVM acceleration"
-else
-    ACCEL_FLAGS="-accel tcg,thread=single -cpu qemu64"
-    echo "==> using TCG (single-thread)"
-fi
-
-OVMF=""
-for f in /usr/share/OVMF/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd /usr/share/qemu/OVMF.fd; do
-    [ -f "$f" ] && { OVMF="$f"; break; }
-done
-[ -n "$OVMF" ] || { echo "ERROR: no OVMF firmware found"; exit 1; }
-echo "==> using UEFI firmware: $OVMF"
-
-export ACCEL_FLAGS OVMF
 
 cat > "$EXP" <<'EOF'
 set timeout 600
 log_file -a tests/iso-boot.log
 log_user 1
 
-set iso [lindex $argv 0]
 set accel_flags [split $env(ACCEL_FLAGS) " "]
+set net_args    [split $env(NET_ARGS) " "]
+set cd_args     [split $env(CD_ARGS) " "]
 
-eval spawn qemu-system-x86_64 \
+eval spawn $env(QEMU) \
     -m 4G \
-    -machine q35 \
-    -bios $env(OVMF) \
+    -machine $env(MACHINE) \
+    -bios $env(FW) \
     $accel_flags \
-    -cdrom $iso \
-    -boot d \
-    -nic user,model=e1000 \
+    $cd_args \
+    $net_args \
     -display none -serial stdio \
     -no-reboot
 
+source tests/loader.exp.inc
+
 # Stage 0: loader autoboot -> OK prompt; enable serial console.
-expect {
-    timeout { puts "\nFAIL: didn't see loader autoboot prompt within 90s"; exit 1 }
-    -re "Hit \\\[Enter\\\]" { send " " }
-    "Booting"                { send " " }
-    "FreeBSD/amd64 EFI"      { send " " }
-    "Loading /boot/loader"   { send " " }
-}
-expect {
-    timeout { puts "\nFAIL: didn't reach loader OK prompt within 30s"; exit 1 }
-    "OK " { puts "\n==> at loader prompt; setting serial console vars" }
-}
-send "set console=comconsole\r"; expect "set console=comconsole"; expect "OK "
-send "set boot_serial=YES\r";    expect "set boot_serial=YES";    expect "OK "
-send "set comconsole_speed=115200\r"; expect "set comconsole_speed=115200"; expect "OK "
-send "set boot_multicons=YES\r"; expect "set boot_multicons=YES"; expect "OK "
+loader_prompt 90
+loader_set "set console=comconsole"
+loader_set "set boot_serial=YES"
+loader_set "set comconsole_speed=115200"
+loader_set "set boot_multicons=YES"
 # boot VERBOSE: the shipped image sets boot_mutemsgs="YES" (nextbsd#363) which
 # mutes kernel console output — including the "vfs.pivot: / is now unionfs"
 # marker this harness sequences on. RB_VERBOSE (boot -v) bypasses the mute in
 # the kernel, so CI sees all markers while shipped images stay quiet.
-send "boot -v\r"
+loader_boot "boot -v"
 
 # Stage 1: the live-root assembly markers from /rescue/init + vfs.pivot.
 set saw_init 0
@@ -139,7 +121,7 @@ puts "\nISO-BOOT-DONE"
 EOF
 
 set +e
-expect -f "$EXP" "$ISO"
+expect -f "$EXP"
 rc=$?
 set -e
 
@@ -149,8 +131,8 @@ echo "==> verdict"
 # transcript: the kernel's vfs.pivot adoption + the getty login prompt (launchd
 # PID 1 reached getty on the union).
 if grep -q "vfs.pivot: / is now unionfs" "$LOG" && grep -q "login:" "$LOG"; then
-    echo "PASS: live ISO booted — vfs.pivot to writable union + launchd reached the login prompt"
+    echo "PASS: $ARCH live ISO booted — vfs.pivot to writable union + launchd reached the login prompt"
     exit 0
 fi
-echo "FAIL: live ISO did not complete the pivot+login sequence (rc=$rc)"
+echo "FAIL: $ARCH live ISO did not complete the pivot+login sequence (rc=$rc)"
 exit 1
