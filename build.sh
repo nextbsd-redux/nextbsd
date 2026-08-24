@@ -498,11 +498,20 @@ enable_uart=1
 CFG
 
     # FreeBSD's FDT bootargs parser takes the "FreeBSD:" prefix and reads what
-    # follows as boot flags; the firmware puts this line in /chosen/bootargs.
-    # -v stays on deliberately: this board has no framebuffer console yet, so
-    # the serial log is the only instrument there is, and a boot that stops
-    # early is otherwise indistinguishable from one that never started. Drop
-    # the -v once there is a second way to see what happened.
+    # follows as boot flags, and -v is the flag worth having on a board whose
+    # serial log is the only instrument there is.
+    #
+    # Measured caveat: on this firmware it does not currently arrive.
+    # parse_fdt_bootargs() only parses when fdt_get_chosen_bootargs() succeeds,
+    # and a tryboot with exactly this line produced a boot that was not
+    # verbose -- so the firmware appears not to be writing /chosen/bootargs at
+    # all. Tracked as nextbsd-kernel#93.
+    #
+    # The file ships anyway. It is correct, it costs nothing, it is the first
+    # place a human will look to change a boot flag, and it starts working the
+    # day the firmware side is understood. What it is NOT is a channel you can
+    # rely on today: anything the kernel must have goes in the compiled-in env
+    # instead.
     echo 'FreeBSD: -v' > "$BOOTSTAGE/cmdline.txt"
 
     # 100 MB FAT32. sectors_per_cluster=1 keeps makefs above the 65525-cluster
