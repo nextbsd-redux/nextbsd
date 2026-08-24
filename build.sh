@@ -490,6 +490,35 @@ arm_64bit=1
 # partway through boot.
 enable_uart=1
 
+# Video. Without these the firmware sets up no display and allocates no
+# framebuffer, vt(4) comes up as "init without driver", and the machine boots
+# to a black screen -- which on this board is indistinguishable from a kernel
+# that never started.
+#
+# max_framebuffers is what makes the firmware allocate one at all.
+# display_auto_detect lets it probe and configure whatever is attached.
+#
+# hdmi_force_hotplug is the interesting one, and it is here deliberately.
+# Measured on a Pi 500+: the firmware reported "hotplug 0" with a monitor
+# attached and its EDID perfectly readable -- DDC works (pins 15/16), hotplug
+# detect (pin 19) does not, which is what a micro-HDMI adapter that skips that
+# pin looks like. Raspberry Pi OS has the same workaround in its own
+# cmdline.txt as the "D" in video=HDMI-A-1:1280x720@60D, so the fault is
+# common enough that their default image carries a fix for it.
+#
+# The cost is a few MB of framebuffer allocated on a headless machine. The
+# alternative failure is a black screen with no message, on hardware whose
+# only other console is a cable inside the case. Worth the trade here; it is
+# also the first thing to remove if a display misbehaves.
+max_framebuffers=2
+display_auto_detect=1
+hdmi_force_hotplug=1
+
+# Deliberately NO hardcoded resolution. Forcing hdmi_group/hdmi_mode or
+# framebuffer_width/height was measured to be ignored anyway, and letting the
+# firmware read EDID gave 1920x1080 where a hardcoded mode would have pinned
+# the machine to 720p. The display knows better than this file does.
+
 # Deliberately no dtoverlay= or dtparam= lines. Every overlay in the vendor
 # tree is written against Linux driver bindings; NextBSD reads the same device
 # tree with its own drivers, and an overlay that renames or reparents a node
