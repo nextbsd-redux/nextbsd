@@ -514,10 +514,27 @@ max_framebuffers=2
 display_auto_detect=1
 hdmi_force_hotplug=1
 
+# Depth, unlike width and height, is NOT ignored -- and getting it wrong is
+# visible rather than fatal, which makes it easy to miss. Left unset the
+# firmware allocates 16bpp, bcm2835_fbd(4) then asks it for 24, and the
+# console comes up with a blue cast and text so dim it is nearly invisible:
+#
+#   changing fb bpp from 16 to 24
+#   fb0: 1920x1080(1920x1080@0,0) 24bpp     <- wrong, unreadable
+#   keeping existing fb bpp of 32
+#   fb0: 1920x1080(1920x1080@0,0) 32bpp     <- correct
+#
+# 24bpp is three bytes per pixel with no padding; a driver writing 32-bit
+# pixels into it lands a byte out of alignment on every pixel, which is what
+# smears the colour channels.
+framebuffer_depth=32
+
 # Deliberately NO hardcoded resolution. Forcing hdmi_group/hdmi_mode or
-# framebuffer_width/height was measured to be ignored anyway, and letting the
-# firmware read EDID gave 1920x1080 where a hardcoded mode would have pinned
-# the machine to 720p. The display knows better than this file does.
+# framebuffer_width/height WAS measured to be ignored -- the firmware read
+# EDID and chose 1920x1080 over the 720p asked for, which is the better
+# answer and the one that works on someone else's monitor. Note that depth
+# above is the exception: do not generalise "the framebuffer_* settings are
+# ignored" from width and height, which is a mistake already made once.
 
 # Deliberately no dtoverlay= or dtparam= lines. Every overlay in the vendor
 # tree is written against Linux driver bindings; NextBSD reads the same device
