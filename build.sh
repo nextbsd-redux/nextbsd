@@ -21,11 +21,18 @@
 # Produces:
 #   out/NextBSD-<arch>-<date>.img.zip   GPT disk image (BIOS+UEFI, rw UFS root)
 #   out/NextBSD-<arch>-<date>.iso.zip   live ISO (mfsroot -> uzip -> vfs.pivot)
+#
+# BOARD=rpi500 instead produces one artifact and no ISO:
+#   out/NextBSD-rpi500-<arch>-<date>.img.zip   MBR: FAT32 boot + rw UFS root
+# The board token comes FIRST and that is load-bearing -- build.yml's release
+# step does IMG=$(ls out/NextBSD-${ARCH}-*.img.zip) into a scalar, so an
+# arch-first name would match two files and break the existing arm64 lane.
 
 set -eu
 
 : "${FREEBSD_VERSION:=15.1}"
 : "${LABEL:=NEXTBSD}"
+ARCH_EXPLICIT=${ARCH:+yes}
 ARCH=${ARCH:-amd64}
 # UTC build timestamp — the SINGLE source of truth for the version: CI passes
 # IMG_DATE so the artifact name, image, nextbsd-version and os-release all match.
@@ -41,6 +48,29 @@ ARCH=${ARCH:-amd64}
 case "$ARCH" in arm64|aarch64) ARCH=arm64; ABIARCH=aarch64 ;; *) ABIARCH="$ARCH" ;; esac
 PKG_ABI="FreeBSD:15:${ABIARCH}"
 
+# BOARD selects a board-specific media lane. Empty (the default) is the
+# generic PC/UEFI lane that has always been here. The rootfs is identical
+# either way -- the same packages, the same makefs -- and only the boot half
+# and the partitioning differ, which is the whole reason this is one script.
+BOARD=${BOARD:-}
+case "$BOARD" in
+"") ;;
+rpi500)
+    # The Pi 500+ is arm64 and only arm64. Catch a contradictory ARCH here
+    # rather than 40 minutes later, when an amd64 rootfs meets an aarch64
+    # kernel8.img and the board boots to silence.
+    if [ "${ARCH}" != arm64 ] && [ -n "${ARCH_EXPLICIT:-}" ]; then
+        echo "ERROR: BOARD=rpi500 is arm64; got ARCH=$ARCH." >&2
+        exit 1
+    fi
+    ARCH=arm64; ABIARCH=aarch64; PKG_ABI="FreeBSD:15:aarch64"
+    ;;
+*)
+    echo "ERROR: unknown BOARD=$BOARD (known: rpi500)." >&2
+    exit 1
+    ;;
+esac
+
 ROOT=$(cd "$(dirname "$0")" && pwd)
 WORK=$ROOT/work
 OUT=$ROOT/out
@@ -55,7 +85,7 @@ mkdir -p "$WORK" "$OUT" "$DIST"
 chflags -R noschg "$WORK" 2>/dev/null || true
 rm -rf "$WORK"/* "$OUT"/*
 
-echo "==> build: NextBSD $ARCH (pkg ABI $PKG_ABI), stamp $IMG_DATE"
+echo "==> build: NextBSD $ARCH${BOARD:+ board=$BOARD} (pkg ABI $PKG_ABI), stamp $IMG_DATE"
 
 # ---------------------------------------------------------------------------
 # 1. src.txz — ONLY for FreeBSD's release script (mkisoimages.sh) in the ISO
@@ -343,6 +373,177 @@ makefs -t ffs -B little \
     -b 1500m \
     "$WORK/rootfs.ufs" "$WORK/rootfs"
 ls -lh "$WORK/rootfs.ufs"
+
+# ---------------------------------------------------------------------------
+# 6b-rpi. Raspberry Pi 500+ boot partition + MBR image   (BOARD=rpi500)
+#
+#   The BCM2712 bootloader lives in EEPROM and boots what the plan calls route
+#   (a): it reads config.txt off the first FAT partition, loads the DTB named
+#   there, patches it (memory size, MAC, the RP1 window), loads kernel8.img and
+#   enters it at EL2 with x0 = the FDT physical address. No loader(8), no UEFI.
+#   That is why this lane produces an .img and no .iso: the firmware looks for
+#   a FAT partition holding config.txt, and an ISO 9660 image has neither, so
+#   it is never even opened. Booting NextBSD from optical media on this board
+#   is not a missing feature, it is not a thing the hardware does.
+#
+#   It also means nothing can be kldload'ed at boot -- there is no loader to do
+#   it -- so every boot-critical driver is compiled into the board kernel.
+#
+#   None of bootcode.bin / start*.elf / fixup*.dat belong here. Those are the
+#   pre-2712 VideoCore boot chain; Raspberry Pi OS ships them only because one
+#   boot partition serves every model back to the Pi 2. Measured on the board:
+#   a 2712 boot partition needs exactly config.txt, a DTB, and the kernel.
+#
+#   The root half needs nothing from this partition at all. The board kernel
+#   carries ROOTDEVNAME="ufs:/dev/ufs/ROOTFS" and INIT_PATH=/sbin/launchd
+#   compiled in (nextbsd-kernel#11 / #180), so it mounts root by GEOM label and
+#   execs launchd with no tunables passed from anywhere. The MBR slice layout
+#   below is therefore not load-bearing for finding root.
+# ---------------------------------------------------------------------------
+if [ "$BOARD" = rpi500 ]; then
+    echo "==> rpi500: staging the FAT boot partition"
+    BOOTSTAGE="$WORK/rpi-boot"
+    rm -rf "$BOOTSTAGE"
+    mkdir -p "$BOOTSTAGE"
+
+    # kernel8.img is kernel.bin -- the kernel wrapped in an arm64 Linux Image
+    # header -- and NOT /boot/kernel/kernel, which is an ELF the firmware will
+    # not enter. Default to a package-provided one so a shipping board kernel
+    # (nextbsd-kernel#85) drops straight in; KERNEL8 overrides it for a PR
+    # build that pulls nextbsd-kernel's rpi500-kernel8-arm64 artifact instead.
+    KERNEL8=${KERNEL8:-$RF/boot/kernel8.img}
+    if [ ! -f "$KERNEL8" ]; then
+        echo "ERROR: no kernel8.img to put on the boot partition." >&2
+        echo "       Either set KERNEL8=/path/to/kernel.bin, or install a board" >&2
+        echo "       kernel package that ships /boot/kernel8.img." >&2
+        exit 1
+    fi
+    cp "$KERNEL8" "$BOOTSTAGE/kernel8.img"
+
+    # Assert the Image header before shipping it. The firmware validates
+    # nothing: hand it an ELF and it jumps into the ELF header, and the board
+    # goes black with no console and no message. Everything fails as silence on
+    # this hardware, so the checks that can happen here, happen here.
+    # magic 0x644d5241 at offset 56, little-endian -> bytes 41 52 4d 64.
+    MAGIC=$(dd if="$BOOTSTAGE/kernel8.img" bs=1 skip=56 count=4 2>/dev/null |
+        od -An -tx1 | tr -d ' \n')
+    if [ "$MAGIC" != "41524d64" ]; then
+        echo "ERROR: $KERNEL8 carries no arm64 Image header." >&2
+        echo "       magic at offset 56 = ${MAGIC:-<empty>}, expected 41524d64." >&2
+        echo "       This looks like /boot/kernel/kernel (ELF) rather than kernel.bin." >&2
+        exit 1
+    fi
+    echo "    kernel8.img $(ls -l "$BOOTSTAGE/kernel8.img" | awk '{print $5}') bytes, Image header ok"
+
+    # The device tree must be Raspberry Pi's own. The firmware reads, patches
+    # and hands over THIS blob, and its patching only understands the vendor
+    # layout -- a DTB we compiled ourselves would arrive without the memory
+    # node, the MAC, or the RP1 window fixed up. Measured on the board:
+    # /proc/device-tree/compatible reads "raspberrypi,500 brcm,bcm2712" and the
+    # firmware selects bcm2712-rpi-500.dtb, which is the 500+ too.
+    : "${RPI_FIRMWARE_TAG:=1.20250430}"
+    : "${RPI_DTB:=bcm2712-rpi-500.dtb}"
+    if [ -n "${DTB:-}" ]; then
+        echo "==> rpi500: using DTB override $DTB"
+        cp "$DTB" "$BOOTSTAGE/$RPI_DTB"
+    else
+        _dtb="$DIST/${RPI_FIRMWARE_TAG}-${RPI_DTB}"
+        if [ ! -f "$_dtb" ]; then
+            echo "==> fetching $RPI_DTB from raspberrypi/firmware $RPI_FIRMWARE_TAG"
+            fetch -o "$_dtb" \
+                "https://raw.githubusercontent.com/raspberrypi/firmware/${RPI_FIRMWARE_TAG}/boot/${RPI_DTB}"
+        fi
+        cp "$_dtb" "$BOOTSTAGE/$RPI_DTB"
+        # Ship the licence the blob is redistributed under, from the same
+        # pinned tag, as Raspberry Pi OS does.
+        _lic="$DIST/${RPI_FIRMWARE_TAG}-LICENCE.broadcom"
+        [ -f "$_lic" ] || fetch -o "$_lic" \
+            "https://raw.githubusercontent.com/raspberrypi/firmware/${RPI_FIRMWARE_TAG}/boot/LICENCE.broadcom"
+        cp "$_lic" "$BOOTSTAGE/LICENCE.broadcom"
+    fi
+    # A flattened device tree opens with magic 0xd00dfeed, big-endian.
+    DTBMAGIC=$(dd if="$BOOTSTAGE/$RPI_DTB" bs=1 count=4 2>/dev/null |
+        od -An -tx1 | tr -d ' \n')
+    if [ "$DTBMAGIC" != "d00dfeed" ]; then
+        echo "ERROR: $RPI_DTB is not a flattened device tree (magic=$DTBMAGIC)." >&2
+        exit 1
+    fi
+    echo "    $RPI_DTB $(ls -l "$BOOTSTAGE/$RPI_DTB" | awk '{print $5}') bytes, FDT magic ok"
+
+    cat > "$BOOTSTAGE/config.txt" <<CFG
+# NextBSD on the Raspberry Pi 500+ (BCM2712).
+#
+# The EEPROM bootloader reads this file, loads device_tree=, patches it, loads
+# kernel= and enters it at EL2 with x0 = the FDT physical address. There is no
+# loader(8) anywhere in that path, so anything the kernel needs in order to
+# boot is compiled into it rather than loaded here.
+kernel=kernel8.img
+device_tree=$RPI_DTB
+cmdline=cmdline.txt
+arm_64bit=1
+
+# The kernel's console is UART10 inside the BCM2712 at 0x10_7d00_1000 -- the
+# 3-pin JST-SH debug header on the board, not the 40-pin GPIO header. Which
+# UART that is gets decided by a compiled-in hw.uart.console, not by this file.
+# enable_uart=1 is still required: it pins the VPU core clock, and without it
+# the divisor moves with clock scaling and the console degrades to line noise
+# partway through boot.
+enable_uart=1
+
+# Deliberately no dtoverlay= or dtparam= lines. Every overlay in the vendor
+# tree is written against Linux driver bindings; NextBSD reads the same device
+# tree with its own drivers, and an overlay that renames or reparents a node
+# moves it out from under the FreeBSD driver's compatible string. Add them one
+# at a time, each with a boot that proves it.
+CFG
+
+    # FreeBSD's FDT bootargs parser takes the "FreeBSD:" prefix and reads what
+    # follows as boot flags, and -v is the flag worth having on a board whose
+    # serial log is the only instrument there is.
+    #
+    # Measured caveat: on this firmware it does not currently arrive.
+    # parse_fdt_bootargs() only parses when fdt_get_chosen_bootargs() succeeds,
+    # and a tryboot with exactly this line produced a boot that was not
+    # verbose -- so the firmware appears not to be writing /chosen/bootargs at
+    # all. Tracked as nextbsd-kernel#93.
+    #
+    # The file ships anyway. It is correct, it costs nothing, it is the first
+    # place a human will look to change a boot flag, and it starts working the
+    # day the firmware side is understood. What it is NOT is a channel you can
+    # rely on today: anything the kernel must have goes in the compiled-in env
+    # instead.
+    echo 'FreeBSD: -v' > "$BOOTSTAGE/cmdline.txt"
+
+    # 100 MB FAT32. sectors_per_cluster=1 keeps makefs above the 65525-cluster
+    # floor that makes it FAT32 rather than silently falling back to FAT16,
+    # which this bootloader will not read.
+    echo "==> makefs msdos: rpi500 boot partition"
+    makefs -t msdos \
+        -o fat_type=32 -o sectors_per_cluster=1 -o volume_label=NEXTBSD \
+        -s 102400k \
+        "$WORK/rpiboot.img" "$BOOTSTAGE"
+
+    # MBR, not GPT: matching the vendor layout measured on the board's own
+    # NVMe (dos label, p1 type 0x0c FAT32-LBA, p2 the OS). fat32lba is that
+    # 0x0c; a plain fat32 (0x0b) is CHS-addressed and the wrong type here.
+    echo "==> mkimg: MBR disk image (FAT32 boot + freebsd root)"
+    IMG_NAME="NextBSD-rpi500-${ARCH}-${IMG_DATE}.img"
+    mkimg -s mbr -f raw \
+        -p fat32lba:="$WORK/rpiboot.img" \
+        -p freebsd:="$WORK/rootfs.ufs" \
+        -o "$WORK/$IMG_NAME"
+    ls -lh "$WORK/$IMG_NAME"
+
+    echo "==> zip disk image"
+    (cd "$WORK" && zip -9 "$OUT/${IMG_NAME}.zip" "$IMG_NAME")
+    ls -lh "$OUT/${IMG_NAME}.zip"
+    sha256 "$OUT/${IMG_NAME}.zip" 2>/dev/null || sha256sum "$OUT/${IMG_NAME}.zip"
+
+    rm -f "$WORK/$IMG_NAME" "$WORK/rootfs.ufs" "$WORK/rpiboot.img"
+    echo "==> done: $OUT/${IMG_NAME}.zip"
+    echo "    No ISO in this lane, by design -- see the comment above."
+    exit 0
+fi
 
 # 6b. EFI System Partition — FAT, FreeBSD's loader.efi at the UEFI
 #     fallback path /EFI/BOOT/BOOTX64.EFI. 33 MB / FAT32, matching
