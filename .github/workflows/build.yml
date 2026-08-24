@@ -183,6 +183,111 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
+  # The Raspberry Pi 500+ lane. Same rootfs as everything above -- same
+  # packages, same makefs -- and a completely different boot half: MBR instead
+  # of GPT, a FAT32 partition holding config.txt instead of an ESP holding
+  # loader.efi, and no ISO at all, because the BCM2712 bootloader looks for a
+  # FAT partition with a config.txt on it and an ISO 9660 image has neither.
+  #
+  # Deliberately NOT in the build matrix above: that job's steps assume an ISO
+  # exists and name both artifacts, and the two lanes share nothing but
+  # build.sh itself.
+  #
+  # Deliberately NOT wired into `release` either. This image cannot be boot
+  # tested in CI -- qemu does not emulate a Pi 500+, and the parts of this
+  # board NextBSD is still bringing up (RP1, PCIe, MSI) are exactly the parts
+  # an emulator would fake. So the artifact is built on every PR and downloaded
+  # by a human with the board in front of them; it reaches `continuous` only
+  # once it has booted real hardware (nextbsd-kernel#85).
+  build-rpi500:
+    name: build (rpi500 arm64)
+    needs: changes
+    if: needs.changes.outputs.build_needed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+
+      - name: compute build date
+        id: meta
+        run: echo "date=$(date -u +%Y%m%d-%H%M%S)" >> "$GITHUB_OUTPUT"
+
+      # kernel.bin wrapped in an arm64 Linux Image header, from nextbsd-kernel's
+      # rolling `continuous` release. A public release asset, so plain curl --
+      # no token, no cross-repo artifact API, and no 14-day expiry. Verify the
+      # Image magic (0x644d5241 at offset 56) here as well as in build.sh: a
+      # 404 page saved as an .img is still a file, and this board reports every
+      # kind of wrong kernel as the same silence.
+      - name: fetch the board kernel
+        run: |
+          set -eu
+          URL=https://github.com/nextbsd-redux/nextbsd-kernel/releases/download/continuous/rpi500-kernel8-arm64.img
+          curl -fSL --retry 3 -o kernel8.img "$URL"
+          ls -l kernel8.img
+          MAGIC=$(dd if=kernel8.img bs=1 skip=56 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')
+          if [ "$MAGIC" != "41524d64" ]; then
+            echo "::error::rpi500-kernel8-arm64.img has no arm64 Image header (magic=$MAGIC)"
+            exit 1
+          fi
+          echo "Image header ok"
+
+      - name: build the rpi500 image inside FreeBSD VM
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: '15.1'
+          # Same ceiling and same reason as the build job above; do not raise
+          # it without restructuring libicu's compile cost.
+          mem: 8192
+          cpu: 4
+          usesh: true
+          sync: rsync
+          copyback: true
+          prepare: |
+            pkg install -y bash git rsync zip
+          run: |
+            set -eu
+            export FREEBSD_VERSION=15.1
+            export BOARD=rpi500
+            export KERNEL8=$PWD/kernel8.img
+            export IMG_DATE=${{ steps.meta.outputs.date }}
+            sh build.sh
+
+      - name: checksum + summary
+        run: |
+          ls -lh out/
+          IMG="NextBSD-rpi500-arm64-${{ steps.meta.outputs.date }}.img.zip"
+          ( cd out && sha256sum "$IMG" > "$IMG.sha256" )
+          cat "out/$IMG.sha256"
+          {
+            echo "### Raspberry Pi 500+ image"
+            echo
+            echo "\`$IMG\`"
+            echo
+            echo "Not boot tested by CI -- qemu does not emulate this board."
+            echo "Write it to a USB stick or NVMe and boot it to prove it."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NextBSD-rpi500-arm64-${{ steps.meta.outputs.date }}
+          path: |
+            out/NextBSD-rpi500-arm64-${{ steps.meta.outputs.date }}.img.zip
+            out/NextBSD-rpi500-arm64-${{ steps.meta.outputs.date }}.img.zip.sha256
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error
+
   img-test:
     name: img-test (${{ matrix.arch }})
     needs: [changes, build]
@@ -378,6 +483,17 @@ jobs:
         with:
           path: out/
           merge-multiple: true
+
+      # Drop the board images before the glob below sees them. download-artifact
+      # above takes EVERY artifact, and `out/NextBSD-*.img.zip` matches
+      # NextBSD-rpi500-arm64-<date>.img.zip just as happily as the generic
+      # ones -- so without this the Pi 500+ image would publish to `continuous`
+      # having never booted on hardware, which is the one thing that lane is
+      # not allowed to do (nextbsd-kernel#85). Board images ship only once a
+      # human has booted them on the real board.
+      - name: hold board images back from continuous
+        run: |
+          rm -fv out/NextBSD-rpi500-* || true
 
       - name: list release assets
         run: ls -lh out/NextBSD-*.img.zip out/NextBSD-*.img.zip.sha256 out/NextBSD-*.iso.zip out/NextBSD-*.iso.zip.sha256
