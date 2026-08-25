@@ -442,33 +442,47 @@ if [ "$BOARD" = rpi500 ]; then
     # /proc/device-tree/compatible reads "raspberrypi,500 brcm,bcm2712" and the
     # firmware selects bcm2712-rpi-500.dtb, which is the 500+ too.
     : "${RPI_FIRMWARE_TAG:=1.20250430}"
-    : "${RPI_DTB:=bcm2712-rpi-500.dtb}"
+
+    # Ship EVERY BCM2712 device tree and let the firmware pick.
+    #
+    # The firmware selects a DTB by board revision code, which is the mechanism
+    # designed for exactly this -- "This selection is automatic, and allows the
+    # same SD card image to be used in a variety of devices". Pinning
+    # device_tree= to one file is what made this image Pi 500/500+ only: any
+    # other board would have been handed a device tree for hardware it is not.
+    #
+    # Note there are three separate Pi 5 B blobs, because the firmware
+    # distinguishes silicon steppings. That is also the reason this is not a
+    # guarantee for untested boards -- see the coverage note below.
+    RPI_DTBS="bcm2712-rpi-5-b bcm2712d0-rpi-5-b bcm2712-d-rpi-5-b \
+              bcm2712-rpi-500 \
+              bcm2712-rpi-cm5-cm4io bcm2712-rpi-cm5-cm5io \
+              bcm2712-rpi-cm5l-cm4io bcm2712-rpi-cm5l-cm5io"
     if [ -n "${DTB:-}" ]; then
         echo "==> rpi500: using DTB override $DTB"
-        cp "$DTB" "$BOOTSTAGE/$RPI_DTB"
+        cp "$DTB" "$BOOTSTAGE/$(basename "$DTB")"
     else
-        _dtb="$DIST/${RPI_FIRMWARE_TAG}-${RPI_DTB}"
-        if [ ! -f "$_dtb" ]; then
-            echo "==> fetching $RPI_DTB from raspberrypi/firmware $RPI_FIRMWARE_TAG"
-            fetch -o "$_dtb" \
-                "https://raw.githubusercontent.com/raspberrypi/firmware/${RPI_FIRMWARE_TAG}/boot/${RPI_DTB}"
-        fi
-        cp "$_dtb" "$BOOTSTAGE/$RPI_DTB"
-        # Ship the licence the blob is redistributed under, from the same
-        # pinned tag, as Raspberry Pi OS does.
+        for d in $RPI_DTBS; do
+            _dtb="$DIST/${RPI_FIRMWARE_TAG}-${d}.dtb"
+            if [ ! -f "$_dtb" ]; then
+                echo "==> fetching ${d}.dtb from raspberrypi/firmware $RPI_FIRMWARE_TAG"
+                fetch -o "$_dtb" \
+                    "https://raw.githubusercontent.com/raspberrypi/firmware/${RPI_FIRMWARE_TAG}/boot/${d}.dtb"
+            fi
+            cp "$_dtb" "$BOOTSTAGE/${d}.dtb"
+            # A flattened device tree opens with magic 0xd00dfeed, big-endian.
+            MAGIC=$(dd if="$BOOTSTAGE/${d}.dtb" bs=1 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')
+            if [ "$MAGIC" != "d00dfeed" ]; then
+                echo "ERROR: ${d}.dtb is not a flattened device tree (magic=$MAGIC)." >&2
+                exit 1
+            fi
+        done
         _lic="$DIST/${RPI_FIRMWARE_TAG}-LICENCE.broadcom"
         [ -f "$_lic" ] || fetch -o "$_lic" \
             "https://raw.githubusercontent.com/raspberrypi/firmware/${RPI_FIRMWARE_TAG}/boot/LICENCE.broadcom"
         cp "$_lic" "$BOOTSTAGE/LICENCE.broadcom"
     fi
-    # A flattened device tree opens with magic 0xd00dfeed, big-endian.
-    DTBMAGIC=$(dd if="$BOOTSTAGE/$RPI_DTB" bs=1 count=4 2>/dev/null |
-        od -An -tx1 | tr -d ' \n')
-    if [ "$DTBMAGIC" != "d00dfeed" ]; then
-        echo "ERROR: $RPI_DTB is not a flattened device tree (magic=$DTBMAGIC)." >&2
-        exit 1
-    fi
-    echo "    $RPI_DTB $(ls -l "$BOOTSTAGE/$RPI_DTB" | awk '{print $5}') bytes, FDT magic ok"
+    echo "    $(ls "$BOOTSTAGE"/*.dtb | wc -l | tr -d ' ') device trees, FDT magic ok"
 
     cat > "$BOOTSTAGE/config.txt" <<CFG
 # NextBSD on the Raspberry Pi 500+ (BCM2712).
@@ -478,9 +492,13 @@ if [ "$BOARD" = rpi500 ]; then
 # loader(8) anywhere in that path, so anything the kernel needs in order to
 # boot is compiled into it rather than loaded here.
 kernel=kernel8.img
-device_tree=$RPI_DTB
 cmdline=cmdline.txt
 arm_64bit=1
+
+# Deliberately NO device_tree= line. The firmware selects the right blob for
+# the board it is running on, from the ones shipped alongside this file --
+# which is what lets one image serve the whole Pi 5 family. Pinning it here
+# would hand every board but one a device tree for hardware it is not.
 
 # The kernel's console is UART10 inside the BCM2712 at 0x10_7d00_1000 -- the
 # 3-pin JST-SH debug header on the board, not the 40-pin GPIO header. Which
@@ -573,7 +591,10 @@ CFG
     # NVMe (dos label, p1 type 0x0c FAT32-LBA, p2 the OS). fat32lba is that
     # 0x0c; a plain fat32 (0x0b) is CHS-addressed and the wrong type here.
     echo "==> mkimg: MBR disk image (FAT32 boot + freebsd root)"
-    IMG_NAME="NextBSD-rpi500-${ARCH}-${IMG_DATE}.img"
+    # Arch first, board second: NextBSD-arm64-rpi5-<date>.img. Sorts with the
+    # other arm64 images, and the globs that consume these are anchored on the
+    # datestamp ([0-9]*) so a board token can never be mistaken for one.
+    IMG_NAME="NextBSD-${ARCH}-rpi5-${IMG_DATE}.img"
     mkimg -s mbr -f raw \
         -p fat32lba:="$WORK/rpiboot.img" \
         -p freebsd:="$WORK/rootfs.ufs" \
