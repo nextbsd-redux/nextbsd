@@ -199,8 +199,8 @@ jobs:
   # an emulator would fake. So the artifact is built on every PR and downloaded
   # by a human with the board in front of them; it reaches `continuous` only
   # once it has booted real hardware (nextbsd-kernel#85).
-  build-rpi500:
-    name: build (rpi500 arm64)
+  build-rpi5:
+    name: build (rpi5 arm64)
     needs: changes
     if: needs.changes.outputs.build_needed == 'true'
     runs-on: ubuntu-latest
@@ -242,7 +242,7 @@ jobs:
           fi
           echo "Image header ok"
 
-      - name: build the rpi500 image inside FreeBSD VM
+      - name: build the rpi5 image inside FreeBSD VM
         uses: vmactions/freebsd-vm@v1
         with:
           release: '15.1'
@@ -266,7 +266,7 @@ jobs:
       - name: checksum + summary
         run: |
           ls -lh out/
-          IMG="NextBSD-rpi500-arm64-${{ steps.meta.outputs.date }}.img.zip"
+          IMG="NextBSD-arm64-rpi5-${{ steps.meta.outputs.date }}.img.zip"
           ( cd out && sha256sum "$IMG" > "$IMG.sha256" )
           cat "out/$IMG.sha256"
           {
@@ -280,10 +280,10 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: NextBSD-rpi500-arm64-${{ steps.meta.outputs.date }}
+          name: NextBSD-arm64-rpi5-${{ steps.meta.outputs.date }}
           path: |
-            out/NextBSD-rpi500-arm64-${{ steps.meta.outputs.date }}.img.zip
-            out/NextBSD-rpi500-arm64-${{ steps.meta.outputs.date }}.img.zip.sha256
+            out/NextBSD-arm64-rpi5-${{ steps.meta.outputs.date }}.img.zip
+            out/NextBSD-arm64-rpi5-${{ steps.meta.outputs.date }}.img.zip.sha256
           compression-level: 0
           retention-days: 14
           if-no-files-found: error
@@ -346,7 +346,9 @@ jobs:
         with:
           # Only THIS arch's artifact — the matrix builds both, and a bare glob
           # would otherwise match both arches' images.
-          pattern: NextBSD-${{ matrix.arch }}-*
+          # [0-9]* anchors on the datestamp: NextBSD-arm64-rpi5-... must not
+          # be swallowed by the glob for the generic NextBSD-arm64-... image.
+          pattern: NextBSD-${{ matrix.arch }}-[0-9]*
           path: out/
           merge-multiple: true
 
@@ -358,7 +360,7 @@ jobs:
           mkdir -p out
           gh release download continuous \
             --repo "$GITHUB_REPOSITORY" \
-            --pattern 'NextBSD-${{ matrix.arch }}-*.img.zip' \
+            --pattern 'NextBSD-${{ matrix.arch }}-[0-9]*.img.zip' \
             --dir out/ --clobber
           ls -lh out/
 
@@ -378,7 +380,9 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           chmod +x tests/img-boot-test.sh
-          IMG=$(ls out/NextBSD-${{ matrix.arch }}-*.img.zip)
+          # A bare glob would match the board image too and put two paths
+          # into a scalar. Anchor on the datestamp.
+          IMG=$(ls out/NextBSD-${{ matrix.arch }}-[0-9]*.img.zip)
           ./tests/img-boot-test.sh "$IMG"
 
       - name: dump img boot serial log
@@ -417,7 +421,9 @@ jobs:
       - name: download built ISO (artifact)
         uses: actions/download-artifact@v4
         with:
-          pattern: NextBSD-${{ matrix.arch }}-*
+          # [0-9]* anchors on the datestamp: NextBSD-arm64-rpi5-... must not
+          # be swallowed by the glob for the generic NextBSD-arm64-... image.
+          pattern: NextBSD-${{ matrix.arch }}-[0-9]*
           path: out/
           merge-multiple: true
 
@@ -484,16 +490,12 @@ jobs:
           path: out/
           merge-multiple: true
 
-      # Drop the board images before the glob below sees them. download-artifact
-      # above takes EVERY artifact, and `out/NextBSD-*.img.zip` matches
-      # NextBSD-rpi500-arm64-<date>.img.zip just as happily as the generic
-      # ones -- so without this the Pi 500+ image would publish to `continuous`
-      # having never booted on hardware, which is the one thing that lane is
-      # not allowed to do (nextbsd-kernel#85). Board images ship only once a
-      # human has booted them on the real board.
-      - name: hold board images back from continuous
-        run: |
-          rm -fv out/NextBSD-rpi500-* || true
+      # No hold-back step here any more. The release job cannot run on a pull
+      # request -- its guard requires refs/heads/main plus a push/dispatch
+      # event -- so a PR builds a downloadable artifact and publishes nothing.
+      # Merging is therefore the deliberate act of publishing, which is a
+      # clearer contract than deleting files on the way past, and easier to get
+      # right than remembering to re-enable a deletion.
 
       - name: list release assets
         run: ls -lh out/NextBSD-*.img.zip out/NextBSD-*.img.zip.sha256 out/NextBSD-*.iso.zip out/NextBSD-*.iso.zip.sha256
