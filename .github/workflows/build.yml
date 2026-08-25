@@ -193,12 +193,21 @@ jobs:
   # exists and name both artifacts, and the two lanes share nothing but
   # build.sh itself.
   #
-  # Deliberately NOT wired into `release` either. This image cannot be boot
-  # tested in CI -- qemu does not emulate a Pi 500+, and the parts of this
-  # board NextBSD is still bringing up (RP1, PCIe, MSI) are exactly the parts
-  # an emulator would fake. So the artifact is built on every PR and downloaded
-  # by a human with the board in front of them; it reaches `continuous` only
-  # once it has booted real hardware (nextbsd-kernel#85).
+  # This image cannot be boot tested in CI -- qemu does not emulate a Pi 500+,
+  # and the parts of this board NextBSD is still bringing up (RP1, PCIe, MSI)
+  # are exactly the parts an emulator would fake. It was held back from
+  # `continuous` until it had booted real hardware; that has happened
+  # (nextbsd-kernel#85, closed), so it now publishes like every other lane.
+  #
+  # `release` therefore lists this job in `needs`. That is the whole fix: the
+  # download step already pulls every artifact in the run and the publish glob
+  # already matches NextBSD-arm64-rpi5-*.img.zip, so the image was never
+  # excluded -- `release` simply did not wait for it, and this lane (a second
+  # FreeBSD VM, plus a kernel download) always finished last. The hold-back
+  # was a race that happened to fall the same way every time, not a gate.
+  #
+  # This is still the one published asset no CI boot vouches for. The release
+  # notes say so.
   build-rpi5:
     name: build (rpi5 arm64)
     needs: changes
@@ -455,7 +464,7 @@ jobs:
 
   release:
     name: release
-    needs: [build, img-test]
+    needs: [build, build-rpi5, img-test]
     # Publish on main from a push to this repo, an upstream cascade
     # (repository_dispatch: base-updated), or a manual run (workflow_dispatch:
     # a hand-triggered "Run workflow" republishes `continuous`). PRs and other
@@ -468,7 +477,13 @@ jobs:
     # need doesn't auto-skip release. A failed build still blocks publish; a
     # tests-only push (build skipped) yields build.result!='success' -> no
     # republish, which is correct.
-    if: ${{ always() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch') && needs.build.result == 'success' && (needs['img-test'].result == 'success' || needs['img-test'].result == 'skipped') }}
+    #
+    # build-rpi5 is required to succeed for the same reason `build` is: it is a
+    # build, not a boot test, so a failure there is a real failure and not the
+    # emulator flaking. It carries the same `build_needed` guard as `build`, so
+    # it skips exactly when `build` skips -- and that case is already a
+    # no-republish via build.result.
+    if: ${{ always() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch') && needs.build.result == 'success' && needs['build-rpi5'].result == 'success' && (needs['img-test'].result == 'success' || needs['img-test'].result == 'skipped') }}
     #
     # Deliberately NOT a matrix: one job publishes EVERY arch's artifacts in a
     # single `continuous` release. A per-arch matrix would run the delete-then-
@@ -520,6 +535,11 @@ jobs:
           body: |
             Rolling continuous build. Refreshed automatically every push to
             `main` after the build + boot smoke-test both pass.
+
+            `NextBSD-arm64-rpi5-*` (Raspberry Pi 5 family: 5 B, 500/500+, CM5)
+            is built from the same rootfs but is **not** boot tested by CI --
+            qemu does not emulate this board. Write it to a USB stick or NVMe
+            and boot it.
 
             Build log: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
             Commit: ${{ github.sha }}
