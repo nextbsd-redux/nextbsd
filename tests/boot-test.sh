@@ -249,6 +249,7 @@ expect {
 #   MACH-SMOKE-OK / MACH-SMOKE-FAIL          — kernel-side kextstat -m mach
 #   LIBSYSTEM-KERNEL-OK / LIBSYSTEM-KERNEL-FAIL — userland test_libmach
 # Both must pass.
+set saved_marker_timeout $timeout
 send "/usr/tests/freebsd-launchd-mach/run.sh\r"
 expect {
     timeout {
@@ -674,17 +675,35 @@ expect {
     "SC-NOTIFY-OK" { puts "\nOK: SCDynamicStore change notifications work" }
 }
 
+# SC-RUNLOOP. scrltest does its work and then SIGSEGVs during teardown,
+# BEFORE it can print SC-RUNLOOP-OK. The functional part passes -- the log
+# shows "run-loop callback fired with the watched key" every time -- so the
+# crash is in run-loop/dispatch source disposal, not in the feature.
+#
+# That cost every run 480 seconds. The marker never arrived, so this block sat
+# on the global timeout, on success and failure alike, and then reported the
+# misleading "marker not seen". It is the single reason boot tests took ~10
+# minutes regardless of outcome, in this repo and in nextbsd-userland's copy.
+#
+# Match the crash explicitly so it is reported as what it is, and bound this
+# block to 30s so a missing marker can never cost minutes again.
+set timeout 30
 expect {
     timeout {
-        puts "\nFAIL: SC-RUNLOOP marker not seen"
+        puts "\nFAIL: SC-RUNLOOP marker not seen (no output at all from scrltest)"
         exit 1
     }
     "SC-RUNLOOP-FAIL" {
         puts "\nFAIL: SCDynamicStore run-loop-source notifications failed"
         exit 1
     }
+    -re "Segmentation fault|Abort trap" {
+        puts "\nFAIL: SC-RUNLOOP — scrltest crashed in teardown after the callback fired (nextbsd-userland#158)"
+        exit 1
+    }
     "SC-RUNLOOP-OK" { puts "\nOK: SCDynamicStore run-loop notifications work" }
 }
+set timeout $saved_marker_timeout
 
 expect {
     timeout {
