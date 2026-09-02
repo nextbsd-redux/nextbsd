@@ -196,7 +196,7 @@ rolling `continuous` release that the next stage ingests:
   (the FreeBSD source tree is never forked in place).
 - **[nextbsd-freebsd-compat](https://github.com/nextbsd-redux/nextbsd-freebsd-compat)** —
   the curated FreeBSD-source base userland, built from a srclist.
-- **[nextbsd-kernel-modules](https://github.com/nextbsd-redux/nextbsd-kernel-modules)** —
+- **[nextbsd-kernel-extensions](https://github.com/nextbsd/nextbsd-kernel-extensions)** —
   driver kexts (KPI-matched to the kernel).
 - **this repo** — assembles the bootable image/ISO: it lays the from-source
   base, builds the Darwin-source userland and the Mach/launchd stack on top,
