@@ -571,10 +571,11 @@ max_framebuffers=2
 display_auto_detect=1
 hdmi_force_hotplug=1
 
-# Depth, unlike width and height, is NOT ignored -- and getting it wrong is
-# visible rather than fatal, which makes it easy to miss. Left unset the
-# firmware allocates 16bpp, bcm2835_fbd(4) then asks it for 24, and the
-# console comes up with a blue cast and text so dim it is nearly invisible:
+# framebuffer_depth is deliberately NOT set here any more (nextbsd#429 follow-up).
+#
+# It was here because the console runs on the firmware framebuffer: left unset
+# the firmware allocates 16bpp, bcm2835_fbd(4) asks it for 24, and the console
+# comes up with a blue cast and text so dim it is nearly unreadable:
 #
 #   changing fb bpp from 16 to 24
 #   fb0: 1920x1080(1920x1080@0,0) 24bpp     <- wrong, unreadable
@@ -582,9 +583,31 @@ hdmi_force_hotplug=1
 #   fb0: 1920x1080(1920x1080@0,0) 32bpp     <- correct
 #
 # 24bpp is three bytes per pixel with no padding; a driver writing 32-bit
-# pixels into it lands a byte out of alignment on every pixel, which is what
-# smears the colour channels.
-framebuffer_depth=32
+# pixels into it lands a byte out of alignment on every pixel, which smears
+# the colour channels.
+#
+# The intent is that KMS owns the display instead, now that VideoCoreKMS
+# autoloads (nextbsd-kernel-extensions#185) -- at which point the firmware's
+# choice of depth stops mattering because nothing is drawing into its
+# framebuffer.
+#
+# UNVERIFIED ON HARDWARE. The Pi was unreachable when this was written, so the
+# console has not been looked at without this line. The evidence that it may
+# still be needed:
+#
+#   - the firmware allocates the console framebuffer before any kext can load,
+#     so autoload does not change what happens at boot
+#   - KMS does not take over the console. Measured with KMS loaded and
+#     /dev/dri/card0 present, the console was still on the firmware fb:
+#         fb0: <BCM2835 VT framebuffer driver> on simplebus0
+#         VT: initialize with new VT driver "fb"      <- "fb", not "drmfb"
+#     because no fbdev emulation is wired up (drm_fbdev_dma_setup is a stub).
+#   - nextbsd#425, "scfb segfaults on a 16bpp framebuffer (works at 32bpp)",
+#     is open.
+#
+# If the console comes up dim, blue-cast or blank on a Pi 5 after this change,
+# this line is why, and restoring it is the fix. The real precondition is fbdev
+# emulation so vt(4) moves onto drmfb.
 
 # Deliberately NO hardcoded resolution. Forcing hdmi_group/hdmi_mode or
 # framebuffer_width/height WAS measured to be ignored -- the firmware read
