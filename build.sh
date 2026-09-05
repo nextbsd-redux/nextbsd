@@ -484,6 +484,45 @@ if [ "$BOARD" = rpi500 ]; then
     fi
     echo "    $(ls "$BOOTSTAGE"/*.dtb | wc -l | tr -d ' ') device trees, FDT magic ok"
 
+    # Device-tree overlays (nextbsd#429).
+    #
+    # These have to be on the FAT32 firmware partition, which no package can
+    # write: pkg(8) installs into the UFS root, and this partition is neither
+    # mounted at install time nor in any package's file list. The image build
+    # is the only thing that writes here, so it stages them.
+    #
+    # They come from nextbsd-kernel-extensions' continuous release, where they
+    # are published alongside the kexts, so an overlay stays versioned with the
+    # driver it enables -- the two must agree about the node's compatible
+    # string.
+    #
+    # Missing overlays are NOT fatal: the image still boots, the driver simply
+    # cannot bind. That is the pre-#429 behaviour, so a fetch failure degrades
+    # to it rather than breaking the build.
+    _ovl="$DIST/rpi5-overlays.tar.gz"
+    if [ ! -f "$_ovl" ]; then
+        echo "==> fetching rpi5-overlays.tar.gz from nextbsd-kernel-extensions"
+        fetch -o "$_ovl" \
+            "https://github.com/nextbsd/nextbsd-kernel-extensions/releases/download/continuous/rpi5-overlays.tar.gz" \
+            || echo "WARNING: no overlays asset; KMS drivers will not bind (nextbsd#429)" >&2
+    fi
+    if [ -s "$_ovl" ]; then
+        mkdir -p "$BOOTSTAGE/overlays"
+        tar -C "$BOOTSTAGE/overlays" -xzf "$_ovl"
+        # The .dts sources ship in the same directory; the firmware only reads
+        # .dtbo, so drop them rather than putting sources on a boot partition.
+        rm -f "$BOOTSTAGE/overlays"/*.dts
+        for _o in "$BOOTSTAGE/overlays"/*.dtbo; do
+            [ -e "$_o" ] || continue
+            MAGIC=$(dd if="$_o" bs=1 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')
+            if [ "$MAGIC" != "d00dfeed" ]; then
+                echo "ERROR: $(basename "$_o") is not a flattened device tree (magic=$MAGIC)." >&2
+                exit 1
+            fi
+        done
+        echo "    $(ls "$BOOTSTAGE/overlays"/*.dtbo 2>/dev/null | wc -l | tr -d ' ') overlays staged, FDT magic ok"
+    fi
+
     cat > "$BOOTSTAGE/config.txt" <<CFG
 # NextBSD on the Raspberry Pi 500+ (BCM2712).
 #
@@ -554,11 +593,25 @@ framebuffer_depth=32
 # above is the exception: do not generalise "the framebuffer_* settings are
 # ignored" from width and height, which is a mistake already made once.
 
-# Deliberately no dtoverlay= or dtparam= lines. Every overlay in the vendor
-# tree is written against Linux driver bindings; NextBSD reads the same device
-# tree with its own drivers, and an overlay that renames or reparents a node
-# moves it out from under the FreeBSD driver's compatible string. Add them one
-# at a time, each with a boot that proves it.
+# No VENDOR dtoverlay= or dtparam= lines. Every overlay in the vendor tree is
+# written against Linux driver bindings; NextBSD reads the same device tree
+# with its own drivers, and an overlay that renames or reparents a node moves
+# it out from under the FreeBSD driver's compatible string. Add them one at a
+# time, each with a boot that proves it.
+#
+# nextbsd-fkms is ours, and meets that bar (nextbsd#429). It does not rename or
+# reparent anything -- it flips one node's status from "disabled" to "okay":
+#
+#   ofwbus0: <firmwarekms> irq 12 disabled compat raspberrypi,rpi-firmware-kms-2712 (no driver attached)
+#
+# is what a Pi 5 reports without it, with VideoCoreKMS.kext installed and
+# loadable but unable to bind. Proven by a boot on a Pi 500+: with the overlay
+# staged, the node comes up enabled, the kext attaches, /dev/dri/card0 appears
+# and vblank is delivered.
+#
+# Costs nothing on a board without the node -- an overlay whose target is
+# absent is a no-op.
+dtoverlay=nextbsd-fkms
 CFG
 
     # FreeBSD's FDT bootargs parser takes the "FreeBSD:" prefix and reads what
