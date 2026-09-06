@@ -635,6 +635,37 @@ hdmi_force_hotplug=1
 # Costs nothing on a board without the node -- an overlay whose target is
 # absent is a no-op.
 dtoverlay=nextbsd-fkms
+
+# nextbsd-v3d enables v3d@2000000, which also ships disabled. Measured on a Pi
+# 500+: the node comes up with the "disabled" gone and IRQs 70/71 resolved, and
+# enabling it disturbs neither the firmware framebuffer nor firmware KMS -- fb0
+# still comes up and vc4_fkms0 still attaches with /dev/dri/card0.
+#
+# It does NOT by itself give you 3D. Nothing in tree binds "brcm,2712-v3d", so
+# /dev/dri stays card0 with no renderD128. GL additionally needs a v3d DRM
+# driver, the drm_gpu_scheduler it depends on, and mesa-libs built with vc4 and
+# v3d in GALLIUM_DRIVERS (nextbsd#427). Enabled now because the node has to be
+# up before any of that can be developed against it.
+dtoverlay=nextbsd-v3d
+
+# nextbsd-vc4-kms enables the seven nodes the full KMS port needs: the vc6
+# master, hvs, both pixelvalves, both HDMI controllers and ddc0. Measured on a
+# Pi 500+: all seven come up with their IRQs assigned -- HVS with exactly 3
+# (ch0/1/2-eof) and each HDMI with exactly 5 -- and firmware KMS still attached
+# alongside them.
+#
+# Enabled, deliberately, even though vc4_kms.ko is not packaged yet: the driver
+# is under active development on this hardware
+# (nextbsd-kernel-extensions#51) and the nodes have to be enabled for it to
+# bind at all. Shipping it disabled would mean hand-editing this file on the
+# FAT32 partition after every image rebuild.
+#
+# It is harmless while nothing binds those nodes. It becomes MUTUALLY EXCLUSIVE
+# with nextbsd-fkms the moment vc4_kms.ko is installed, because both drive the
+# same display -- at which point exactly one of vc4_fkms and vc4_kms may be
+# loaded. That is a driver/packaging decision, not a device-tree one, and this
+# comment is where to start when it has to be made.
+dtoverlay=nextbsd-vc4-kms
 CFG
 
     # FreeBSD's FDT bootargs parser takes the "FreeBSD:" prefix and reads what
